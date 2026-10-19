@@ -1,0 +1,35 @@
+[project]
+name = "claude-codex-project-kit"
+version = "0.1.0"
+description = "Project-local Claude (planner/reviewer) <-> Codex CLI (executor) MCP bridge"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=2.3.0,<3",
+]
+
+[project.urls]
+Homepage = "https://github.com/leetuanbmt/claude-codex-project-kit"
+Repository = "https://github.com/leetuanbmt/claude-codex-project-kit"
+Changelog = "https://github.com/leetuanbmt/claude-codex-project-kit/blob/main/CHANGELOG.md"
+
+[project.scripts]
+codex-bridge = "bridge.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.8.0,<0.9"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "bridge"
+module-root = ""
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Inside the repo: the Codex sandbox cannot write $TMPDIR (exclude_tmpdir_env_var).
+addopts = "--basetemp=.pytest_tmp -p no:cacheprovider"
+markers = ["real_codex: hits the real Codex CLI (opt-in via CODEX_SMOKE=1)"]

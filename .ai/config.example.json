@@ -1,0 +1,9 @@
+{
+  "sandbox": "workspace-write",
+  "default_timeout_s": 1800,
+  "max_attempts": 3,
+  "default_account": "default",
+  "accounts": {
+    "work": {"codex_home": "~/.codex-bridge-homes/work"}
+  }
+}

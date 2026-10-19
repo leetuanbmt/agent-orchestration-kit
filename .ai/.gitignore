@@ -1,0 +1,5 @@
+# Config is tracked (tamper-evident via scope check); everything else here is local.
+*
+!.gitignore
+!config.example.json
+!config.json

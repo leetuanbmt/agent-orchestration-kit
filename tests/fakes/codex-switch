@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""Credential-free home discovery stand-in."""
+
+import os
+import sys
+
+if sys.argv[1:] == ["home", "list", "--json"]:
+    print(os.environ.get("FAKE_CODEX_SWITCH_HOMES", "[]"))
+    sys.exit(int(os.environ.get("FAKE_CODEX_SWITCH_EXIT", "0")))
+
+print("Usage: codex-switch <command>")
