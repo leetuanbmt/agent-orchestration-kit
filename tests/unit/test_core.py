@@ -95,6 +95,20 @@ def test_path_validation(tmp_path: Path) -> None:
             validate_pattern(bad, root, PROTECTED)
 
 
+# @pt.id KIT-UNIT-004b-rule-smuggling
+# @pt.item Path patterns cannot inject Claude CLI permission rules
+# @pt.condition a pattern containing ',', '(', ')', a quote or whitespace
+# @pt.expected PathError, so no extra rule such as Bash(*) reaches --allowedTools
+# @pt.target bridge.security.validate_pattern
+# @pt.method unit
+# @pt.legacy none (new kit)
+def test_path_validation_rejects_rule_syntax(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    for bad in ("src/x),Bash(*", "src/**,Bash", "src/(x)", "src/a b", "src/\tx", "src/\"x"):
+        with pytest.raises(PathError):
+            validate_pattern(bad, root, PROTECTED)
+
+
 # @pt.id KIT-UNIT-005-glob-semantics
 # @pt.item Allowed-path matching
 # @pt.condition `*` vs `**`, bare directory, nested protected file
