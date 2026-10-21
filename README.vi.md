@@ -15,7 +15,7 @@
   <img alt="platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
   <img alt="python" src="https://img.shields.io/badge/python-3.12-blue">
   <img alt="dependencies" src="https://img.shields.io/badge/dependencies-mcp%20%7C%20pyyaml-brightgreen">
-  <img alt="tests" src="https://img.shields.io/badge/tests-144%20passed%20%7C%202%20opt--in-brightgreen">
+  <img alt="tests" src="https://img.shields.io/badge/tests-146%20passed%20%7C%203%20opt--in-brightgreen">
   <img alt="version" src="https://img.shields.io/badge/version-0.1.0%20%2B%20unreleased-blue">
 </p>
 
@@ -331,11 +331,12 @@ là sự cho phép của user; block `auto_switch` legacy trong `config.json` đ
    chạy `read-only`.
 2. **Claude CLI:** không có OS sandbox, nên bridge thu hẹp nó: `--strict-mcp-config` (không MCP
    server nào, nên không thể điều phối đệ quy), `--setting-sources project` (không hook của user),
-   `--permission-mode dontAsk` với allowlist tool: Read/Glob/Grep; Edit/Write chỉ khi
-   `allow_write: true`; Bash chỉ khi `allow_bash: true`. **Mức cô lập này yếu hơn Codex** (agent
-   Claude được ghi có thể sửa mọi file trong worktree mà tool của nó với tới; scope check sau lượt
-   chạy chỉ phát hiện sau khi đã xảy ra). Nên dùng Codex làm executor; chỉ cho Claude quyền ghi
-   với việc đáng tin cậy.
+   `--permission-mode dontAsk` với allowlist tool: Read/Glob/Grep; khi `allow_write: true` thì
+   có thêm Edit/Write giới hạn theo `allowed_paths` của task (`Edit(./src/**)`), còn path bị
+   loại trừ và path protected bị chặn. Probe cho thấy Write không giới hạn ghi được file ngoài
+   worktree, còn rule theo path thì bị từ chối. **Mức cô lập vẫn yếu hơn Codex**: tool đọc đọc
+   được mọi thứ user đọc được, và Bash (`allow_bash: true`) hoàn toàn không bị giới hạn path.
+   Nên dùng Codex làm executor; không bao giờ bật `allow_bash` cho việc không đáng tin cậy.
 3. **Chống đệ quy:** mọi process agent có `CODEX_BRIDGE_AGENT=1`; server và CLI từ chối khởi động
    khi có biến này.
 4. **Process:** argv list, không shell; process group riêng, SIGTERM rồi SIGKILL khi timeout hoặc
@@ -360,13 +361,13 @@ là sự cho phép của user; block `auto_switch` legacy trong `config.json` đ
 
 ```bash
 scripts/check.sh                                   # toàn bộ suite (fake codex + fake claude: tất định)
-CODEX_SMOKE=1 uv run pytest -m real_codex          # một lượt Codex thật, opt-in, tốn quota của bạn
+CODEX_SMOKE=1 uv run pytest -m real_codex          # hai lượt Codex thật (task + workflow một agent), opt-in, tốn quota của bạn
 CLAUDE_SMOKE=1 uv run pytest tests/e2e/test_real_claude_smoke.py   # một lượt review bằng Claude thật (haiku)
 ```
 
 Kết quả:
 ```console
-144 passed, 2 skipped
+146 passed, 3 skipped
 ```
 
 `tests/fakes/codex` và `tests/fakes/claude` nói đúng giao thức JSONL / stream-json thật và trả lời

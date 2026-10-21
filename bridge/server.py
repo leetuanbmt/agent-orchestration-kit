@@ -112,7 +112,8 @@ async def bridge_execute_task(task_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def bridge_task_status(task_id: str, wait_s: float = 0) -> dict[str, Any]:
-    """Compact status. wait_s (<=55) blocks until the task leaves RUNNING/VERIFYING."""
+    """Compact status. wait_s (<=55) blocks until the task leaves RUNNING/VERIFYING and any
+    reviewer agent has decided (review_pending false)."""
     return await _safe(bridge().task_status(task_id, wait_s))
 
 

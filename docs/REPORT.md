@@ -120,16 +120,22 @@ Verification of this change:
 
 | Check | Result |
 |---|---|
-| `scripts/check.sh` | 144 passed, 2 skipped (opt-in real smoke tests) |
+| `scripts/check.sh` | 146 passed, 3 skipped (opt-in real smoke tests) |
 | Real Claude CLI, `CLAUDE_SMOKE=1` | 1 passed: fake Codex made the change, real `claude -p` (haiku) reviewed read-only with no MCP servers and approved as actor `agent`; task DONE |
-| Real Codex | not re-run for this change; the Codex adapter's argv is unchanged apart from a per-run schema file |
+| Real Codex, `CODEX_SMOKE=1 -m real_codex` | 2 passed: the 0.1 lifecycle (READY→REVIEW→DONE) and a single-agent workflow where real Codex planned with the plan schema, implemented, and approved with the review schema (read-only); workflow DONE |
+| Claude write scoping probe | see *Limitations*: scoped Edit/Write rules refuse writes outside `allowed_paths` |
 
 ## 9. Known limitations / unsupported
 
-- A Claude executor (`allow_write`) has no OS sandbox: its tool allowlist and the post-run scope
-  check are the only limits, so it is weaker than Codex. Bash is off unless `allow_bash`.
-- Claude quota is known only after the account's first run through the bridge, and for an
-  isolated `CLAUDE_CONFIG_DIR` on macOS the login's storage location was not verified.
+- A Claude executor (`allow_write`) has no OS sandbox. Probe on 2.1.306 (haiku, `dontAsk`):
+  an unscoped `Write` created a file outside the working directory; with `Edit(./src/**)` and
+  `Write(./src/**)` the same run wrote `src/inside.txt` and was refused for a file outside the
+  worktree and for `other.txt` in it. The adapter therefore scopes Edit/Write to the task's
+  `allowed_paths` and denies excluded and protected paths. Read tools still read anything the
+  user can, and `allow_bash` is not path-confined.
+- Claude quota is known only after the account's first run through the bridge. Where an
+  isolated `CLAUDE_CONFIG_DIR` login is stored on macOS was not verified; `account-login`
+  compares the global `claude auth status` identity before and after and exits 3 if it changed.
 - The workflow driver runs tasks one at a time; parallel writers need separate worktrees.
 
 - Quota is a snapshot from the newest session rollout, not a live query: it is as fresh as the

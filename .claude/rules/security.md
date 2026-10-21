@@ -5,9 +5,13 @@
   configurable.
 - **Claude CLI** has no OS sandbox. The bridge limits it instead: `--strict-mcp-config` (no MCP
   servers, so no recursive orchestration), `--setting-sources project` (no user hooks),
-  `--permission-mode dontAsk` with an allowlist of Read/Glob/Grep; Edit/Write only for an agent
-  with `allow_write: true`; Bash only with `allow_bash: true`. This is weaker isolation than
-  Codex: prefer Codex as the executor, and treat a Claude executor as trusted with the worktree.
+  `--permission-mode dontAsk` with an allowlist of Read/Glob/Grep. An agent with
+  `allow_write: true` also gets Edit/Write scoped to the task's `allowed_paths`
+  (`Edit(./src/**)`), with excluded and protected paths denied: unscoped Write was shown by
+  probe to reach files outside the worktree, scoped rules refused them. Read tools can read
+  anything the user can. Bash (`allow_bash: true`) is not path-confined at all. This is weaker
+  than Codex's OS sandbox: prefer Codex as the executor, never combine `allow_bash` with
+  untrusted work.
 - Every agent process gets `CODEX_BRIDGE_AGENT=1`; the bridge refuses to start under it.
 - The bridge starts processes with argv lists only, scrubs credential-shaped env vars, kills the
   whole process group on timeout or cancel, and redacts secrets from stored output.

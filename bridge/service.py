@@ -118,6 +118,8 @@ class Bridge:
             "session_id": row["session_id"],
             "failure": row["failure"],
             "needs_human_approval": bool(row["needs_human"]),
+            # A reviewer agent is still deciding: wait instead of reviewing over it.
+            "review_pending": row["state"] == State.REVIEW and row["id"] in self._runs,
             "updated_at": row["updated_at"],
         }
 
@@ -521,7 +523,10 @@ class Bridge:
         while True:
             res: RunResult = await adapter.run(
                 RunRequest(prompt, account, sandbox, self._timeout(agent, spec.get("timeout_s")),
-                           session_id=session, model=agent.model, allow_bash=agent.allow_bash),
+                           session_id=session, model=agent.model, allow_bash=agent.allow_bash,
+                           write_paths=spec["allowed_paths"],
+                           deny_paths=[*spec.get("excluded_paths", []),
+                                       *self.cfg.protected_paths]),
                 on_start=lambda pid: self.store.update(task_id, codex_pid=pid),
                 on_session=lambda sid: self.store.update(task_id, session_id=sid),
                 should_cancel=cancelled,
@@ -714,7 +719,8 @@ class Bridge:
     async def task_status(self, task_id: str, wait_s: float = 0) -> dict[str, Any]:
         deadline = time.monotonic() + min(max(wait_s, 0), 55)
         row = self.store.get(task_id)
-        while row["state"] in ACTIVE and time.monotonic() < deadline:
+        while ((row["state"] in ACTIVE or task_id in self._runs)
+               and time.monotonic() < deadline):
             await asyncio.sleep(1)
             row = self.store.get(task_id)
         out = self._summary(row)

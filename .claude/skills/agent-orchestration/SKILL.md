@@ -34,7 +34,7 @@ Show the user the task list when there is more than one task or any high-risk ta
 
 ## 5. Monitor
 `bridge_task_status(task_id, wait_s=55)` (or `bridge_workflow_status`) until nothing is
-RUNNING/VERIFYING.
+RUNNING/VERIFYING and `review_pending` is false (a reviewer agent is still deciding).
 - PAUSED QUOTA → if `bridge_list_agents` shows quota fallback is configured (read the config;
   never edit it), `bridge_resume_task` once: the bridge moves the task to a fallback agent or
   logs `auto_switch_skipped`. Otherwise, or if it pauses again, stop, report, wait for the user.

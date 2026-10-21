@@ -120,12 +120,12 @@ def test_config_a(make_orch, fake_codex, fake_claude, monkeypatch):
 # @pt.id KIT-FLOW-B-codex-claude-codex
 # @pt.item Config B: Codex planner, Claude executor, Codex reviewer
 # @pt.condition Claude has allow_write; the plan carries a verification command
-# @pt.expected Claude gets edit tools but no Bash; Codex plans and reviews read-only; task is DONE
+# @pt.expected Claude edits only allowed paths (stray and protected writes refused), no Bash; Codex plans and reviews read-only; DONE
 # @pt.target Bridge.plan, Bridge._run_inner, ClaudeAdapter.build, CodexAdapter
 # @pt.method integration
 # @pt.legacy none
-def test_config_b(make_orch, fake_codex, fake_claude, monkeypatch, tmp_path):
-    monkeypatch.setenv("FAKE_CLAUDE_WRITE", WRITE)
+def test_config_b(make_orch, fake_codex, fake_claude, monkeypatch, tmp_path, repo):
+    monkeypatch.setenv("FAKE_CLAUDE_WRITE", WRITE + ";notes.txt=stray;.env=X=1")
     monkeypatch.setenv("FAKE_CODEX_PLAN", json.dumps([plan_task()]))
     b = make_orch(CONFIG_B)
     wid = run(b.plan("Set x to 2", wait=True))["workflow_id"]
@@ -137,8 +137,13 @@ def test_config_b(make_orch, fake_codex, fake_claude, monkeypatch, tmp_path):
     assert result["attempts"][-1]["verification"]["checks"][0]["passed"]
     assert result["reviews"][-1]["reviewer"] == "codex"
     executor, = log(fake_claude)
-    assert set(tools(executor)) == {"Read", "Glob", "Grep", "Edit", "Write", "NotebookEdit"}
+    assert tools(executor) == ["Read", "Glob", "Grep", "Edit(./src/**)", "Write(./src/**)"]
+    denied = executor["argv"][executor["argv"].index("--disallowedTools") + 1].split(",")
+    assert "Write(./.env)" in denied and "Edit(./.git/**)" in denied
     assert executor["argv"][executor["argv"].index("--permission-mode") + 1] == "dontAsk"
+    # Writes outside the task's paths are refused by the permission rules, not just detected.
+    assert json.loads((fake_claude / "denials.jsonl").read_text()) == ["notes.txt", ".env"]
+    assert not (repo / "notes.txt").exists() and (repo / ".env").read_text() == "SECRET_TOKEN=abc\n"
     planner, reviewer = calls(fake_codex)
     for call in (planner, reviewer):
         assert call["argv"][call["argv"].index("-s") + 1] == "read-only"
@@ -340,6 +345,26 @@ def test_reviewer_failure(make_orch, fake_codex, fake_claude, monkeypatch):
     assert wf["state"] == "WAITING" and wf["tasks"][0]["state"] == "REVIEW"
     assert events(b, task, "agent_review_failed")[0]["detail"]["agent"] == "claude"
     assert run(b.review_task(task, "approve", "Verified the diff myself"))["state"] == "DONE"
+
+
+# @pt.id KIT-REVIEW-004-status-waits
+# @pt.item Status long-poll covers the reviewer agent
+# @pt.condition A task starts in the background with a Claude reviewer configured
+# @pt.expected task_status(wait_s) returns only after the reviewer decided; review_pending is false
+# @pt.target Bridge.task_status, Bridge._summary
+# @pt.method integration
+# @pt.legacy none
+def test_status_waits_for_reviewer(make_orch, fake_codex, fake_claude, monkeypatch):
+    monkeypatch.setenv("FAKE_CODEX_WRITE", WRITE)
+    b = make_orch(CONFIG_A)
+
+    async def flow():
+        task = (await b.create_task(spec()))["task_id"]
+        await b.execute_task(task)
+        return await b.task_status(task, wait_s=30)
+
+    out = run(flow())
+    assert out["state"] == "DONE" and out["review_pending"] is False
 
 
 # @pt.id KIT-REVIEW-003-claude-quota

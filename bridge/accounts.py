@@ -104,6 +104,22 @@ def global_auth_fingerprint() -> str | None:
         return None
 
 
+def global_claude_identity(cfg: BridgeConfig) -> str | None:
+    """Hash of who the global Claude login is, to detect a login that escaped its own home."""
+    env = {k: v for k, v in os.environ.items() if k != HOME_ENV["anthropic"]}
+    try:
+        out = subprocess.run([cfg.claude_bin, "auth", "status"], env=env, timeout=20,
+                             capture_output=True, text=True, check=False,
+                             stdin=subprocess.DEVNULL)
+        data = json.loads(out.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    who = [data.get(k) for k in ("loggedIn", "authMethod", "email", "orgId", "subscriptionType")]
+    return hashlib.sha256(json.dumps(who).encode()).hexdigest()
+
+
 def codex_switch_profiles() -> dict:
     return {
         "installed": shutil.which("codex-switch") is not None,

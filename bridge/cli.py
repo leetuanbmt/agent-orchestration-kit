@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from . import orchestrator
-from .accounts import account_env, codex_overrides, global_auth_fingerprint, login_status
+from .accounts import (account_env, codex_overrides, global_auth_fingerprint,
+                       global_claude_identity, login_status)
 from .config import find_root, load_config
 from .executor import AGENT_ENV
 from .service import Bridge, dumps, resolve_account
@@ -54,14 +55,18 @@ async def _run(args: argparse.Namespace) -> Any:
         if acc.home is None:
             raise ValueError("account-login requires a configured named account")
         acc.home.mkdir(mode=0o700, parents=True, exist_ok=True)
-        before = global_auth_fingerprint()
-        argv = ([cfg.codex_bin, "login", *codex_overrides(acc),
-                 *(["--device-auth"] if args.device_auth else [])]
-                if acc.provider == "openai" else [cfg.claude_bin, "auth", "login"])
+        if acc.provider == "openai":
+            argv = [cfg.codex_bin, "login", *codex_overrides(acc),
+                    *(["--device-auth"] if args.device_auth else [])]
+            fingerprint = global_auth_fingerprint
+        else:
+            argv = [cfg.claude_bin, "auth", "login"]
+            fingerprint = lambda: global_claude_identity(cfg)  # noqa: E731
+        before = fingerprint()
         try:
             subprocess.run(argv, env=account_env(acc, os.environ), check=False)
         finally:
-            if global_auth_fingerprint() != before:
+            if fingerprint() != before:
                 print("ERROR: global auth was modified", file=sys.stderr)
                 raise SystemExit(3)
         return login_status(cfg, acc)

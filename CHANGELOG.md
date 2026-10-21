@@ -13,9 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reviewer, custom; ordered or explicit), routing (opt-in quota fallback) and workflow stages
   (`plan`, `execute`, `test`, `review`). Validated with descriptive errors;
   `codex-bridge config-check` checks it.
-- Claude Code headless adapter (`claude-cli`): read-only by default, writing opt-in with
-  `allow_write`, Bash opt-in with `allow_bash`, no MCP servers, no user hooks; quota from its
-  `rate_limit_event`.
+- Claude Code headless adapter (`claude-cli`): read-only by default; writing opt-in with
+  `allow_write` and scoped to the task's `allowed_paths` (excluded and protected paths denied);
+  Bash opt-in with `allow_bash`; no MCP servers, no user hooks; quota from its
+  `rate_limit_event`. `account-login` refuses a Claude login that changed the global identity.
+- Task status reports `review_pending` and its long-poll waits for a reviewer agent.
 - Routing: tasks pinned by `agent` or `account`, otherwise the first eligible executor
   (`agent_routed` event), then affinity; per-account concurrency slots.
 - Reviewer agents (read-only, decision recorded with the reviewer) and gates-only workflows

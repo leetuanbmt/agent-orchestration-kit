@@ -93,7 +93,9 @@ _CLASSES = [
 KILL_GRACE_S = 5.0
 POLL_S = 1.0
 _CLAUDE_READ_TOOLS = ["Read", "Glob", "Grep"]
-_CLAUDE_WRITE_TOOLS = ["Edit", "Write", "NotebookEdit"]
+# Path-scoped rules: under dontAsk, Edit/Write outside these patterns are refused (verified by
+# probe on claude 2.1.306; unscoped Write reached files outside the working directory).
+_CLAUDE_WRITE_TOOLS = ("Edit", "Write")
 
 
 def classify(text: str) -> str:
@@ -113,6 +115,9 @@ class RunRequest:
     schema: dict[str, Any] = field(default_factory=lambda: OUTPUT_SCHEMA)
     model: str | None = None
     allow_bash: bool = False
+    # Project-relative globs a writing run may change, and globs it must never change.
+    write_paths: list[str] = field(default_factory=list)
+    deny_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -343,14 +348,18 @@ class ClaudeAdapter(Adapter):
 
     def build(self, req: RunRequest, tmp: Path) -> list[str]:
         tools = list(_CLAUDE_READ_TOOLS)
+        denied: list[str] = []
         if req.sandbox == "workspace-write":
-            tools += _CLAUDE_WRITE_TOOLS
+            tools += [f"{t}(./{p})" for p in req.write_paths for t in _CLAUDE_WRITE_TOOLS]
+            denied = [f"{t}(./{p})" for p in req.deny_paths for t in _CLAUDE_WRITE_TOOLS]
         if req.allow_bash:
             tools.append("Bash")
         a = [self.binary, "-p", "--output-format", "stream-json", "--verbose",
              "--strict-mcp-config", "--setting-sources", "project",
              "--permission-mode", "dontAsk", "--allowedTools", ",".join(tools),
              "--json-schema", json.dumps(req.schema)]
+        if denied:
+            a += ["--disallowedTools", ",".join(denied)]
         if req.model:
             a += ["--model", req.model]
         if req.session_id:

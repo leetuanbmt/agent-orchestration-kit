@@ -15,7 +15,7 @@
   <img alt="platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
   <img alt="python" src="https://img.shields.io/badge/python-3.12-blue">
   <img alt="dependencies" src="https://img.shields.io/badge/dependencies-mcp%20%7C%20pyyaml-brightgreen">
-  <img alt="tests" src="https://img.shields.io/badge/tests-144%20passed%20%7C%202%20opt--in-brightgreen">
+  <img alt="tests" src="https://img.shields.io/badge/tests-146%20passed%20%7C%203%20opt--in-brightgreen">
   <img alt="version" src="https://img.shields.io/badge/version-0.1.0%20%2B%20unreleased-blue">
 </p>
 
@@ -327,10 +327,12 @@ the user's authorisation; the legacy `auto_switch` block in `config.json` maps o
    `read-only`.
 2. **Claude CLI:** no OS sandbox, so the bridge narrows it: `--strict-mcp-config` (no MCP servers,
    so no recursive orchestration), `--setting-sources project` (no user hooks), `--permission-mode
-   dontAsk` with a tool allowlist: Read/Glob/Grep; Edit/Write only with `allow_write: true`; Bash
-   only with `allow_bash: true`. **This is weaker isolation than Codex** (a writing Claude agent
-   can edit any worktree file its tools reach; the post-run scope check catches it after the
-   fact). Prefer Codex as executor; give Claude write access only to trusted work.
+   dontAsk` with a tool allowlist: Read/Glob/Grep; with `allow_write: true`, Edit/Write scoped to
+   the task's `allowed_paths` (`Edit(./src/**)`) while excluded and protected paths are denied.
+   A probe showed unscoped Write reaching files outside the worktree and scoped rules refusing
+   them. **This is still weaker isolation than Codex**: read tools can read anything the user
+   can, and Bash (`allow_bash: true`) is not path-confined at all. Prefer Codex as executor;
+   never combine `allow_bash` with untrusted work.
 3. **Recursion guard:** every agent process gets `CODEX_BRIDGE_AGENT=1`; the server and CLI refuse
    to start under it.
 4. **Processes:** argv lists, no shell; own process group, SIGTERM then SIGKILL on timeout or
@@ -353,13 +355,13 @@ the user's authorisation; the legacy `auto_switch` block in `config.json` maps o
 
 ```bash
 scripts/check.sh                                   # full suite (fake codex + fake claude: deterministic)
-CODEX_SMOKE=1 uv run pytest -m real_codex          # one real Codex run, opt-in, uses your quota
+CODEX_SMOKE=1 uv run pytest -m real_codex          # two real Codex runs (task + single-agent workflow), opt-in, uses your quota
 CLAUDE_SMOKE=1 uv run pytest tests/e2e/test_real_claude_smoke.py   # one real Claude review (haiku)
 ```
 
 Result:
 ```console
-144 passed, 2 skipped
+146 passed, 3 skipped
 ```
 
 `tests/fakes/codex` and `tests/fakes/claude` speak the real JSONL / stream-json protocols and

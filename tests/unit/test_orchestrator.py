@@ -216,6 +216,40 @@ def test_slots(tmp_path):
         lock.release()
 
 
+# @pt.id KIT-ORCH-011-claude-login
+# @pt.item Claude account login stays in its own home
+# @pt.condition account-login for an anthropic account; the global Claude identity unchanged or changed
+# @pt.expected claude auth login runs with CLAUDE_CONFIG_DIR set; a changed global identity exits 3
+# @pt.target bridge.cli._run, bridge.accounts.global_claude_identity
+# @pt.method unit
+# @pt.legacy none
+def test_claude_login(tmp_path, monkeypatch):
+    import asyncio
+    from unittest.mock import Mock
+
+    root = tmp_path / "project"
+    (root / ".ai").mkdir(parents=True)
+    home = tmp_path / "claude-home"
+    (root / ".ai" / "orchestrator.yaml").write_text(BASE.replace("/tmp/y", str(home)))
+    monkeypatch.setattr(cli, "find_root", lambda: root)
+    monkeypatch.setattr(cli, "load_config", lambda root: BridgeConfig())
+    monkeypatch.setattr(cli.sys, "stdin", Mock(isatty=lambda: True))
+    monkeypatch.setattr(cli.sys, "stdout", Mock(isatty=lambda: True))
+    monkeypatch.setattr(cli, "login_status", lambda cfg, acc: True)
+    runner = Mock()
+    monkeypatch.setattr(cli.subprocess, "run", runner)
+    args = cli.argparse.Namespace(cmd="account-login", name="cl", device_auth=False)
+    monkeypatch.setattr(cli, "global_claude_identity", lambda cfg: "same")
+    assert asyncio.run(cli._run(args)) is True
+    assert runner.call_args.args[0] == ["claude", "auth", "login"]
+    assert runner.call_args.kwargs["env"]["CLAUDE_CONFIG_DIR"] == str(home.resolve())
+    identities = iter(["before", "after"])
+    monkeypatch.setattr(cli, "global_claude_identity", lambda cfg: next(identities))
+    with pytest.raises(SystemExit) as stop:
+        asyncio.run(cli._run(args))
+    assert stop.value.code == 3
+
+
 # @pt.id KIT-ORCH-010-recursion
 # @pt.item Recursion guard
 # @pt.condition The MCP server and the CLI start with the agent marker in the environment
