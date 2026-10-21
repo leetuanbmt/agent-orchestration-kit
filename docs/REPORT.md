@@ -11,18 +11,20 @@ through the bridge, including two accounts in parallel.
 | Codex sandbox (macOS) | 0.163.0 | `workspace-write` can write git-ignored files in the worktree (incl. `.ai/`) but **not** `.git/`; `$TMPDIR` and `/tmp` unwritable when excluded; `ps`/`kill` forbidden |
 | MCP Python SDK | 2.3.0 | `MCPServer` (formerly FastMCP); non-`ToolError` exceptions are hidden from the client |
 | Claude Code | 2.1.303 | `.mcp.json` with `${CLAUDE_PROJECT_DIR:-.}`; `enabledMcpjsonServers` honoured only after the folder is trusted; `.claude/rules/*.md` auto-loaded; `claude -p` called `bridge_health`; `claude mcp list` → Connected |
+| Claude Code headless | 2.1.306 | `claude -p --output-format stream-json --verbose`, prompt on stdin; events `system/init` (session_id; `mcp_servers: []` under `--strict-mcp-config`), `rate_limit_event` (`unifiedWindows.five_hour/seven_day.utilization` 0–1, `resetsAt`), `result` (`is_error`, `subtype`, `structured_output` with `--json-schema`, `session_id`, `api_error_status`); `--permission-mode dontAsk` + `--allowedTools`; `--setting-sources project`; `--resume`; `auth status` JSON `loggedIn`; `--bare` disables OAuth, so it is not used |
 | codex-switch | local repo `claude-switcher/agents-switch` | profiles are full auth snapshots incl. refresh tokens, `switch` overwrites the global `auth.json` → not used for execution; new `home` subcommands used instead (below) |
 
 ## 2. Architecture
 
 ```
-Claude Code ─MCP stdio─▶ bridge/server.py ─┐
-human CLI ─────────────▶ bridge/cli.py ────┴▶ bridge/service.py (Bridge)
-                                               ├ state.py     SQLite WAL, BEGIN IMMEDIATE, events
-                                               ├ executor.py  codex exec / resume, process group
-                                               ├ review.py    snapshot, diff, scope, verification
-                                               ├ accounts.py  CODEX_HOME per account, flock locks
-                                               └ security.py  path rules, env scrub, redaction
+MCP client ─MCP stdio─▶ bridge/server.py ─┐
+human CLI ────────────▶ bridge/cli.py ────┴▶ bridge/service.py (Bridge: routing, review, workflows)
+                                               ├ orchestrator.py roles → agents → accounts, workflow stages (YAML)
+                                               ├ state.py        SQLite WAL, tasks, workflows, quota, events
+                                               ├ executor.py     Adapter base; CodexAdapter, ClaudeAdapter; process group
+                                               ├ review.py       snapshot, diff, scope, verification
+                                               ├ accounts.py     CODEX_HOME / CLAUDE_CONFIG_DIR per account, flock slots
+                                               └ security.py     path rules, env scrub, redaction
 ```
 
 - One service layer behind MCP and CLI, so both enforce the same gates.
@@ -94,7 +96,41 @@ rule in `.claude/rules/codex-delegation.md` came out of this.
   which would let Codex edit its own task record (found by probe, fixed in T0012).
 - `.ai/config.json` is tracked, not ignored, so changes to it are visible in the diff.
 
-## 8. Known limitations / unsupported
+## 8. Configurable orchestration (unreleased)
+
+Role ≠ agent ≠ provider ≠ account ≠ model. `.ai/orchestrator.yaml` (pydantic schema, unknown
+keys rejected, errors carry the field path) declares accounts, agents, roles, routing and
+workflow stages; without it `orchestrator.legacy()` rebuilds the 0.1 setup from `config.json`
+(agents named after accounts, the client plans and reviews, `auto_switch` → quota fallback).
+
+| Piece | Implementation |
+|---|---|
+| Agent registry | `agents.<id>`: adapter, account, model, capabilities, `allow_write`, `allow_bash`, timeout, enabled |
+| Provider adapters | `Adapter` base (process group, stdin prompt, watchdog, recursion marker) with `CodexAdapter` and `ClaudeAdapter`; `client` marks the MCP caller |
+| Role registry | built-in planner / executor / reviewer (+ custom names); `requires` read/write; executor must write and cannot be the client |
+| Routing | pin by agent or account; else first eligible agent in role order (`agent_routed`); `explicit` strategy; affinity after the first run; `max_concurrency` per account (flock slots + state check); opt-in quota fallback across agents; human `reassign` by agent or account |
+| Workflow | stages `plan → execute → test → review`; reviewer agent read-only with a review schema, applied as actor `agent`; no review stage → bridge approves verified work; planner agent → validated tasks → sequential driver ending DONE / INCOMPLETE / WAITING |
+| State | new columns `agent`, `workflow_id`; tables `workflows`, `account_quota` (Claude `rate_limit_event` snapshots); migration adds them to old databases |
+
+Configurations covered by tests (fakes): A Claude planner → Codex executor → Claude reviewer;
+B Codex planner → Claude executor → Codex reviewer; C Claude planner → two Codex executor accounts
+(busy routing, quota fallback on/off); D one Codex agent in every role; E gates only.
+
+Verification of this change:
+
+| Check | Result |
+|---|---|
+| `scripts/check.sh` | 144 passed, 2 skipped (opt-in real smoke tests) |
+| Real Claude CLI, `CLAUDE_SMOKE=1` | 1 passed: fake Codex made the change, real `claude -p` (haiku) reviewed read-only with no MCP servers and approved as actor `agent`; task DONE |
+| Real Codex | not re-run for this change; the Codex adapter's argv is unchanged apart from a per-run schema file |
+
+## 9. Known limitations / unsupported
+
+- A Claude executor (`allow_write`) has no OS sandbox: its tool allowlist and the post-run scope
+  check are the only limits, so it is weaker than Codex. Bash is off unless `allow_bash`.
+- Claude quota is known only after the account's first run through the bridge, and for an
+  isolated `CLAUDE_CONFIG_DIR` on macOS the login's storage location was not verified.
+- The workflow driver runs tasks one at a time; parallel writers need separate worktrees.
 
 - Quota is a snapshot from the newest session rollout, not a live query: it is as fresh as the
   account's last Codex turn and `UNKNOWN` for an account that has never run.
