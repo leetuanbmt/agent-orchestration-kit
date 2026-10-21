@@ -1,0 +1,11 @@
+# No LLM reviewer: a task that passes the scope check and every verification command is
+# approved by the bridge. High-risk or sensitive changes still stop for a human.
+version: 1
+accounts:
+  default: {provider: openai}   # the inherited ~/.codex login, used read-only
+agents:
+  codex: {adapter: codex-cli, account: default}
+roles:
+  executor: codex
+workflow:
+  stages: [execute, test]

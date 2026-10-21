@@ -14,10 +14,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .accounts import (account_env, codex_overrides, global_auth_fingerprint,
-                       login_status, resolve)
+from . import orchestrator
+from .accounts import account_env, codex_overrides, global_auth_fingerprint, login_status
 from .config import find_root, load_config
-from .service import Bridge, dumps
+from .executor import AGENT_ENV
+from .service import Bridge, dumps, resolve_account
 
 
 def _human_confirm(task_id: str) -> bool:
@@ -34,6 +35,12 @@ async def _run(args: argparse.Namespace) -> Any:
         from .server import _serve
         await _serve()
         return None
+    if args.cmd == "config-check":
+        root = find_root()
+        orch = orchestrator.load(root, load_config(root))
+        return {"ok": True, "source": orch.source, "stages": orch.workflow.stages,
+                "accounts": sorted(orch.accounts), "agents": sorted(orch.agents),
+                "roles": {r: orch.role(r).agents for r in orch.roles}}
     if args.cmd in {"account-list", "account-login"}:
         if args.cmd == "account-login" and not (sys.stdin.isatty() and sys.stdout.isatty()):
             print("refused: account-login needs an interactive terminal (human only)",
@@ -43,17 +50,16 @@ async def _run(args: argparse.Namespace) -> Any:
         cfg = load_config(root)
         if args.cmd == "account-list":
             return Bridge(root, cfg).list_accounts()
-        acc = resolve(cfg, root, args.name)
-        if acc.codex_home is None:
+        acc = resolve_account(orchestrator.load(root, cfg), cfg, root, args.name)
+        if acc.home is None:
             raise ValueError("account-login requires a configured named account")
-        acc.codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+        acc.home.mkdir(mode=0o700, parents=True, exist_ok=True)
         before = global_auth_fingerprint()
+        argv = ([cfg.codex_bin, "login", *codex_overrides(acc),
+                 *(["--device-auth"] if args.device_auth else [])]
+                if acc.provider == "openai" else [cfg.claude_bin, "auth", "login"])
         try:
-            subprocess.run(
-                [cfg.codex_bin, "login", *codex_overrides(acc),
-                 *(["--device-auth"] if args.device_auth else [])],
-                env=account_env(acc, os.environ), check=False,
-            )
+            subprocess.run(argv, env=account_env(acc, os.environ), check=False)
         finally:
             if global_auth_fingerprint() != before:
                 print("ERROR: global auth was modified", file=sys.stderr)
@@ -79,6 +85,14 @@ async def _run(args: argparse.Namespace) -> Any:
             return await b.task_result(args.task_id)
         case "list":
             return await b.list_tasks(args.state, args.limit)
+        case "agents":
+            return b.list_agents()
+        case "plan":
+            return await b.plan(args.objective, args.context, wait=True)
+        case "run-workflow":
+            return await b.run_workflow(args.workflow_id, wait=True)
+        case "workflow-status":
+            return await b.workflow_status(args.workflow_id)
         case "cancel":
             return await b.cancel_task(args.task_id, args.reason)
         case "review":
@@ -86,7 +100,7 @@ async def _run(args: argparse.Namespace) -> Any:
         case "reassign":
             if not _human_confirm(args.task_id):
                 raise SystemExit(2)
-            return b.reassign_account(args.task_id, args.account)
+            return b.reassign_account(args.task_id, args.agent)
         case "approve":
             if not _human_confirm(args.task_id):
                 raise SystemExit(2)
@@ -99,6 +113,8 @@ def main(argv: list[str] | None = None) -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("serve", help="run the MCP stdio server")
     sub.add_parser("health")
+    sub.add_parser("config-check", help="validate .ai/orchestrator.yaml (or the legacy config)")
+    sub.add_parser("agents", help="list agents, roles and availability")
     sub.add_parser("account-list")
     sub.add_parser("account-clear").add_argument("name")
     login = sub.add_parser("account-login", help="HUMAN ONLY: log in an isolated account")
@@ -124,11 +140,19 @@ def main(argv: list[str] | None = None) -> None:
     v.add_argument("task_id")
     v.add_argument("--decision", choices=["approve", "rework", "block"], required=True)
     v.add_argument("--notes", required=True)
+    pl = sub.add_parser("plan", help="run the planner agent on an objective")
+    pl.add_argument("objective")
+    pl.add_argument("--context", default="")
+    for name in ("run-workflow", "workflow-status"):
+        sub.add_parser(name).add_argument("workflow_id")
     sub.add_parser("approve", help="HUMAN ONLY: close an APPROVED task").add_argument("task_id")
-    reass = sub.add_parser("reassign", help="HUMAN ONLY: change task account")
+    reass = sub.add_parser("reassign", help="HUMAN ONLY: move a task to another agent or account")
     reass.add_argument("task_id")
-    reass.add_argument("account")
+    reass.add_argument("agent")
     args = p.parse_args(argv)
+    if os.environ.get(AGENT_ENV):
+        print("refused: the bridge cannot run inside an agent it started", file=sys.stderr)
+        raise SystemExit(2)
     try:
         out = asyncio.run(_run(args))
     except (ValueError, KeyError, RuntimeError) as e:

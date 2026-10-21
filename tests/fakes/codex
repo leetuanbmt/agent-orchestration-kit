@@ -5,6 +5,10 @@ FAKE_CODEX_SCENARIO: comma-separated scenarios, one per invocation (last one rep
   ok | blocked | quota | auth | network | crash | hang | commit | outside | nojson
 FAKE_CODEX_WRITE: "path=content;path2=content" (or "@file" holding that) written on ok runs.
 FAKE_CODEX_DIR:   scratch dir for the call counter, argv/prompt log and the hang child's pid.
+FAKE_CODEX_DECISION: "decision:notes" a reviewer run returns (default "approve:looks good").
+FAKE_CODEX_PLAN:  JSON list of tasks a planner run returns (default: one task).
+Runs answer the --output-schema they get (executor, reviewer or planner); read-only runs never
+write files, as the real sandbox would refuse.
 """
 
 import atexit
@@ -59,6 +63,8 @@ def emit(obj):
 
 
 def write_files():
+    if read_only():
+        return
     spec = os.environ.get("FAKE_CODEX_WRITE", "")
     if spec.startswith("@"):  # read at call time, so a long-lived server can change it
         f = Path(spec[1:])
@@ -70,9 +76,34 @@ def write_files():
         p.write_text(content)
 
 
+def schema_keys():
+    if "--output-schema" not in argv:
+        return set()
+    schema = json.loads(Path(argv[argv.index("--output-schema") + 1]).read_text())
+    return set(schema.get("properties", {}))
+
+
+def read_only():
+    return ("-s" in argv and argv[argv.index("-s") + 1] == "read-only") or \
+        'sandbox_mode="read-only"' in argv
+
+
 def finish(status, files):
-    final = {"status": status, "summary": f"fake {scenario}", "files_changed": files,
-             "tests_run": [], "notes": ""}
+    keys = schema_keys()
+    if "decision" in keys:
+        decision, _, notes = os.environ.get("FAKE_CODEX_DECISION", "approve:looks good") \
+            .partition(":")
+        final = {"decision": decision, "notes": notes}
+    elif "tasks" in keys:
+        final = {"tasks": json.loads(os.environ.get("FAKE_CODEX_PLAN") or json.dumps([{
+            "objective": "Set x to 2 in src/app.py", "context": "", "scope": "",
+            "allowed_paths": ["src/**"], "excluded_paths": [],
+            "acceptance_criteria": ["src/app.py contains x = 2"],
+            "verification_commands": [], "depends_on": [], "risk_level": "low"}])),
+            "notes": "fake plan"}
+    else:
+        final = {"status": status, "summary": f"fake {scenario}", "files_changed": files,
+                 "tests_run": [], "notes": ""}
     text = json.dumps(final) if scenario != "nojson" else "not json"
     emit({"type": "item.completed", "item": {"id": "i1", "type": "agent_message", "text": text}})
     if out_file:

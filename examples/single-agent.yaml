@@ -1,0 +1,12 @@
+# One agent plans, implements and reviews; the bridge's verification commands stay the gate.
+version: 1
+accounts:
+  codex-work: {provider: openai, home: ~/.codex-accounts/homes/work}
+agents:
+  codex: {adapter: codex-cli, account: codex-work}
+roles:
+  planner: codex
+  executor: codex
+  reviewer: codex
+workflow:
+  stages: [plan, execute, test, review]

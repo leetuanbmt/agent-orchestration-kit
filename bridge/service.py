@@ -46,6 +46,16 @@ def _alive(pid: int | None) -> bool:
     return True
 
 
+def resolve_account(orch: OrchestratorConfig, cfg: BridgeConfig, root: Path,
+                    name: str) -> Account:
+    if orch.source.startswith("legacy"):
+        return resolve(cfg, root, name)
+    profile = orch.accounts.get(name)
+    if profile is None:
+        raise ValueError(f"unknown account: {name}")
+    return resolve_profile(name, profile.provider, profile.home, root)
+
+
 class Bridge:
     def __init__(self, root: str | Path | None = None, cfg: BridgeConfig | None = None,
                  orch: OrchestratorConfig | None = None):
@@ -83,12 +93,7 @@ class Bridge:
         return self._adapters[name]
 
     def _account(self, name: str) -> Account:
-        if self.legacy:
-            return resolve(self.cfg, self.root, name)
-        profile = self.orch.accounts.get(name)
-        if profile is None:
-            raise ValueError(f"unknown account: {name}")
-        return resolve_profile(name, profile.provider, profile.home, self.root)
+        return resolve_account(self.orch, self.cfg, self.root, name)
 
     def _slots(self, account: str) -> int:
         profile = self.orch.accounts.get(account)
@@ -758,7 +763,7 @@ class Bridge:
             await coro
         else:
             self._workflows[wid] = asyncio.create_task(coro)
-        return self.workflow_status(wid)
+        return self._workflow(wid)
 
     async def _plan(self, wid: str, name: str, objective: str, context: str) -> None:
         try:
@@ -787,7 +792,14 @@ class Bridge:
         finally:
             self._workflows.pop(wid, None)
 
-    def workflow_status(self, wid: str) -> dict[str, Any]:
+    async def workflow_status(self, wid: str, wait_s: float = 0) -> dict[str, Any]:
+        deadline = time.monotonic() + min(max(wait_s, 0), 55)
+        while (self.store.workflow(wid)["state"] in {"PLANNING", "RUNNING"}
+               and time.monotonic() < deadline):
+            await asyncio.sleep(1)
+        return self._workflow(wid)
+
+    def _workflow(self, wid: str) -> dict[str, Any]:
         wf = self.store.workflow(wid)
         return {"workflow_id": wid, "objective": wf["objective"], "state": wf["state"],
                 "planner": wf["planner"], "detail": wf["detail"],
@@ -804,7 +816,7 @@ class Bridge:
                 await coro
             else:
                 self._workflows[wid] = asyncio.create_task(coro)
-        return self.workflow_status(wid)
+        return self._workflow(wid)
 
     def _actionable(self, row: dict[str, Any]) -> bool:
         if row["state"] in {State.READY, State.REWORK, State.FAILED}:
