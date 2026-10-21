@@ -9,6 +9,8 @@
       "Bash(*account-login*)",
       "Bash(*codex login*)",
       "Bash(*codex logout*)",
+      "Bash(*claude auth login*)",
+      "Bash(*claude auth logout*)",
       "Bash(*codex-switch switch*)",
       "Bash(*codex-switch next*)",
       "Bash(*codex-switch home add*)",

@@ -86,10 +86,24 @@ for name in ['.mcp.json', '.claude/settings.json']:
     if obj != before:
         plan(name, dump(obj))
 
-copies = {f'.claude/rules/codex-{n}.md': kit / f'.claude/rules/codex-{n}.md' for n in ['orchestration', 'delegation', 'review', 'security']}
-for source in (kit / '.claude/skills/codex-delegation').rglob('*'):
+copies = {f'.claude/rules/{n}.md': kit / f'.claude/rules/{n}.md' for n in ['orchestration', 'delegation', 'security']}
+for source in (kit / '.claude/skills/agent-orchestration').rglob('*'):
     if source.is_file():
         copies[str(source.relative_to(kit))] = source
+# Files earlier kit versions installed under codex-* names: remove them while they are unedited.
+retired = [f'.claude/rules/codex-{n}.md' for n in ['orchestration', 'delegation', 'review', 'security']]
+retired.append('.claude/skills/codex-delegation/SKILL.md')
+for name in retired:
+    record = manifest['files'].get(name)
+    old = read(name)
+    if record is None or old is None:
+        continue
+    if hashlib.sha256(old).hexdigest() != record['sha256']:
+        print('Warning: keeping modified retired file: ' + name, file=sys.stderr)
+        continue
+    original = record['original']
+    plan(name, None if original is None else base64.b64decode(original))
+    del manifest['files'][name]
 for name, source in copies.items():
     data = source.read_bytes()
     old = read(name)
@@ -102,7 +116,7 @@ for name, source in copies.items():
 
 start = b'<!-- codex-bridge:start -->'
 end = b'<!-- codex-bridge:end -->'
-block = start + b'\nClaude plans and reviews; Codex executes. Delegate implementation first.\nApprovals, reassignment, and account actions are human-only.\nFollow .claude/rules/codex-*.md and the .claude/skills/codex-delegation/SKILL.md skill.\n' + end
+block = start + b'\nRoles map to agents in .ai/orchestrator.yaml (bridge_list_agents); without it Claude plans and reviews, Codex executes.\nDelegate implementation to the executor role first. Approvals, reassignment, and account actions are human-only.\nFollow .claude/rules/{orchestration,delegation,security}.md and the .claude/skills/agent-orchestration/SKILL.md skill.\n' + end
 raw = read('CLAUDE.md')
 content = raw or b''
 if start in content or end in content:
@@ -138,6 +152,13 @@ if changes or manifest_changed:
         (backup / 'manifest.previous').write_bytes(old_manifest)
     for name, data in changes.items():
         dest = path(name)
+        if data is None:
+            dest.unlink()
+            parent = dest.parent
+            while parent != target and not any(parent.iterdir()):
+                parent.rmdir()
+                parent = parent.parent
+            continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
     if manifest_changed:

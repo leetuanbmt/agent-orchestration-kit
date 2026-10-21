@@ -225,6 +225,7 @@ class Bridge:
             })
         return {"source": self.orch.source, "stages": self.orch.workflow.stages,
                 "roles": {r: self.orch.role(r).model_dump() for r in self.orch.roles},
+                "quota_fallback": self.orch.routing.quota_fallback.model_dump(),
                 "agents": agents}
 
     def clear_account(self, name: str) -> dict[str, Any]:

@@ -62,9 +62,9 @@ def test_fresh_install(repo):
     assert server['env'] == {'BRIDGE_PROJECT_ROOT': '${CLAUDE_PROJECT_DIR:-.}'}
     settings = json.loads((repo / '.claude/settings.json').read_text())
     assert settings == json.loads((KIT / '.claude/settings.json').read_text())
-    for name in ['orchestration', 'delegation', 'review', 'security']:
-        assert (repo / f'.claude/rules/codex-{name}.md').read_bytes() == (KIT / f'.claude/rules/codex-{name}.md').read_bytes()
-    assert (repo / '.claude/skills/codex-delegation/SKILL.md').read_bytes() == (KIT / '.claude/skills/codex-delegation/SKILL.md').read_bytes()
+    for name in ['orchestration', 'delegation', 'security']:
+        assert (repo / f'.claude/rules/{name}.md').read_bytes() == (KIT / f'.claude/rules/{name}.md').read_bytes()
+    assert (repo / '.claude/skills/agent-orchestration/SKILL.md').read_bytes() == (KIT / '.claude/skills/agent-orchestration/SKILL.md').read_bytes()
     assert '<!-- codex-bridge:start -->' in (repo / 'CLAUDE.md').read_text()
     assert (repo / '.ai/.gitignore').read_bytes() == b'*\n!.gitignore\n!config.json\n'
     manifest = manifest_path(repo)
@@ -122,7 +122,7 @@ def test_preserve_existing(repo):
     run('uninstall.sh', repo)
     for name, data in originals.items():
         assert (repo / name).read_bytes() == data.encode()
-    assert not list((repo / '.claude/rules').glob('codex-*.md'))
+    assert not list((repo / '.claude').rglob('*.md'))
 
 
 # @pt.id KIT-SETUP-003-conflicts
@@ -132,7 +132,7 @@ def test_preserve_existing(repo):
 # @pt.target scripts/setup.sh scripts/uninstall.sh
 # @pt.method integration
 # @pt.legacy none (new kit)
-@pytest.mark.parametrize('name,data', [('.mcp.json', '{"mcpServers":{"codex-bridge":{"command":"custom"}}}'), ('.claude/rules/codex-review.md', 'custom rule\n')])
+@pytest.mark.parametrize('name,data', [('.mcp.json', '{"mcpServers":{"codex-bridge":{"command":"custom"}}}'), ('.claude/rules/delegation.md', 'custom rule\n')])
 def test_conflicts(repo, name, data):
     write(repo, name, data)
     before = snapshot(repo)
@@ -152,7 +152,7 @@ def test_conflicts(repo, name, data):
 # @pt.legacy none (new kit)
 def test_uninstall_modified(repo):
     run('setup.sh', repo)
-    write(repo, '.claude/rules/codex-security.md', 'user modification\n')
+    write(repo, '.claude/rules/security.md', 'user modification\n')
     before = snapshot(repo)
     run('setup.sh', repo, ok=False)
     assert snapshot(repo) == before
@@ -162,8 +162,8 @@ def test_uninstall_modified(repo):
     settings['later'] = True
     settings_path.write_text(json.dumps(settings))
     result = run('uninstall.sh', repo)
-    assert 'Warning' in result.stderr and 'codex-security.md' in result.stderr
-    assert (repo / '.claude/rules/codex-security.md').read_text() == 'user modification\n'
+    assert 'Warning' in result.stderr and 'security.md' in result.stderr
+    assert (repo / '.claude/rules/security.md').read_text() == 'user modification\n'
     assert json.loads(settings_path.read_text()) == {'permissions': {'deny': ['later rule']}, 'later': True}
 
 
@@ -202,8 +202,8 @@ def test_invalid_target(tmp_path):
 # @pt.method integration
 # @pt.legacy none (new kit)
 def test_preexisting_assets(repo):
-    rule = '.claude/rules/codex-review.md'
-    write(repo, rule, (KIT / '.claude/rules/codex-review.md').read_text())
+    rule = '.claude/rules/delegation.md'
+    write(repo, rule, (KIT / '.claude/rules/delegation.md').read_text())
     write(repo, '.claude/settings.json', (KIT / '.claude/settings.json').read_text())
     original = 'before\n<!-- codex-bridge:start -->old<!-- codex-bridge:end -->\nafter\n'
     write(repo, 'CLAUDE.md', original)
@@ -212,7 +212,7 @@ def test_preexisting_assets(repo):
     assert (repo / 'CLAUDE.md').read_text().startswith('before\n<!-- codex-bridge:start -->')
     assert (repo / 'CLAUDE.md').read_text().endswith('<!-- codex-bridge:end -->\nafter\n')
     run('uninstall.sh', repo)
-    assert (repo / rule).read_bytes() == (KIT / '.claude/rules/codex-review.md').read_bytes()
+    assert (repo / rule).read_bytes() == (KIT / '.claude/rules/delegation.md').read_bytes()
     assert (repo / '.claude/settings.json').read_bytes() == (KIT / '.claude/settings.json').read_bytes()
     assert (repo / 'CLAUDE.md').read_text() == original
     assert (repo / '.ai/.gitignore').read_text() == 'custom\n'
@@ -235,3 +235,30 @@ def test_invalid_json(repo, name, data):
     assert snapshot(repo) == before
     assert not manifest_path(repo).parent.exists()
     assert not (repo / '.ai').exists()
+
+
+# @pt.id KIT-SETUP-009-retired-names
+# @pt.item Upgrading an install that used the codex-* rule and skill names
+# @pt.condition The manifest lists old kit files: one unedited, one edited by the user
+# @pt.expected Setup removes the unedited one and its manifest entry, keeps the edited one with a warning
+# @pt.target scripts/setup.sh
+# @pt.method integration
+# @pt.legacy codex-*.md rules and codex-delegation skill (0.1.x)
+def test_retired_names(repo):
+    run('setup.sh', repo)
+    manifest = json.loads(manifest_path(repo).read_text())
+    old = {'.claude/rules/codex-review.md': b'old review rule\n',
+           '.claude/skills/codex-delegation/SKILL.md': b'old skill\n'}
+    for name, data in old.items():
+        write(repo, name, data.decode())
+        manifest['files'][name] = {'original': None, 'sha256': hashlib.sha256(data).hexdigest()}
+    manifest_path(repo).write_text(json.dumps(manifest))
+    write(repo, '.claude/rules/codex-review.md', 'edited by the user\n')
+    result = run('setup.sh', repo)
+    assert 'keeping modified retired file: .claude/rules/codex-review.md' in result.stderr
+    assert (repo / '.claude/rules/codex-review.md').read_text() == 'edited by the user\n'
+    assert not (repo / '.claude/skills/codex-delegation').exists()
+    files = json.loads(manifest_path(repo).read_text())['files']
+    assert '.claude/skills/codex-delegation/SKILL.md' not in files
+    run('uninstall.sh', repo)
+    assert (repo / '.claude/rules/codex-review.md').exists()
