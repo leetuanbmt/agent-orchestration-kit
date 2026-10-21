@@ -101,7 +101,7 @@ def test_eligibility(make_bridge, accounts, fake_codex):
     bridge.store.set_account_state("quota", "quota", actor=Actor.BRIDGE)
     busy = run(bridge.create_task(spec(account="busy", objective="Busy task",
                                        sandbox="read-only")))["task_id"]
-    bridge.store.transition(busy, State.RUNNING, Actor.CLAUDE, expect={State.READY})
+    bridge.store.transition(busy, State.RUNNING, Actor.CLIENT, expect={State.READY})
     task = create(bridge)
     run(bridge.execute_task(task, wait=True))
     assert calls(fake_codex)[-1]["codex_home"] == accounts["b"]["codex_home"]

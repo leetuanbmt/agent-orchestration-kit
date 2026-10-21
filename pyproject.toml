@@ -5,6 +5,7 @@ description = "Project-local Claude (planner/reviewer) <-> Codex CLI (executor) 
 requires-python = ">=3.12"
 dependencies = [
     "mcp>=2.3.0,<3",
+    "pyyaml>=6.0,<7",
 ]
 
 [project.urls]

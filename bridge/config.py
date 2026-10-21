@@ -38,6 +38,7 @@ class BridgeConfig(BaseModel):
     auto_switch: AutoSwitchConfig = AutoSwitchConfig()
 
     codex_bin: str = "codex"
+    claude_bin: str = "claude"
     model: str | None = None
     # danger-full-access is deliberately not representable: no silent fallback to unrestricted.
     sandbox: Literal["read-only", "workspace-write"] = "workspace-write"

@@ -18,7 +18,7 @@ from tests.conftest import run, spec
 # @pt.target Bridge.__init__, Bridge.health, CodexAdapter.run
 # @pt.method integration
 # @pt.legacy none (new kit)
-def test_state_location(make_bridge, repo, monkeypatch):
+def test_state_location(make_bridge, repo, monkeypatch, fake_codex):
     b = make_bridge()
     git_dir = subprocess.check_output(
         ["git", "-C", str(repo), "rev-parse", "--absolute-git-dir"], text=True).strip()
@@ -27,7 +27,11 @@ def test_state_location(make_bridge, repo, monkeypatch):
     monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n")
     tid = run(b.create_task(spec()))["task_id"]
     run(b.execute_task(tid, wait=True))
-    assert (b.state_dir / "output_schema.json").is_file()
+    from tests.integration.test_accounts_routing import calls
+
+    argv = calls(fake_codex)[-1]["argv"]
+    schema = argv[argv.index("--output-schema") + 1]
+    assert schema.startswith(str(b.state_dir) + "/")
     assert not (repo / ".ai" / "bridge.db").exists()
     assert not (repo / ".ai" / "output_schema.json").exists()
     health = run(b.health())

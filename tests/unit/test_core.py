@@ -37,19 +37,23 @@ def test_task_spec_rejects_invalid() -> None:
 
 # @pt.id KIT-UNIT-002-transition-ownership
 # @pt.item State machine legality and ownership
-# @pt.condition Codex/bridge tries to approve; claude approves; illegal jump; terminal exit
+# @pt.condition client, reviewer agent and bridge (no review stage) approve; human approve; illegal jump; terminal exit
 # @pt.expected only listed (from,to,actor) triples pass; terminal states have no exits
 # @pt.target bridge.models.check_transition
 # @pt.method unit
 # @pt.legacy none (new kit)
 def test_transitions_enforce_actor_and_legality() -> None:
-    check_transition(State.REVIEW, State.APPROVED, Actor.CLAUDE)
+    check_transition(State.REVIEW, State.APPROVED, Actor.CLIENT)
+    check_transition(State.REVIEW, State.APPROVED, Actor.AGENT)  # reviewer agent
+    check_transition(State.REVIEW, State.APPROVED, Actor.BRIDGE)  # workflow without review stage
     with pytest.raises(TransitionError):
-        check_transition(State.REVIEW, State.APPROVED, Actor.BRIDGE)  # executor side can't approve
+        check_transition(State.REVIEW, State.APPROVED, Actor.HUMAN)
     with pytest.raises(TransitionError):
-        check_transition(State.READY, State.DONE, Actor.CLAUDE)
+        check_transition(State.VERIFYING, State.APPROVED, Actor.AGENT)  # gates come first
     with pytest.raises(TransitionError):
-        check_transition(State.APPROVED, State.DONE, Actor.CLAUDE)  # closes via gates/human only
+        check_transition(State.READY, State.DONE, Actor.CLIENT)
+    with pytest.raises(TransitionError):
+        check_transition(State.APPROVED, State.DONE, Actor.CLIENT)  # closes via gates/human only
     for t in TERMINAL:
         for dst in State:
             for actor in Actor:
