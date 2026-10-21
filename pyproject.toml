@@ -1,5 +1,5 @@
 [project]
-name = "claude-codex-project-kit"
+name = "agent-orchestration-kit"
 version = "0.1.0"
 description = "Project-local Claude (planner/reviewer) <-> Codex CLI (executor) MCP bridge"
 requires-python = ">=3.12"
@@ -8,9 +8,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/leetuanbmt/claude-codex-project-kit"
-Repository = "https://github.com/leetuanbmt/claude-codex-project-kit"
-Changelog = "https://github.com/leetuanbmt/claude-codex-project-kit/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/leetuanbmt/agent-orchestration-kit"
+Repository = "https://github.com/leetuanbmt/agent-orchestration-kit"
+Changelog = "https://github.com/leetuanbmt/agent-orchestration-kit/blob/main/CHANGELOG.md"
 
 [project.scripts]
 codex-bridge = "bridge.cli:main"

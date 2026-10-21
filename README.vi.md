@@ -1,4 +1,4 @@
-<h1 align="center">claude-codex-project-kit</h1>
+<h1 align="center">agent-orchestration-kit</h1>
 
 <p align="center">
   Harness cục bộ theo từng project: <b>Claude Code lập kế hoạch và review</b>, <b>Codex CLI viết code</b>.<br>
@@ -21,7 +21,7 @@
 
 Khi để một AI agent vừa viết code vừa tự đánh giá, không có ai kiểm tra lại: agent báo "xong" là xong, kể cả khi test chưa chạy hay nó sửa ra ngoài phạm vi được giao.
 
-`claude-codex-project-kit` tách hai vai trò ra:
+`agent-orchestration-kit` tách hai vai trò ra:
 - **Claude Code (advisor)**: phân tích, chia việc thành task, review patch và quyết định approve / rework / block.
 - **Codex CLI (executor)**: implement, viết test và sửa lỗi cho từng task một.
 - **`codex-bridge`**: giữ trạng thái task trong SQLite, chạy Codex trong sandbox, kiểm tra phạm vi file thay đổi và tự chạy lại lệnh verification. Lời tự báo cáo của Codex không được tính là bằng chứng.
@@ -46,8 +46,8 @@ runtime trong git directory của repository (`.git/codex-bridge/`). Không có 
   riêng (`codex login status` → "Logged in using ChatGPT"). Không cần OpenAI API key.
 
 ```bash
-git clone https://github.com/leetuanbmt/claude-codex-project-kit.git
-cd claude-codex-project-kit
+git clone https://github.com/leetuanbmt/agent-orchestration-kit.git
+cd agent-orchestration-kit
 uv sync                                   # .venv cục bộ của project
 scripts/check.sh --with-health            # chạy test + kiểm tra Codex có kết nối được không
 claude                                    # một lần: trust thư mục → codex-bridge kết nối

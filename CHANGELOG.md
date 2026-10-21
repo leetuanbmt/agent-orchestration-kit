@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Project renamed to `agent-orchestration-kit` (GitHub repository and Python package name). The
+  `bridge` module, the `codex-bridge` CLI and the MCP server name are unchanged, so existing
+  installs keep working; the old GitHub URL redirects.
+
 ## [0.1.0] - 2026-10-19
 
 Initial release.
@@ -44,5 +49,5 @@ Initial release.
   real `~/.codex`) and an opt-in real Codex smoke test (`CODEX_SMOKE=1`).
 - English and Vietnamese READMEs.
 
-[Unreleased]: https://github.com/leetuanbmt/claude-codex-project-kit/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/leetuanbmt/claude-codex-project-kit/releases/tag/v0.1.0
+[Unreleased]: https://github.com/leetuanbmt/agent-orchestration-kit/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/leetuanbmt/agent-orchestration-kit/releases/tag/v0.1.0

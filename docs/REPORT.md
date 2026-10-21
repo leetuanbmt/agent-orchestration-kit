@@ -1,4 +1,4 @@
-# Build report: claude-codex-project-kit
+# Build report: agent-orchestration-kit
 
 Status at delivery: all automated checks green (see *Verification*), real Codex runs end to end
 through the bridge, including two accounts in parallel.

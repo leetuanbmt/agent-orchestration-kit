@@ -1,4 +1,4 @@
-<h1 align="center">claude-codex-project-kit</h1>
+<h1 align="center">agent-orchestration-kit</h1>
 
 <p align="center">
   A project-local harness where <b>Claude Code plans and reviews</b> and <b>Codex CLI implements</b>.<br>
@@ -22,7 +22,7 @@
 
 When one AI agent both writes the code and judges it, nobody checks the work: "done" means whatever the agent says, even if the tests never ran or it edited files outside its assignment.
 
-`claude-codex-project-kit` splits the roles:
+`agent-orchestration-kit` splits the roles:
 - **Claude Code (advisor)**: analyses, splits work into tasks, reviews patches and decides approve / rework / block.
 - **Codex CLI (executor)**: implements, writes tests and fixes one task at a time.
 - **`codex-bridge`**: keeps task state in SQLite, runs Codex in a sandbox, checks which files changed and re-runs the verification commands itself. Codex's own report is never treated as evidence.
@@ -47,8 +47,8 @@ state in the repository's git directory (`.git/codex-bridge/`). Nothing under `~
   subscription (`codex login status` → "Logged in using ChatGPT"). No OpenAI API key needed.
 
 ```bash
-git clone https://github.com/leetuanbmt/claude-codex-project-kit.git
-cd claude-codex-project-kit
+git clone https://github.com/leetuanbmt/agent-orchestration-kit.git
+cd agent-orchestration-kit
 uv sync                                   # project-local .venv
 scripts/check.sh --with-health            # tests + Codex reachability
 claude                                    # once: trust the folder → codex-bridge connects
