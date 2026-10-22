@@ -134,8 +134,8 @@ def _human(monkeypatch):
 
 # @pt.id KIT-ACCT-REG-001-register
 # @pt.item Machine-wide registry: register, shell switch, unregister
-# @pt.condition accounts added under ~/.agent-bridge for openai and google, plus invalid requests
-# @pt.expected fresh private homes (openai with the file credential store), eval-able switch code, duplicate/shared/opencode/bad names refused, removal deletes only registry-owned homes
+# @pt.condition accounts added under ~/.agent-bridge for openai, google and opencode, plus invalid requests
+# @pt.expected fresh private homes (openai with the file credential store), eval-able switch code, one opencode account on the global login, duplicate/shared/second-opencode/opencode-home/bad names refused, removal deletes only registry-owned homes
 # @pt.target bridge.accounts.register, bridge.accounts.unregister, bridge.accounts.shell_use
 # @pt.method unit
 # @pt.legacy none
@@ -151,9 +151,13 @@ def test_registry(tmp_path):
     accounts.register("mine", "anthropic", str(outside))
     assert accounts.load_registry()["mine"] == {"provider": "anthropic",
                                                 "home": str(outside.resolve())}
+    oc = accounts.register("oc", "opencode")
+    assert oc.home is None and accounts.load_registry()["oc"] == {"provider": "opencode",
+                                                                  "home": None}
     for args, message in [(("work", "openai"), "already exists"),
                           (("other", "anthropic", str(outside)), "already the home"),
-                          (("oc", "opencode"), "global login"),
+                          (("oc2", "opencode"), "already uses the global opencode login"),
+                          (("oc3", "opencode", str(tmp_path / "x")), "no isolated home"),
                           (("Bad Name", "openai"), "invalid"),
                           (("default", "openai"), "reserved")]:
         with pytest.raises(ValueError, match=message):
@@ -161,6 +165,7 @@ def test_registry(tmp_path):
     assert accounts.unregister("work") is True and not work.home.exists()
     outside.mkdir()
     assert accounts.unregister("mine") is False and outside.exists()
+    assert accounts.unregister("oc") is False
     assert set(accounts.load_registry()) == {"gm"}
 
 

@@ -175,12 +175,18 @@ def register(name: str, provider: str, home: str | None = None) -> Account:
         raise ValueError(f"invalid or reserved account name: {name!r} (use [a-z0-9_-])")
     if provider not in HOME_ENV and provider != "opencode":
         raise ValueError(f"unknown provider {provider!r}")
-    if provider not in HOME_ENV:
-        raise ValueError(f"{provider} has no isolated accounts; its global login is used "
-                         "(opencode auth login)")
     data = load_registry()
     if name in data:
         raise ValueError(f"account {name} already exists")
+    if provider not in HOME_ENV:
+        # opencode has no isolated home: the account is its global login, so only one exists.
+        if home is not None:
+            raise ValueError(f"{provider} has no isolated home; its global login is used")
+        if other := next((n for n, e in data.items() if e.get("provider") == provider), None):
+            raise ValueError(f"account {other} already uses the global {provider} login")
+        data[name] = {"provider": provider, "home": None}
+        _save_registry(data)
+        return Account(name, None, provider)
     if home is None:
         path = registry_dir() / "homes" / name
         path.mkdir(mode=0o700, parents=True, exist_ok=False)
