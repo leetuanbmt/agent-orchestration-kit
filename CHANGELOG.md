@@ -47,7 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passed the scope check; `.ai/config.json` and `.ai/orchestrator.yaml` are now hashed before
   and after every run.
 - Claude agents start with `--setting-sources ""`: with `project`, the target repo's
-  `.claude/settings.json` allow rules widened the tool allowlist and its hooks ran.
+  `.claude/settings.json` allow rules widened the tool allowlist and its hooks ran. The kit's
+  credential `Read(...)` denies now go in `--disallowedTools` on every run, read-only included.
 - The dashboard's Accounts panel cut the state down to one letter on a normal terminal. It
   now shows the account and its state (Provider moved to Detail; a name shared across
   providers shows its id, such as `work@google`), and the side and task columns keep a

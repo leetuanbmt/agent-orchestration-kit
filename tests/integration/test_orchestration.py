@@ -107,6 +107,8 @@ def test_config_a(make_orch, fake_codex, fake_claude, monkeypatch):
     assert "PLANNER" in planner["prompt"] and planner["agent_env"] == "1"
     assert tools(planner) == ["Read", "Glob", "Grep"]
     assert "--strict-mcp-config" in planner["argv"]
+    planner_denied = planner["argv"][planner["argv"].index("--disallowedTools") + 1].split(",")
+    assert "Read(~/.codex/auth.json)" in planner_denied  # read-only runs keep credential denies
     assert planner["config_dir"].endswith("/cl")
     wf = run(b.run_workflow(wf["workflow_id"], wait=True))
     assert wf["state"] == "DONE" and all(t["state"] == "DONE" for t in wf["tasks"])
@@ -160,7 +162,7 @@ def test_config_b(make_orch, fake_codex, fake_claude, monkeypatch, tmp_path, rep
 # @pt.id KIT-SEC-CLAUDE-001-no-settings-files
 # @pt.item Claude agents ignore the target project's settings files
 # @pt.condition The repo's committed .claude/settings.json allows Write(./**) and Bash; a Claude executor scoped to src/** tries a stray write
-# @pt.expected Claude starts with --setting-sources "" so the project's allow rules never reach it; the stray write is refused and the task still finishes
+# @pt.expected Claude starts with --setting-sources "" so the project's allow rules never reach it, and gets the kit's credential Read denies through --disallowedTools; the stray write is refused and the task still finishes
 # @pt.target ClaudeAdapter.build
 # @pt.method integration
 # @pt.legacy --setting-sources project (loaded project allow rules and hooks)
@@ -178,6 +180,8 @@ def test_claude_ignores_project_settings(make_orch, fake_codex, fake_claude, mon
     assert wf["state"] == "DONE"
     executor, = log(fake_claude)
     assert executor["argv"][executor["argv"].index("--setting-sources") + 1] == ""
+    denied = executor["argv"][executor["argv"].index("--disallowedTools") + 1].split(",")
+    assert {"Read(~/.codex/auth.json)", "Read(~/.agent-bridge/homes/**)"} <= set(denied)
     assert "Bash" not in tools(executor)
     assert not (repo / "notes.txt").exists()
 

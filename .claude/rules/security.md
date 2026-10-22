@@ -4,7 +4,8 @@
   and `$TMPDIR` not writable, user `~/.codex/config.toml` ignored. `danger-full-access` is not
   configurable.
 - **Claude CLI** has no OS sandbox. The bridge limits it instead: `--strict-mcp-config` (no MCP
-  servers, so no recursive orchestration), `--setting-sources ""` (no settings files, so no user or project allow rules or hooks),
+  servers, so no recursive orchestration), `--setting-sources ""` (no settings files, so no user or project allow rules or hooks; the
+  kit's credential `Read(...)` denies go in `--disallowedTools` on every run),
   `--permission-mode dontAsk` with an allowlist of Read/Glob/Grep. An agent with
   `allow_write: true` also gets Edit/Write scoped to the task's `allowed_paths`
   (`Edit(./src/**)`), with excluded and protected paths denied: unscoped Write was shown by

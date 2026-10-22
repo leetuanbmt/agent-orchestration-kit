@@ -3,7 +3,8 @@
 
 FAKE_CODEX_SCENARIO: comma-separated scenarios, one per invocation (last one repeats):
   ok | blocked | quota | auth | network | crash | hang | commit | outside | nojson
-FAKE_CODEX_WRITE: "path=content;path2=content" (or "@file" holding that) written on ok runs.
+FAKE_CODEX_WRITE: "path=content;path2=content" (or "@file" holding that) written on ok runs;
+                  "!path" deletes path.
 FAKE_CODEX_DIR:   scratch dir for the call counter, argv/prompt log and the hang child's pid.
 FAKE_CODEX_DECISION: "decision:notes" a reviewer run returns (default "approve:looks good").
 FAKE_CODEX_PLAN:  JSON list of tasks a planner run returns (default: one task).
@@ -70,6 +71,9 @@ def write_files():
         f = Path(spec[1:])
         spec = f.read_text() if f.exists() else ""
     for pair in filter(None, spec.split(";")):
+        if pair.startswith("!"):
+            Path(pair[1:]).unlink(missing_ok=True)
+            continue
         path, _, content = pair.partition("=")
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)

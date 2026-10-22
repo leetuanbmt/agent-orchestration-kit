@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import os
 import re
@@ -97,6 +98,15 @@ _CLAUDE_READ_TOOLS = ["Read", "Glob", "Grep"]
 # Path-scoped rules: under dontAsk, Edit/Write outside these patterns are refused (verified by
 # probe on claude 2.1.306; unscoped Write reached files outside the working directory).
 _CLAUDE_WRITE_TOOLS = ("Edit", "Write")
+
+
+@functools.cache
+def _claude_credential_denies() -> list[str]:
+    """The kit settings' Read denies (credential paths). Claude agents load no settings files,
+    so they get these on every run through --disallowedTools (verified to block on 2.1.308)."""
+    from .install import KIT
+    deny = json.loads((KIT / ".claude" / "settings.json").read_text())["permissions"]["deny"]
+    return [rule for rule in deny if rule.startswith("Read(")]
 
 
 def classify(text: str) -> str:
@@ -356,12 +366,12 @@ class ClaudeAdapter(Adapter):
 
     def build(self, req: RunRequest, tmp: Path) -> list[str]:
         tools = list(_CLAUDE_READ_TOOLS)
-        denied: list[str] = []
+        denied = list(_claude_credential_denies())
         if req.sandbox == "workspace-write":
             if bad := rule_unsafe([*req.write_paths, *req.deny_paths]):
                 raise PathError(f"not expressible as Claude permission rules: {bad}")
             tools += [f"{t}(./{p})" for p in req.write_paths for t in _CLAUDE_WRITE_TOOLS]
-            denied = [f"{t}(./{p})" for p in req.deny_paths for t in _CLAUDE_WRITE_TOOLS]
+            denied += [f"{t}(./{p})" for p in req.deny_paths for t in _CLAUDE_WRITE_TOOLS]
         if req.allow_bash:
             tools.append("Bash")
         # No settings files at all: their permissions.allow rules extend --allowedTools and their
@@ -370,8 +380,7 @@ class ClaudeAdapter(Adapter):
              "--strict-mcp-config", "--setting-sources", "",
              "--permission-mode", "dontAsk", "--allowedTools", ",".join(tools),
              "--json-schema", json.dumps(req.schema)]
-        if denied:
-            a += ["--disallowedTools", ",".join(denied)]
+        a += ["--disallowedTools", ",".join(denied)]
         if req.model:
             a += ["--model", req.model]
         if req.session_id:

@@ -427,7 +427,7 @@ the user's authorisation; the legacy `auto_switch` block in `config.json` maps o
    writable, user `~/.codex/config.toml` ignored, prompt on stdin. Planner and reviewer runs are
    `read-only`.
 2. **Claude CLI:** no OS sandbox, so the bridge narrows it: `--strict-mcp-config` (no MCP servers,
-   so no recursive orchestration), `--setting-sources ""` (no settings file: neither user nor project allow rules or hooks), `--permission-mode
+   so no recursive orchestration), `--setting-sources ""` (no settings file: neither user nor project allow rules or hooks; the kit's credential `Read(...)` denies are passed with `--disallowedTools` on every run), `--permission-mode
    dontAsk` with a tool allowlist: Read/Glob/Grep; with `allow_write: true`, Edit/Write scoped to
    the task's `allowed_paths` (`Edit(./src/**)`) while excluded and protected paths are denied.
    A probe showed unscoped Write reaching files outside the worktree and scoped rules refusing
@@ -469,7 +469,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Result:
 ```console
-183 passed, 5 skipped
+185 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` and `agy` speak the real JSONL / stream-json protocols and

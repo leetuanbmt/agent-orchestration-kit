@@ -195,6 +195,25 @@ def test_scope_violation_blocks_review(make_bridge, monkeypatch, scenario, write
     assert out["state"] == State.REWORK and needle in out["failure"]
 
 
+# @pt.id KIT-INT-008b-existing-orchestrator-config
+# @pt.item Edits to an existing .ai/orchestrator.yaml are caught
+# @pt.condition the git-ignored .ai/orchestrator.yaml exists before the run; codex rewrites it, or deletes it
+# @pt.expected verification fails with "protected file changed: .ai/orchestrator.yaml" both times
+# @pt.target bridge.review.snapshot, bridge.review.diff
+# @pt.method integration
+# @pt.legacy none: the ignored file was never hashed
+@pytest.mark.parametrize("write", ["src/app.py=x = 2\n;.ai/orchestrator.yaml=# rewritten\n",
+                                   "src/app.py=x = 2\n;!.ai/orchestrator.yaml"])
+def test_existing_orchestrator_config_guarded(make_bridge, monkeypatch, repo, write) -> None:
+    monkeypatch.setenv("FAKE_CODEX_WRITE", write)
+    b = make_bridge()
+    (repo / ".ai" / "orchestrator.yaml").write_text("# user's routing\n")
+    t = run(b.create_task(spec()))["task_id"]
+    out = run(b.execute_task(t, wait=True))
+    assert out["state"] == State.REWORK
+    assert "protected file changed: .ai/orchestrator.yaml" in out["failure"]
+
+
 # @pt.id KIT-INT-009-invalid-and-unsafe-specs
 # @pt.item Invalid task specs and unsafe paths are rejected at creation
 # @pt.condition traversal path, protected path, path with a newline (prompt forging), shell verification command, unknown dependency,

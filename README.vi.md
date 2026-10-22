@@ -430,7 +430,7 @@ là sự cho phép của user; block `auto_switch` legacy trong `config.json` đ
    không ghi được, bỏ qua `~/.codex/config.toml` của user, prompt qua stdin. Lượt plan và review
    chạy `read-only`.
 2. **Claude CLI:** không có OS sandbox, nên bridge thu hẹp nó: `--strict-mcp-config` (không MCP
-   server nào, nên không thể điều phối đệ quy), `--setting-sources ""` (không nạp file settings nào: không allow rule hay hook của user lẫn project),
+   server nào, nên không thể điều phối đệ quy), `--setting-sources ""` (không nạp file settings nào: không allow rule hay hook của user lẫn project; các deny `Read(...)` chặn file credential của kit được truyền bằng `--disallowedTools` ở mọi lần chạy),
    `--permission-mode dontAsk` với allowlist tool: Read/Glob/Grep; khi `allow_write: true` thì
    có thêm Edit/Write giới hạn theo `allowed_paths` của task (`Edit(./src/**)`), còn path bị
    loại trừ và path protected bị chặn. Probe cho thấy Write không giới hạn ghi được file ngoài
@@ -474,7 +474,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Kết quả:
 ```console
-183 passed, 5 skipped
+185 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` và `agy` nói đúng giao thức JSONL / stream-json thật và trả lời
