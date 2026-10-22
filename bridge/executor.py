@@ -26,7 +26,7 @@ from typing import Any
 
 from .accounts import Account, account_env, codex_overrides
 from .config import BridgeConfig, state_dir
-from .security import clean_env, redact
+from .security import PathError, clean_env, redact, rule_unsafe
 
 # Set in every agent process; the bridge entry points refuse to start under it, so an agent
 # cannot orchestrate other agents.
@@ -358,6 +358,8 @@ class ClaudeAdapter(Adapter):
         tools = list(_CLAUDE_READ_TOOLS)
         denied: list[str] = []
         if req.sandbox == "workspace-write":
+            if bad := rule_unsafe([*req.write_paths, *req.deny_paths]):
+                raise PathError(f"not expressible as Claude permission rules: {bad}")
             tools += [f"{t}(./{p})" for p in req.write_paths for t in _CLAUDE_WRITE_TOOLS]
             denied = [f"{t}(./{p})" for p in req.deny_paths for t in _CLAUDE_WRITE_TOOLS]
         if req.allow_bash:

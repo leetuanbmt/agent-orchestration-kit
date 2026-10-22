@@ -16,6 +16,12 @@ class PathError(ValueError):
     pass
 
 
+def rule_unsafe(patterns: Iterable[str]) -> list[str]:
+    """Patterns that cannot become Claude permission rules like Edit(./src/**): these characters
+    would let a pattern close the rule and smuggle in another one (e.g. "x),Bash(*")."""
+    return [p for p in patterns if RULE_CHARS & set(p) or any(c.isspace() for c in p)]
+
+
 @functools.lru_cache(maxsize=512)
 def _pattern_regex(pattern: str) -> re.Pattern[str]:
     """`**` crosses directories, `*`/`?` do not. A glob-free pattern also covers its subtree."""
@@ -47,10 +53,6 @@ def validate_pattern(pattern: str, root: Path, protected: Iterable[str]) -> str:
     p = pattern.strip()
     if not p or "\x00" in p or "\\" in p:
         raise PathError(f"invalid path: {pattern!r}")
-    # Paths become Claude permission rules like Edit(./src/**); these characters would let a
-    # pattern close the rule and smuggle in another one (e.g. "x),Bash(*").
-    if RULE_CHARS & set(p) or any(c.isspace() for c in p):
-        raise PathError(f"path may not contain ',', '(', ')', quotes or whitespace: {pattern!r}")
     pure = PurePosixPath(p)
     if pure.is_absolute() or p.startswith("~"):
         raise PathError(f"path must be project-relative: {pattern!r}")

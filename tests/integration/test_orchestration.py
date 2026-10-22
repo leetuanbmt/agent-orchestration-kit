@@ -180,6 +180,28 @@ def test_claude_ignores_project_settings(make_orch, fake_codex, fake_claude, mon
     assert not (repo / "notes.txt").exists()
 
 
+# @pt.id KIT-SEC-CLAUDE-002-rule-unsafe-paths
+# @pt.item Paths Claude rules cannot hold only block Claude write runs
+# @pt.condition allowed_paths ["src/(auth)/**"]: a Codex executor, then a Claude executor with allow_write
+# @pt.expected Codex runs the task through verification; the Claude run is refused before RUNNING with a reassign hint and the task stays READY with its budget untouched
+# @pt.target Bridge._start, bridge.security.rule_unsafe
+# @pt.method integration
+# @pt.legacy validate_pattern rejected these paths at creation for every adapter
+def test_rule_unsafe_paths(make_orch, fake_codex, fake_claude, monkeypatch):
+    monkeypatch.setenv("FAKE_CODEX_WRITE", "src/(auth)/page.py=x = 1\n")
+    task = spec(allowed_paths=["src/(auth)/**"], verification_commands=[])
+    codex = make_orch(CONFIG_D)
+    tid = run(codex.create_task(task))["task_id"]
+    assert run(codex.execute_task(tid, wait=True))["state"] in {State.REVIEW, State.DONE}
+    claude = make_orch(CONFIG_B)
+    tid = run(claude.create_task({**task, "agent": "claude", "objective": "Again"}))["task_id"]
+    with pytest.raises(ValueError, match="reassign"):
+        run(claude.execute_task(tid, wait=True))
+    row = claude.store.get(tid)
+    assert row["state"] == State.READY and row["attempts"] == 0
+    assert not log(fake_claude)
+
+
 # @pt.id KIT-FLOW-C-two-executors
 # @pt.item Config C: two Codex executor accounts
 # @pt.condition The first executor's account is busy with another task

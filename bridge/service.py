@@ -28,7 +28,7 @@ from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .review import diff, parse_command, run_verification, scope_violations, snapshot, \
     touches_sensitive
-from .security import PathError, redact, validate_pattern
+from .security import PathError, redact, rule_unsafe, validate_pattern
 from .state import ConflictError, Store
 
 # Outcomes that mean "the environment, not the code": park the task, never auto-retry.
@@ -491,6 +491,16 @@ class Bridge:
                 f"{availability['last_error']}). Ask the user; once they confirm it is resolved "
                 f"run: agent-bridge account-clear {account.name}"
             )
+        spec = row["spec"]
+        if (agent.adapter == "claude-cli" and agent.writes
+                and (spec.get("sandbox") or self.cfg.sandbox) == "workspace-write"):
+            paths = [*spec["allowed_paths"], *spec.get("excluded_paths", []),
+                     *self.cfg.protected_paths]
+            if bad := rule_unsafe(paths):
+                raise ValueError(
+                    f"claude-cli cannot scope writes to {bad}: Claude permission rules cannot hold "
+                    "',', '(', ')', quotes or whitespace. Rename the paths, or ask the user to "
+                    f"run: agent-bridge reassign {task_id} <codex agent>")
         used = row["attempts"] + 1  # budget counter; environment failures give it back
         seq = len(self.store.attempts(task_id)) + 1  # attempt row number, never reused
         slots = self._slots(account.name)
