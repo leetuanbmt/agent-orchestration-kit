@@ -57,14 +57,15 @@ def test_real_other_smoke(name, repo, fake_codex, monkeypatch):
     result = run(bridge.execute_task(task, wait=True))
     events = bridge.store.events(task, 200)
     review = [e for e in events if e["kind"] == "review"]
-    assert review, events[-3:]
+    assert review, [(e["kind"], e["detail"]) for e in events[-3:]]
     assert review[-1]["actor"] == Actor.AGENT and review[-1]["detail"]["reviewer"] == "other"
     git(repo, "add", "-A")
     # .ai/ is the bridge's own; anything else besides the executor's file came from the reviewer.
     changed = git_out(repo, "diff", "--cached", "--name-only", "HEAD", "--", ".", ":!.ai")
     assert changed == ["src/app.py"], changed
-    if review[-1]["to_state"] == "APPROVED":
-        assert result["state"] == "DONE", result
+    # The change is trivially correct, so anything but an approval is a reviewer failure.
+    assert review[-1]["detail"]["decision"] == "approve", review[-1]
+    assert result["state"] == "DONE", result
 
 
 def git_out(root: Path, *args: str) -> list[str]:

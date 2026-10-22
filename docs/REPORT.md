@@ -150,13 +150,16 @@ wrote only its own plan artifact outside the worktree. Isolating opencode by XDG
 
 | Check | Result |
 |---|---|
-| Real opencode reviewer, `OPENCODE_SMOKE=1` (ollama-cloud/gpt-oss:120b) | approved as actor `agent`; worktree held only the executor's change; task DONE |
+| Real opencode reviewer, `OPENCODE_SMOKE=1` (ollama-cloud/gpt-oss:120b) | approved as actor `agent`; worktree held only the executor's change; task DONE. 1 of ~10 runs produced no review (reviewer failure, task left in REVIEW for the client as designed; cause not captured) |
 | Real agy reviewer, `AGY_SMOKE=1` (gemini-3.8-flash-low, `--mode plan --sandbox`) | approved as actor `agent`; worktree held only the executor's change; task DONE |
 
 ## 9. Known limitations / unsupported
 
 - opencode and agy cannot execute (write) tasks. agy keeps browser tools in plan mode that the
   CLI cannot disable; opencode has no per-account login isolation.
+- `account-add --provider google` (agy sign-in inside a fresh `HOME`) and `account-add` for
+  Claude were exercised only against the fake CLIs: they are human-only, so no real login was
+  run. `account-add` refuses to finish if the global login changed, as `account-login` does.
 
 - A Claude executor (`allow_write`) has no OS sandbox. Probe on 2.1.306 (haiku, `dontAsk`):
   an unscoped `Write` created a file outside the working directory; with `Edit(./src/**)` and
