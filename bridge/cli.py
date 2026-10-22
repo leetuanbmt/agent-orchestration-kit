@@ -20,7 +20,7 @@ from . import install, orchestrator
 from .accounts import (account_env, global_auth_fingerprint, global_claude_identity,
                        global_login_marker, load_registry, login_argv, login_status,
                        pick_account, register, resolve_profile, shell_use, unregister)
-from .config import BridgeConfig, find_root, load_config
+from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config
 from .executor import AGENT_ENV
 from .service import Bridge, dumps, resolve_account
 
@@ -47,6 +47,7 @@ def _server_entry() -> dict[str, Any]:
 VIEWS = {"account-list": "accounts_view", "health": "health_view", "agents": "agents_view",
          "list": "tasks_view"}
 HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove"}
+EXAMPLES = install.KIT / "examples"
 
 
 def _config_here() -> Any:
@@ -103,9 +104,31 @@ async def _run(args: argparse.Namespace) -> Any:
         return {"ok": True, "source": orch.source, "stages": orch.workflow.stages,
                 "accounts": sorted(orch.accounts), "agents": sorted(orch.agents),
                 "roles": {r: orch.role(r).agents for r in orch.roles}}
-    if args.cmd in HUMAN_ACCOUNT_CMDS and not (sys.stdin.isatty() and sys.stdout.isatty()):
+    if args.cmd == "config-init" and args.example is None:
+        for path in sorted(EXAMPLES.glob("*.yaml")):
+            header = []
+            for line in path.read_text().splitlines():
+                if not line.startswith("#"):
+                    break
+                header.append(line.lstrip("# "))
+            print(f"{path.stem:<16} {' '.join(header).split('. ')[0].rstrip('.')}")
+        print(f"\nBridge settings for .ai/config.json: {install.KIT / AI_DIR / 'config.example.json'}")
+        return None
+    # Choosing roles, accounts and fallback is the user's decision, like the account commands.
+    if ((args.cmd in HUMAN_ACCOUNT_CMDS or args.cmd == "config-init")
+            and not (sys.stdin.isatty() and sys.stdout.isatty())):
         print(f"refused: {args.cmd} needs an interactive terminal (human only)", file=sys.stderr)
         raise SystemExit(2)
+    if args.cmd == "config-init":
+        root = find_root()
+        target = root / AI_DIR / "orchestrator.yaml"
+        if target.exists():
+            print(f"refused: {target} exists; edit it or remove it first", file=sys.stderr)
+            raise SystemExit(1)
+        ensure_ai_dir(root)
+        shutil.copyfile(EXAMPLES / f"{args.example}.yaml", target)
+        print(f"wrote {target}\nEdit its accounts and agents, then run: agent-bridge config-check")
+        return None
     if args.cmd == "account-add":
         acc = register(args.name, args.provider, args.home)
         print(f"registered {acc.name} ({acc.provider}) at {acc.home or 'its global login'}")
@@ -212,6 +235,9 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("health", help="adapters, logins, quota and task counts; exit 1 when "
                               "not OK")
     sub.add_parser("config-check", help="validate .ai/orchestrator.yaml (or the legacy config)")
+    sub.add_parser("config-init", help="HUMAN ONLY: start .ai/orchestrator.yaml from an "
+                                       "example; without one, list the examples").add_argument(
+        "example", nargs="?", choices=sorted(p.stem for p in EXAMPLES.glob("*.yaml")))
     sub.add_parser("agents", help="list agents, roles and availability")
     sub.add_parser("account-list", help="usable accounts on this machine").add_argument(
         "--all", action="store_true",
