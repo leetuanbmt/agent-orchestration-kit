@@ -308,7 +308,7 @@ mà các MCP tool trả về.
 | `approve <id>` | Duyệt task rủi ro cao / đụng path nhạy cảm |
 | `reassign <id> <agent\|account>` | Chuyển task sang agent khác (session mới) |
 | `account-login <name>` | Đăng nhập mới vào home riêng của account (`codex login`, `claude auth login`, `agy`, `opencode auth login`) |
-| `account-add <name> --provider openai\|anthropic\|google [--home DIR]` | Tạo account toàn máy (home mới trong `~/.agent-bridge/homes/` nếu không có `--home`), rồi đăng nhập |
+| `account-add <name> --provider openai\|anthropic\|google\|opencode [--home DIR]` | Tạo account toàn máy (home mới trong `~/.agent-bridge/homes/` nếu không có `--home`; opencode: một account dùng login global), rồi đăng nhập |
 | `account-remove <name>` | Bỏ account toàn máy; chỉ xoá home nếu `account-add` đã tạo nó |
 
 ---
@@ -375,7 +375,9 @@ agent-bridge account-use work --shell     # hoặc mở subshell; exit để qua
 
 `~/.codex` và `~/.claude` không bao giờ bị ghi đè. Với agy, home của account là cả một `HOME`,
 nên `account-use` định nghĩa hàm shell `agy` thay vì đổi `HOME`. opencode chỉ có một login global
-(`opencode auth login`); account của nó không có `home`.
+nên `account-add <name> --provider opencode` tạo một account không có `home`; sau đó
+`account-login <name>` chạy `opencode auth login`, nơi bạn chọn integration và phương thức đăng
+nhập (ví dụ API key hoặc token).
 
 - Task ở yên trên agent và account của nó. Retry và resume dùng cùng home và session. Người dùng
   chuyển nó bằng `agent-bridge reassign <id> <agent>` (session mới), hoặc bridge tự chuyển khi bật

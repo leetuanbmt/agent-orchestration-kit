@@ -568,7 +568,7 @@ class BridgeApp(App[None]):
                                                    f"machine-wide account?\n\n{home}")):
                 self._human_cmd("account-add", name, "--provider", "openai", "--home", home)
             return
-        providers = ["openai", "anthropic", "google"]
+        providers = ["openai", "anthropic", "google", "opencode"]
         if kind == "installed" and name in providers:
             providers.insert(0, providers.pop(providers.index(name)))
         answer = await self.push_screen_wait(Ask(

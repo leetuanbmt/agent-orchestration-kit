@@ -103,7 +103,7 @@ async def _run(args: argparse.Namespace) -> Any:
         raise SystemExit(2)
     if args.cmd == "account-add":
         acc = register(args.name, args.provider, args.home)
-        print(f"registered {acc.name} ({acc.provider}) at {acc.home}")
+        print(f"registered {acc.name} ({acc.provider}) at {acc.home or 'its global login'}")
         cfg = _config_here()
         logged_in = login_status(cfg, acc) is True or _login(cfg, acc, args.device_auth)
         return {"account": acc.name, "provider": acc.provider, "logged_in": logged_in}
@@ -209,7 +209,8 @@ def main(argv: list[str] | None = None) -> None:
     add = sub.add_parser("account-add", help="HUMAN ONLY: create a machine-wide account and "
                                              "log in (fresh login in its own home)")
     add.add_argument("name")
-    add.add_argument("--provider", required=True, choices=["openai", "anthropic", "google"])
+    add.add_argument("--provider", required=True,
+                     choices=["openai", "anthropic", "google", "opencode"])
     add.add_argument("--home", help="register an existing isolated home (e.g. a codex-switch "
                                     "home) instead of creating one")
     add.add_argument("--device-auth", action="store_true")

@@ -218,9 +218,7 @@ class Bridge:
         used = {a.get("provider", "openai") for a in listing["accounts"]}
         listing["unconfigured"] = [
             {"provider": provider, "binary": path,
-             "hint": (f"agent-bridge account-add <name> --provider {provider}"
-                      if provider in HOME_ENV else "add it to .ai/orchestrator.yaml "
-                      f"accounts with provider: {provider}")}
+             "hint": f"agent-bridge account-add <name> --provider {provider}"}
             for provider in sorted(PROVIDERS - used)
             if (path := shutil.which(binary(self.cfg, provider)))]
         return listing

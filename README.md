@@ -303,7 +303,7 @@ the same JSON the MCP tools return.
 | `approve <id>` | Approve a high-risk / sensitive-path task |
 | `reassign <id> <agent\|account>` | Move a task to another agent (new session) |
 | `account-login <name>` | Fresh login into the account's own home (`codex login`, `claude auth login`, `agy`, `opencode auth login`) |
-| `account-add <name> --provider openai\|anthropic\|google [--home DIR]` | Create a machine-wide account (fresh home under `~/.agent-bridge/homes/` unless `--home`), then log in |
+| `account-add <name> --provider openai\|anthropic\|google\|opencode [--home DIR]` | Create a machine-wide account (fresh home under `~/.agent-bridge/homes/` unless `--home`; opencode: one account on its global login), then log in |
 | `account-remove <name>` | Forget a machine-wide account; deletes its home only if `account-add` created it |
 
 ---
@@ -370,7 +370,9 @@ agent-bridge account-use work --shell     # or a subshell; exit to return
 
 `~/.codex` and `~/.claude` are never overwritten. For agy the account home is a whole `HOME`,
 so `account-use` defines an `agy` shell function instead of changing `HOME`. opencode has one
-global login (`opencode auth login`); its accounts take no `home`.
+global login, so `account-add <name> --provider opencode` registers one account without a
+`home`; `account-login <name>` then runs `opencode auth login`, where you pick the integration
+and the method (for example an API key or token).
 
 - A task stays on its agent and account. Retries and resumes use the same home and session. A
   human moves it with `agent-bridge reassign <id> <agent>` (new session), or the bridge does when
