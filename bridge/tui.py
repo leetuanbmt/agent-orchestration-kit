@@ -389,7 +389,8 @@ class BridgeApp(App[None]):
         self.accounts_listing = listing
         table = self.query_one("#accounts", DataTable)
         table.clear()
-        for key, cells in account_rows(listing):
+        # Copied-token profiles are never usable; homes not added and bare CLIs stay for `n`.
+        for key, cells in account_rows(listing, profiles=False):
             name, provider, _, logged_in, state = cells[:5]
             usable = ":" not in key and logged_in == "yes" and state == "available"
             dot = Text("●" if ":" not in key else "○", style="green" if usable else "red"

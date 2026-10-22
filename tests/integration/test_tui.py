@@ -94,7 +94,7 @@ def test_tui_human_actions(make_bridge, monkeypatch) -> None:
 # @pt.id KIT-TUI-002-account-rows
 # @pt.item Accounts table shows everything the machine knows about
 # @pt.condition project and registry accounts, an unadded codex-switch home, codex-switch and claude-switch profiles, an installed CLI without an account
-# @pt.expected each appears once with its source; only real accounts are keyed by bare name; copied-token profiles are marked not usable
+# @pt.expected each appears once with its source; only real accounts are keyed by bare name; copied-token profiles are marked not usable and left out with profiles=False (the dashboard)
 # @pt.target bridge.tui.account_rows
 # @pt.method unit
 # @pt.legacy none
@@ -119,6 +119,8 @@ def test_account_rows() -> None:
     assert rows["gm"][2] == "registry" and rows["default"][6] == "(global login)"
     assert "not usable" in str(rows["claude-switch:me"][4])
     assert "not usable" in str(rows["codex-profile:old"][4])
+    assert [k for k, _ in account_rows(listing, profiles=False)] == [
+        "default", "gm", "codex-switch:tv", "installed:opencode"]
 
 
 # @pt.id KIT-TUI-003-account-actions

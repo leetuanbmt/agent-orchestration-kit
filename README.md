@@ -292,7 +292,7 @@ secrets), stops at `APPROVED` until a human runs `agent-bridge approve <id>` in 
 | `review` / `resume` / `cancel` | Review, continue or cancel a task |
 | `plan "<objective>"` / `run-workflow <W…>` / `workflow-status <W…>` | Planner-agent workflows |
 | `list [--json]` | Tasks with state, tries and age; tasks that need you are marked `●` with the next command |
-| `account-list [--json]` | Every account: project and machine-wide accounts, codex-switch / claude-switch, installed CLIs without an account, with the command to add each |
+| `account-list [--all] [--json]` | Usable accounts (project and machine-wide) with the command to add more; `--all` also lists codex-switch / claude-switch profiles, homes not added and installed CLIs without an account. Narrow terminals get a compact table |
 
 In a terminal these four print tables; with `--json`, or when the output is piped, they print
 the same JSON the MCP tools return.
@@ -313,7 +313,9 @@ the same JSON the MCP tools return.
 
 ## Bridge configuration (`.ai/config.json`, optional)
 
-See `.ai/config.example.json`. Unknown keys are rejected.
+See `.ai/config.example.json` (bridge settings only; it works next to `orchestrator.yaml`).
+Unknown keys are rejected. Accounts belong in `orchestrator.yaml` or `account-add`; the
+`accounts` / `auto_switch` keys below exist only for the legacy setup.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -454,7 +456,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Result:
 ```console
-167 passed, 5 skipped
+169 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` and `agy` speak the real JSONL / stream-json protocols and

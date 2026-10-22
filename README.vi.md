@@ -296,7 +296,7 @@ terminal.
 | `review` / `resume` / `cancel` | Review, chạy tiếp hoặc huỷ task |
 | `plan "<objective>"` / `run-workflow <W…>` / `workflow-status <W…>` | Workflow do planner agent lập |
 | `list [--json]` | Task kèm trạng thái, số lần chạy và thời gian; task cần bạn xử lý có dấu `●` và lệnh tiếp theo |
-| `account-list [--json]` | Mọi account: account của project và toàn máy, codex-switch / claude-switch, CLI đã cài chưa có account, kèm lệnh để thêm từng cái |
+| `account-list [--all] [--json]` | Account dùng được (của project và toàn máy) kèm lệnh để thêm; `--all` hiện thêm profile codex-switch / claude-switch, home chưa thêm và CLI đã cài chưa có account. Terminal hẹp sẽ có bảng gọn |
 
 Trong terminal bốn lệnh này in bảng; khi có `--json` hoặc khi pipe output, chúng in đúng JSON
 mà các MCP tool trả về.
@@ -317,7 +317,9 @@ mà các MCP tool trả về.
 
 ## Cấu hình bridge (`.ai/config.json`, tuỳ chọn)
 
-Xem `.ai/config.example.json`. Key lạ bị từ chối.
+Xem `.ai/config.example.json` (chỉ có cấu hình bridge; dùng được cùng `orchestrator.yaml`).
+Key lạ bị từ chối. Account khai báo trong `orchestrator.yaml` hoặc tạo bằng `account-add`; các
+key `accounts` / `auto_switch` bên dưới chỉ dành cho cấu hình legacy.
 
 | Key | Mặc định | Ý nghĩa |
 |---|---|---|
@@ -460,7 +462,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Kết quả:
 ```console
-167 passed, 5 skipped
+169 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` và `agy` nói đúng giao thức JSONL / stream-json thật và trả lời

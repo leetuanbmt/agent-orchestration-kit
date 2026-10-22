@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Dashboard: Search, Agents and Accounts moved to the left column. Selecting an account shows
   its provider, login, state, quota, home, the agents using it and its last error in Detail.
+- `account-list` shows usable accounts only, with a count of the hidden rows; `--all` lists
+  switch profiles, homes not added and CLIs without an account. A terminal narrower than 120
+  columns drops Source and Home and shortens the quota. `--json` is unchanged. The dashboard
+  no longer lists copied-token switch profiles.
+- `.ai/config.example.json` holds bridge settings only (CLI paths, timeouts, retries), so it
+  works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
 - `agents`, `bridge_list_agents` and the dashboard no longer show an agent as available when
