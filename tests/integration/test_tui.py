@@ -47,7 +47,7 @@ def test_tui_human_actions(make_bridge, monkeypatch) -> None:
             await _settle(pilot)
             assert app.query_one("#tasks", DataTable).row_count == 2
             assert app.query_one("#needs").border_title == "Needs you (2)"
-            assert app.title == "agent-bridge · 2 need you"
+            assert app.title == f"{b.root.name} · 2 need you"
 
             _select(app, review)
             await _settle(pilot)

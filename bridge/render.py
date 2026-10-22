@@ -7,6 +7,7 @@ with the commands for the next step, so the JSON stays the machine contract.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 from rich.console import Group, RenderableType
@@ -200,10 +201,17 @@ def _next_for(task: dict[str, Any]) -> str | None:
     return None
 
 
-def tasks_view(tasks: list[dict[str, Any]], now: float | None = None) -> Group | Text:
+def tasks_view(tasks: list[dict[str, Any]], now: float | None = None,
+               project: str | None = None) -> Group | Text:
+    """`project` is the root the tasks belong to: each project (worktree) has its own tasks."""
+    head = Text()
+    if project:
+        head.append(f"project {Path(project).name}", style="bold")
+        head.append(f"  {project}", style="dim")
     if not tasks:
-        return Text("No tasks yet. Ask Claude Code for a change; it creates them through the "
-                    "bridge.", style="dim")
+        head.append(("\n" if project else "") + "No tasks yet. Ask Claude Code for a change; it "
+                    "creates them through the bridge.", style="dim")
+        return head
     table = Table("", "Task", "State", "Agent", "Tries", "Updated", expand=True)
     table.add_column("Objective", ratio=1, no_wrap=True, overflow="ellipsis")
     for t in tasks:
@@ -212,4 +220,4 @@ def tasks_view(tasks: list[dict[str, Any]], now: float | None = None) -> Group |
                       t["agent"] or "-", f"{t['attempts']}/{t['max_attempts']}",
                       ago(t["updated_at"], now), (t["objective"].splitlines() or [""])[0])
     hints = [hint for t in tasks if (hint := _next_for(t))]
-    return Group(table, *_steps(hints, "● needs you:"))
+    return Group(*([head] if project else []), table, *_steps(hints, "● needs you:"))
