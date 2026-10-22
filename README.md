@@ -314,7 +314,8 @@ the same JSON the MCP tools return.
 
 ## Bridge configuration (`.ai/config.json`, optional)
 
-See `.ai/config.example.json` (bridge settings only; it works next to `orchestrator.yaml`).
+See `.ai/config.example.json`: every bridge setting with its default; it works next to
+`orchestrator.yaml`. Copy only the keys you change: a list you set replaces the default list.
 Unknown keys are rejected. Accounts belong in `orchestrator.yaml` or `account-add`; the
 `accounts` / `auto_switch` keys below exist only for the legacy setup.
 
