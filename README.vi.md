@@ -15,6 +15,7 @@
   <img alt="platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
   <img alt="python" src="https://img.shields.io/badge/python-3.12-blue">
   <img alt="dependencies" src="https://img.shields.io/badge/dependencies-mcp%20%7C%20pyyaml-brightgreen">
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="version" src="https://img.shields.io/badge/version-0.1.0%20%2B%20unreleased-blue">
 </p>
 
@@ -525,3 +526,9 @@ Xem `docs/REPORT.md` → *Limitations*.
 ## Changelog
 
 Xem [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## License
+
+[MIT](LICENSE) © leetuanbmt.

@@ -3,6 +3,8 @@ name = "agent-orchestration-kit"
 version = "0.1.0"
 description = "Project-local Claude (planner/reviewer) <-> Codex CLI (executor) MCP bridge"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "mcp>=2.3.0,<3",
     "pyyaml>=6.0,<7",

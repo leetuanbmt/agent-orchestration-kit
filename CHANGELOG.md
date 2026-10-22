@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Licensed under MIT (`LICENSE`, © leetuanbmt); the wheel carries it and declares
+  `License-Expression: MIT`.
 - One account name can be reused across providers: the second `account-add work` for another
   provider gets the id `work@provider`; listings show `work`; an agent's `account: work`
   resolves by its adapter's provider; account commands take `--provider` when a name is shared.
