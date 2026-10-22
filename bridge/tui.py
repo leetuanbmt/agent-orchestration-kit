@@ -112,6 +112,12 @@ def task_actions(row: dict[str, Any]) -> list[tuple[str, str]]:
     return actions
 
 
+def cli_argv(*args: str) -> list[str]:
+    """This install's CLI. -P keeps the project directory off sys.path: a project with its own
+    `bridge/` package (the kit's old checkout, for one) would otherwise shadow this one."""
+    return [sys.executable, "-P", "-m", "bridge", *args]
+
+
 def account_actions(key: str) -> list[tuple[str, str]]:
     if ":" in key:  # a switcher home, a copied-token profile or a CLI without an account
         return [("add_account", "Add an account")]
@@ -591,8 +597,7 @@ class BridgeApp(App[None]):
     def _human_cmd(self, *args: str) -> None:
         """Run a human-only CLI command in the real terminal (it prompts and logs in there)."""
         with self.suspend():
-            subprocess.run([sys.executable, "-m", "bridge", *args], cwd=self.bridge.root,
-                           check=False)
+            subprocess.run(cli_argv(*args), cwd=self.bridge.root, check=False)
             input("\nPress Enter to return to agent-bridge...")
         with self._guard():
             self.bridge = Bridge(self.bridge.root)  # registry accounts join the config
@@ -635,8 +640,8 @@ class BridgeApp(App[None]):
                         timeout=15)
             return
         with self.suspend():
-            subprocess.run([sys.executable, "-m", "bridge", "account-use", name, "--shell"],
-                           cwd=self.bridge.root, check=False)
+            subprocess.run(cli_argv("account-use", name, "--shell"), cwd=self.bridge.root,
+                           check=False)
 
     def action_clear_account(self) -> None:
         if name := self._account():
