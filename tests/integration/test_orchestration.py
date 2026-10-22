@@ -220,6 +220,35 @@ def test_plan_dedup_per_workflow(make_orch, fake_codex, fake_claude):
     assert second["detail"]["tasks"] == [two]
 
 
+# @pt.id KIT-PLAN-004-orphaned-workflows
+# @pt.item Workflows left behind by a dead process are recovered on the next start
+# @pt.condition one PLANNING and one RUNNING workflow owned by a dead pid, and one RUNNING workflow owned by a live other process
+# @pt.expected recover() fails the orphaned plan and parks the orphaned run as WAITING (runnable again); the live owner's workflow is left alone
+# @pt.target Bridge.recover, Store.set_workflow, Store.workflows_in
+# @pt.method integration
+# @pt.legacy none: such workflows stayed PLANNING/RUNNING forever
+def test_orphaned_workflows(make_orch, fake_codex, fake_claude):
+    import subprocess
+    b = make_orch(CONFIG_A)
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    live = subprocess.Popen(["sleep", "30"])
+    try:
+        ids = {}
+        for name, state, pid in (("plan", "PLANNING", dead.pid), ("run", "RUNNING", dead.pid),
+                                 ("live", "RUNNING", live.pid)):
+            ids[name] = b.store.create_workflow(name, "claude", state)["id"]
+            b.store.db.execute("UPDATE workflows SET runner_pid=? WHERE id=?", (pid, ids[name]))
+        assert set(b.recover()) == {ids["plan"], ids["run"]}
+        assert b.store.workflow(ids["plan"])["state"] == "FAILED"
+        assert b.store.workflow(ids["run"])["state"] == "WAITING"
+        assert b.store.workflow(ids["live"])["state"] == "RUNNING"
+        assert run(b.run_workflow(ids["run"], wait=True))["state"] != "RUNNING"  # runnable again
+    finally:
+        live.kill()
+        live.wait()
+
+
 # @pt.id KIT-FLOW-C-two-executors
 # @pt.item Config C: two Codex executor accounts
 # @pt.condition The first executor's account is busy with another task

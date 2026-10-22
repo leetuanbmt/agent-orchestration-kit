@@ -906,7 +906,7 @@ class Bridge:
     # ---- lifecycle -------------------------------------------------------------------------
 
     def recover(self) -> list[str]:
-        """Park tasks whose runner process died mid-run (crash, kill, closed session)."""
+        """Park tasks and workflows whose process died mid-run (crash, kill, closed session)."""
         recovered = []
         for row in self.store.list(limit=10_000):
             if row["state"] not in ACTIVE:
@@ -921,6 +921,14 @@ class Bridge:
                                   {"reason": "runner died", "killed_orphan": killed},
                                   failure="INTERRUPTED: runner process exited during execution")
             recovered.append(row["id"])
+        for wf in self.store.workflows_in("PLANNING", "RUNNING"):
+            if wf["runner_pid"] != os.getpid() and _alive(wf["runner_pid"]):
+                continue
+            planning = wf["state"] == "PLANNING"
+            self.store.set_workflow(wf["id"], "FAILED" if planning else "WAITING", {
+                "error": f"interrupted: the process {'planning' if planning else 'driving'} "
+                         "it exited; " + ("plan again" if planning else "run it again")})
+            recovered.append(wf["id"])
         return recovered
 
     async def shutdown(self) -> None:

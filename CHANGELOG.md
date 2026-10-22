@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- A workflow whose planning or driving process died no longer stays PLANNING or RUNNING forever:
+  workflows record their owner pid, and the next bridge start fails an orphaned plan and parks
+  an orphaned run as WAITING, leaving workflows of a live process alone.
 - Planning the same objective twice no longer hands the second workflow the first one's task,
   which it never listed or drove; planned tasks dedup only inside their own workflow.
 - Orphan cleanup after a dead runner kills an agent's process group only when the pid's start
