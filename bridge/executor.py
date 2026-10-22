@@ -362,8 +362,10 @@ class ClaudeAdapter(Adapter):
             denied = [f"{t}(./{p})" for p in req.deny_paths for t in _CLAUDE_WRITE_TOOLS]
         if req.allow_bash:
             tools.append("Bash")
+        # No settings files at all: their permissions.allow rules extend --allowedTools and their
+        # hooks run shell commands, so the target project could widen a read-only agent.
         a = [self.binary, "-p", "--output-format", "stream-json", "--verbose",
-             "--strict-mcp-config", "--setting-sources", "project",
+             "--strict-mcp-config", "--setting-sources", "",
              "--permission-mode", "dontAsk", "--allowedTools", ",".join(tools),
              "--json-schema", json.dumps(req.schema)]
         if denied:

@@ -155,6 +155,31 @@ def test_config_b(make_orch, fake_codex, fake_claude, monkeypatch, tmp_path, rep
     assert "Bash" in argv[argv.index("--allowedTools") + 1].split(",")
 
 
+# @pt.id KIT-SEC-CLAUDE-001-no-settings-files
+# @pt.item Claude agents ignore the target project's settings files
+# @pt.condition The repo's committed .claude/settings.json allows Write(./**) and Bash; a Claude executor scoped to src/** tries a stray write
+# @pt.expected Claude starts with --setting-sources "" so the project's allow rules never reach it; the stray write is refused and the task still finishes
+# @pt.target ClaudeAdapter.build
+# @pt.method integration
+# @pt.legacy --setting-sources project (loaded project allow rules and hooks)
+def test_claude_ignores_project_settings(make_orch, fake_codex, fake_claude, monkeypatch, repo):
+    import subprocess
+    settings = repo / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps({"permissions": {"allow": ["Write(./**)", "Bash"]}}))
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "settings"], check=True)
+    monkeypatch.setenv("FAKE_CLAUDE_WRITE", WRITE + ";notes.txt=stray")
+    monkeypatch.setenv("FAKE_CODEX_PLAN", json.dumps([plan_task()]))
+    b = make_orch(CONFIG_B)
+    wf = run(b.run_workflow(run(b.plan("Set x to 2", wait=True))["workflow_id"], wait=True))
+    assert wf["state"] == "DONE"
+    executor, = log(fake_claude)
+    assert executor["argv"][executor["argv"].index("--setting-sources") + 1] == ""
+    assert "Bash" not in tools(executor)
+    assert not (repo / "notes.txt").exists()
+
+
 # @pt.id KIT-FLOW-C-two-executors
 # @pt.item Config C: two Codex executor accounts
 # @pt.condition The first executor's account is busy with another task

@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- Claude agents start with `--setting-sources ""`: with `project`, the target repo's
+  `.claude/settings.json` allow rules widened the tool allowlist and its hooks ran.
 - The dashboard's Accounts panel cut the state down to one letter on a normal terminal. It
   now shows the account and its state (Provider moved to Detail; a name shared across
   providers shows its id, such as `work@google`), and the side and task columns keep a
