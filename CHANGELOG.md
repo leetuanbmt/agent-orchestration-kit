@@ -19,8 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   switch profiles, homes not added and CLIs without an account. A terminal narrower than 120
   columns drops Source and Home and shortens the quota. `--json` is unchanged. The dashboard
   no longer lists copied-token switch profiles.
-- `.ai/config.example.json` holds bridge settings only (CLI paths, timeouts, retries), so it
-  works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
+- `.ai/config.example.json` lists every bridge setting with its default (CLI paths, model,
+  timeouts, retries, verify allowlist, protected and sensitive paths, env scrubbing, lock dir),
+  so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
 - The dashboard's Accounts panel cut the state down to one letter on a normal terminal. It

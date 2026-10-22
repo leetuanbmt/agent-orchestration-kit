@@ -318,7 +318,8 @@ mà các MCP tool trả về.
 
 ## Cấu hình bridge (`.ai/config.json`, tuỳ chọn)
 
-Xem `.ai/config.example.json` (chỉ có cấu hình bridge; dùng được cùng `orchestrator.yaml`).
+Xem `.ai/config.example.json`: mọi cấu hình bridge kèm giá trị mặc định; dùng được cùng
+`orchestrator.yaml`. Chỉ chép các key cần đổi: một list bạn đặt sẽ thay hẳn list mặc định.
 Key lạ bị từ chối. Account khai báo trong `orchestrator.yaml` hoặc tạo bằng `account-add`; các
 key `accounts` / `auto_switch` bên dưới chỉ dành cho cấu hình legacy.
 

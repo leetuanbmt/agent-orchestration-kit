@@ -50,7 +50,7 @@ def test_examples():
 # @pt.id KIT-ORCH-001b-config-example
 # @pt.item Shipped .ai/config.example.json
 # @pt.condition the example is loaded as BridgeConfig next to an orchestrator.yaml
-# @pt.expected it validates and holds no legacy-only keys (accounts, auto_switch) that orchestrator.yaml rejects
+# @pt.expected it validates, lists every non-legacy key with its default, and holds no legacy-only keys (accounts, auto_switch) that orchestrator.yaml rejects
 # @pt.target bridge.config.BridgeConfig, bridge.orchestrator.load
 # @pt.method unit
 # @pt.legacy .ai/config.json accounts (moved to orchestrator.yaml)
@@ -58,7 +58,10 @@ def test_config_example():
     data = json.loads((EXAMPLES.parent / ".ai" / "config.example.json").read_text())
     cfg = BridgeConfig.model_validate(data)
     assert not cfg.accounts and not cfg.auto_switch.enabled
-    assert not {"accounts", "default_account", "auto_switch", "max_attempts"} & set(data)
+    legacy = {"accounts", "default_account", "auto_switch", "max_attempts"}
+    assert not legacy & set(data)
+    defaults = BridgeConfig().model_dump()
+    assert data == {k: v for k, v in defaults.items() if k not in legacy}
 
 
 # @pt.id KIT-ORCH-002-errors
