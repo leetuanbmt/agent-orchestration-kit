@@ -204,6 +204,29 @@ def test_config_c_quota(make_orch, fake_codex, fake_claude, monkeypatch, enabled
         "reason": "quota", "remaining_pct": 0, "to_remaining_pct": None}
 
 
+# @pt.id KIT-ROUTE-004-default
+# @pt.item Role default agent
+# @pt.condition Config C with executor default codex2 listed after codex1; codex2's account hits its quota with fallback enabled
+# @pt.expected The task starts on codex2, then the fallback moves it to codex1, the remaining agent in list order
+# @pt.target RoleConfig._default_first, Bridge._route, Bridge._quota_fallback
+# @pt.method integration
+# @pt.legacy default_account (0.1.x)
+def test_role_default(make_orch, fake_codex, fake_claude, monkeypatch):
+    monkeypatch.setenv("FAKE_CODEX_WRITE", WRITE)
+    monkeypatch.setenv("FAKE_CODEX_SCENARIO", "quota,ok")
+    config = CONFIG_C.replace("executor: {agents: [codex1, codex2]}",
+                              "executor: {agents: [codex1, codex2], default: codex2}")
+    b = make_orch(config + "routing: {quota_fallback: {enabled: true}}\n")
+    assert b.orch.role("executor").agents == ["codex2", "codex1"]
+    wid = run(b.plan("Set x to 2", wait=True))["workflow_id"]
+    wf = run(b.run_workflow(wid, wait=True))
+    task = wf["tasks"][0]
+    routed, = events(b, task["task_id"], "agent_routed")
+    assert routed["detail"]["agent"] == "codex2"
+    assert wf["state"] == "DONE" and task["agent"] == "codex1"
+    assert b.store.account_state("cx2")["state"] == "quota"
+
+
 # @pt.id KIT-FLOW-D-single-agent
 # @pt.item Config D: single-agent workflow
 # @pt.condition One Codex agent is planner, executor and reviewer

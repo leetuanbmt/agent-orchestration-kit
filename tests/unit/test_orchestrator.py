@@ -76,6 +76,8 @@ def test_config_example():
     ("adapter: codex-cli, account: cx", "adapter: codex-cli, account: nope", "unknown account"),
     ("adapter: codex-cli, account: cx", "adapter: codex-cli, account: cl", "is anthropic"),
     ("adapter: codex-cli, account: cx", "adapter: codex-cli", "needs an account"),
+    ("executor: codex", "executor: {agents: [codex], default: codex, strategy: explicit}",
+     "default needs strategy ordered"),
     ("adapter: codex-cli, account: cx", "adapter: codex-cli, account: cx, allow_bash: true",
      "allow_bash only applies"),
     ("executor: codex", "executor: claude", "role executor needs 'write'"),

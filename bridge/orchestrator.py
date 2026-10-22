@@ -122,6 +122,17 @@ class RoleConfig(BaseModel):
     # explicit: every task must name one of `agents`.
     strategy: Literal["ordered", "explicit"] = "ordered"
     requires: Capability | None = None
+    # The agent an unpinned task tries first; the rest of `agents` are its fallbacks in order.
+    default: str | None = None
+
+    @model_validator(mode="after")
+    def _default_first(self) -> RoleConfig:
+        if self.default is not None:
+            if self.strategy == "explicit":
+                raise ValueError("default needs strategy ordered: explicit makes every task "
+                                 "name its agent")
+            self.agents = [self.default, *(a for a in self.agents if a != self.default)]
+        return self
 
 
 class QuotaFallback(BaseModel):

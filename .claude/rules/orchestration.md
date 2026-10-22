@@ -5,7 +5,7 @@ one Codex agent per `config.json` account executes). Each agent has one adapter 
 an account has its own auth home and `max_concurrency`.
 
 - **Routing.** A task pinned with `agent` (or `account`) runs there. An unpinned task gets the
-  first eligible executor in role order when it first starts: enabled, CLI installed, can write,
+  role's `default`, else the first eligible executor in role order, when it first starts: enabled, CLI installed, can write,
   account available and under its concurrency limit. It then keeps that agent and session.
   `strategy: explicit` requires every task to name its agent.
 - **Stages.** `plan` (planner agent), `execute`, `test` (the bridge re-runs the verification
