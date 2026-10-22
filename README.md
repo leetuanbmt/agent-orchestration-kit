@@ -113,9 +113,12 @@ Working on the kit itself: `uv sync`, then `scripts/check.sh --with-health`.
 
 ### 1. Pick a setup
 
-Copy one of the examples to `.ai/orchestrator.yaml` (or keep none for the legacy setup), then:
+Start `.ai/orchestrator.yaml` from one of the examples below (or keep none for the legacy setup).
+The installed tool carries them, so no checkout is needed:
 
 ```bash
+agent-bridge config-init                # list the examples
+agent-bridge config-init orchestrator   # write .ai/orchestrator.yaml; never overwrites one
 agent-bridge config-check   # schema check with descriptive errors
 agent-bridge agents         # who plans, executes, reviews; who is available now
 ```
@@ -285,6 +288,7 @@ secrets), stops at `APPROVED` until a human runs `agent-bridge approve <id>` in 
 | *(none)* / `tui` | Dashboard for the project in the current directory |
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Install into / remove from a project |
 | `serve` | MCP stdio server (what `.mcp.json` runs) |
+| `config-init [example]` | Human only: write `.ai/orchestrator.yaml` from a shipped example (refuses if it exists); without one, list the examples and the `config.example.json` path |
 | `config-check` | Validate `.ai/orchestrator.yaml` (or the legacy config) |
 | `agents [--json]` | Roles → agents, then a table of agents with capabilities and availability |
 | `health [--json]` | OK / NOT OK, adapters, quota, task counts and what to fix; exits 1 when not OK |
@@ -465,7 +469,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Result:
 ```console
-174 passed, 5 skipped
+175 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` and `agy` speak the real JSONL / stream-json protocols and

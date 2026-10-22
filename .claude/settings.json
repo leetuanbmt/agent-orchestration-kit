@@ -9,6 +9,7 @@
       "Bash(*account-login*)",
       "Bash(*account-add*)",
       "Bash(*account-remove*)",
+      "Bash(*config-init*)",
       "Bash(*opencode auth login*)",
       "Bash(*opencode auth logout*)",
       "Bash(*codex login*)",
