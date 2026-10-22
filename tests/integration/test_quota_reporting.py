@@ -53,3 +53,21 @@ def test_misconfigured_account_quota(monkeypatch, make_bridge):
                for account in bridge.list_accounts()["accounts"]}
     assert listing == {"default": "UNKNOWN", "broken": "UNKNOWN"}
     assert run(bridge.health())["quota"] == listing
+
+
+# @pt.id KIT-QUOTA-010-display-after-reset
+# @pt.item The CLI and dashboard show quota the way routing computes it
+# @pt.condition a CLI reported the 5h window 95% used and that window's reset time has passed; the week window is 30% used
+# @pt.expected render shows 5h 100% left and 70% overall, equal to the listing's remaining_pct that routing uses
+# @pt.target bridge.render.remaining_pct, bridge.render.quota_text, bridge.service.Bridge.list_accounts
+# @pt.method integration
+# @pt.legacy render ignored resets_at and showed 5% left
+def test_quota_display_after_reset(make_bridge):
+    from bridge.render import quota_text, remaining_pct
+    bridge = make_bridge()
+    bridge.store.save_quota("default", {
+        "primary": {"used_percent": 95.0, "window_minutes": 300, "resets_at": 1},
+        "secondary": {"used_percent": 30.0, "window_minutes": 10080, "resets_at": 9999999999}})
+    quota, = (a["quota"] for a in bridge.list_accounts()["accounts"] if a["name"] == "default")
+    assert remaining_pct(quota) == quota["remaining_pct"] == 70.0
+    assert quota_text(quota) == "5h 100% left · week 70% left"

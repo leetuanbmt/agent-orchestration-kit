@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- The dashboard quota bar and `account-list` ignored a window's reset time, so a reset 5h
+  window still showed as nearly used up; they now use the same calculation as routing.
 - A successful run no longer resets its account to available: with two runs on one account
   (`max_concurrency` 2, or a reviewer sharing it) it could lift the other run's AUTH or QUOTA
   mark; only `account-clear` lifts it now.
