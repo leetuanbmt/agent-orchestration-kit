@@ -18,6 +18,10 @@
   <img alt="version" src="https://img.shields.io/badge/version-0.1.0%20%2B%20unreleased-blue">
 </p>
 
+<p align="center">
+  <img alt="agent-bridge dashboard" src="docs/images/dashboard.svg" width="900">
+</p>
+
 ---
 
 When one AI agent both writes the code and judges it, nobody checks the work: "done" means
@@ -150,6 +154,8 @@ Run `agent-bridge` in the project. One screen, refreshed every 3 seconds:
 Press **Enter** on any row for the actions that fit it, so no key has to be remembered. The
 footer shows only the keys that work on the focused row.
 
+<img alt="Enter on a task in REVIEW" src="docs/images/dashboard-actions.svg" width="900">
+
 | Key | Action |
 |---|---|
 | `Tab` / `Shift+Tab`, `↑` `↓` | Move between panels / rows (the mouse works too) |
@@ -163,13 +169,21 @@ footer shows only the keys that work on the focused row.
 | `?` / `q` | Keys / quit |
 
 The dashboard never starts an agent: a run belongs to the process that started it (the MCP
-server), and quitting the dashboard would interrupt it. The same data is available as JSON:
+server), and quitting the dashboard would interrupt it. The same data is available as tables
+in a terminal (JSON with `--json` or through a pipe):
 
 ```bash
 agent-bridge health        # adapters, remaining quota per account, task counts
 agent-bridge account-list  # accounts, login state, codex-switch / claude-switch, unused CLIs
 agent-bridge list          # tasks, newest first
 ```
+
+<img alt="agent-bridge list" src="docs/images/cli-list.svg" width="900">
+<img alt="agent-bridge account-list" src="docs/images/cli-accounts.svg" width="900">
+
+The screenshots come from an end-to-end run of the installed tool on invented data (fake agent
+CLIs, a fresh `HOME`, a demo project under `/tmp/agent-bridge-demo`). Regenerate them with
+`"$(uv tool dir)/agent-orchestration-kit/bin/python" scripts/screenshots.py docs/images`.
 
 ---
 
@@ -435,7 +449,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Result:
 ```console
-165 passed, 5 skipped
+166 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` and `agy` speak the real JSONL / stream-json protocols and

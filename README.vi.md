@@ -18,6 +18,10 @@
   <img alt="version" src="https://img.shields.io/badge/version-0.1.0%20%2B%20unreleased-blue">
 </p>
 
+<p align="center">
+  <img alt="dashboard agent-bridge" src="docs/images/dashboard.svg" width="900">
+</p>
+
 ---
 
 Khi để một AI agent vừa viết code vừa tự đánh giá, không có ai kiểm tra lại: agent báo "xong" là
@@ -153,6 +157,8 @@ Chạy `agent-bridge` trong project. Tất cả nằm trên một màn hình, t�
 Bấm **Enter** trên bất kỳ dòng nào để mở các thao tác hợp lệ cho dòng đó, không cần nhớ phím.
 Footer chỉ hiện những phím dùng được cho dòng đang chọn.
 
+<img alt="Enter trên task đang REVIEW" src="docs/images/dashboard-actions.svg" width="900">
+
 | Phím | Thao tác |
 |---|---|
 | `Tab` / `Shift+Tab`, `↑` `↓` | Chuyển ô / dòng (dùng chuột cũng được) |
@@ -166,13 +172,21 @@ Footer chỉ hiện những phím dùng được cho dòng đang chọn.
 | `?` / `q` | Bảng phím / thoát |
 
 Dashboard không bao giờ khởi chạy agent: một lần chạy thuộc về process đã khởi chạy nó (MCP
-server), thoát dashboard sẽ làm gián đoạn lần chạy đó. Dữ liệu tương tự có ở dạng JSON:
+server), thoát dashboard sẽ làm gián đoạn lần chạy đó. Dữ liệu tương tự có ở dạng bảng trong
+terminal (JSON khi thêm `--json` hoặc qua pipe):
 
 ```bash
 agent-bridge health        # adapter, quota còn lại theo account, số task
 agent-bridge account-list  # account, trạng thái đăng nhập, codex-switch / claude-switch, CLI chưa dùng
 agent-bridge list          # task, mới nhất trước
 ```
+
+<img alt="agent-bridge list" src="docs/images/cli-list.svg" width="900">
+<img alt="agent-bridge account-list" src="docs/images/cli-accounts.svg" width="900">
+
+Ảnh chụp lấy từ một lần chạy end-to-end bằng bản tool đã cài, trên dữ liệu giả (CLI agent giả,
+`HOME` mới, project demo trong `/tmp/agent-bridge-demo`). Tạo lại bằng
+`"$(uv tool dir)/agent-orchestration-kit/bin/python" scripts/screenshots.py docs/images`.
 
 ---
 
@@ -442,7 +456,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Kết quả:
 ```console
-165 passed, 5 skipped
+166 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` và `agy` nói đúng giao thức JSONL / stream-json thật và trả lời

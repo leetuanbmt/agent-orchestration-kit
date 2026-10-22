@@ -44,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard redesigned as one screen of panels (Needs you, Tasks, Detail, Search, Agents,
   Accounts, executor quota bar). Enter opens the actions that fit the selected row; the footer
   shows only the keys that work there; `/` searches tasks; settings open with `s`.
+- README screenshots from an end-to-end run of the installed tool on dummy data
+  (`scripts/screenshots.py`).
+- A non-editable install (`uv tool install git+...` or a wheel) carries the kit files, so
+  `agent-bridge init` works without a checkout and `.mcp.json` calls the installed tool.
 - Terminal dashboard: `agent-bridge` without a subcommand opens a Textual TUI for the project in
   the current directory: task list with a "needs you" filter, task detail and patch view,
   human approval, review, cancel, reassign, account login/clear, and the active settings with
