@@ -322,3 +322,53 @@ def test_cli_init(repo, tmp_path_factory):
     bare = subprocess.run([exe], cwd=repo, stdin=subprocess.DEVNULL, capture_output=True,
                           text=True, env=env)
     assert bare.returncode == 0 and 'init' in bare.stdout and 'serve' in bare.stdout
+
+
+# @pt.id KIT-SETUP-012-config-init
+# @pt.item `agent-bridge config-init` starts .ai/orchestrator.yaml from a shipped example
+# @pt.condition the installed executable lists examples without a terminal, then writes one from a pseudo-terminal, then runs again
+# @pt.expected the listing names every example; without a terminal writing is refused; with one the file is written, git-ignored and passes config-check; an existing file is never overwritten
+# @pt.target bridge.cli._run
+# @pt.method integration
+# @pt.legacy none (new kit)
+def test_config_init(repo, tmp_path):
+    import pty
+    import sys
+    exe = str(Path(sys.executable).parent / 'agent-bridge')
+    env = {**os.environ, 'GIT_CEILING_DIRECTORIES': str(repo.parent), 'HOME': str(tmp_path)}
+    listing = subprocess.run([exe, 'config-init'], cwd=repo, capture_output=True, text=True,
+                             env=env)
+    assert listing.returncode == 0, listing.stderr
+    assert {line.split()[0] for line in listing.stdout.splitlines()[:5]} == {
+        p.stem for p in (KIT / 'examples').glob('*.yaml')}
+    piped = subprocess.run([exe, 'config-init', 'single-agent'], cwd=repo, capture_output=True,
+                           text=True, env=env, stdin=subprocess.DEVNULL)
+    assert piped.returncode == 2 and 'refused' in piped.stderr
+
+    def in_terminal():
+        main, tty = pty.openpty()
+        proc = subprocess.Popen([exe, 'config-init', 'single-agent'], cwd=repo, env=env,
+                                stdin=tty, stdout=tty, stderr=tty)
+        os.close(tty)
+        out = b''
+        try:  # read while the child runs: macOS drops pty output once the child is gone
+            while chunk := os.read(main, 4096):
+                out += chunk
+        except OSError:
+            pass
+        os.close(main)
+        return proc.wait(), out.decode()
+
+    code, out = in_terminal()
+    target = repo / '.ai' / 'orchestrator.yaml'
+    assert code == 0, out
+    assert target.read_text() == (KIT / 'examples' / 'single-agent.yaml').read_text()
+    ignored = subprocess.run(['git', '-C', str(repo), 'check-ignore', '-q', str(target)])
+    assert ignored.returncode == 0
+    check = subprocess.run([exe, 'config-check'], cwd=repo, capture_output=True, text=True,
+                           env=env)
+    assert check.returncode == 0 and str(target) in check.stdout, check.stderr
+    target.write_text('# mine\n')
+    code, out = in_terminal()
+    assert code == 1 and 'exists' in out
+    assert target.read_text() == '# mine\n'

@@ -114,10 +114,12 @@ Phát triển chính kit: `uv sync`, rồi `scripts/check.sh --with-health`.
 
 ### 1. Chọn một cấu hình
 
-Copy một file mẫu thành `.ai/orchestrator.yaml` (hoặc không có file nào để dùng cấu hình
-legacy), rồi:
+Tạo `.ai/orchestrator.yaml` từ một file mẫu bên dưới (hoặc không có file nào để dùng cấu hình
+legacy). Bản cài đã kèm các file mẫu, không cần clone repo:
 
 ```bash
+agent-bridge config-init                # liệt kê các file mẫu
+agent-bridge config-init orchestrator   # ghi .ai/orchestrator.yaml; không bao giờ ghi đè
 agent-bridge config-check   # kiểm tra schema, lỗi ghi rõ field
 agent-bridge agents         # ai plan, ai thực thi, ai review; ai đang sẵn sàng
 ```
@@ -289,6 +291,7 @@ terminal.
 | *(không có)* / `tui` | Dashboard cho project ở thư mục hiện tại |
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Cài vào / gỡ khỏi một project |
 | `serve` | MCP stdio server (lệnh mà `.mcp.json` chạy) |
+| `config-init [example]` | Chỉ người dùng: ghi `.ai/orchestrator.yaml` từ một file mẫu đi kèm (từ chối nếu đã có); không có tên thì liệt kê file mẫu và đường dẫn `config.example.json` |
 | `config-check` | Kiểm tra `.ai/orchestrator.yaml` (hoặc cấu hình legacy) |
 | `agents [--json]` | Role → agent, rồi bảng agent kèm quyền và tình trạng sẵn sàng |
 | `health [--json]` | OK / NOT OK, adapter, quota, số task và việc cần sửa; thoát exit 1 khi không OK |
@@ -471,7 +474,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Kết quả:
 ```console
-174 passed, 5 skipped
+175 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` và `agy` nói đúng giao thức JSONL / stream-json thật và trả lời
