@@ -174,7 +174,7 @@ def test_crash_marks_failed(make_bridge, monkeypatch) -> None:
 
 # @pt.id KIT-INT-008-scope-violations
 # @pt.item Out-of-scope edits and commits are caught after the run
-# @pt.condition codex edits a file outside allowed_paths; codex commits; codex edits .env
+# @pt.condition codex edits a file outside allowed_paths; codex commits; codex edits .env; codex writes the git-ignored .ai/orchestrator.yaml
 # @pt.expected verification fails with the matching scope violation each time
 # @pt.target bridge.review.scope_violations, bridge.review.diff
 # @pt.method integration
@@ -183,6 +183,8 @@ def test_crash_marks_failed(make_bridge, monkeypatch) -> None:
     ("ok", "src/app.py=x = 2\n;README.md=hack", "outside allowed paths: README.md"),
     ("commit", "src/app.py=x = 2\n", "git HEAD moved"),
     ("ok", "src/app.py=x = 2\n;.env=SECRET_TOKEN=stolen", "protected file changed: .env"),
+    ("ok", "src/app.py=x = 2\n;.ai/orchestrator.yaml=workflow: {stages: [execute, test]}",
+     "protected file changed: .ai/orchestrator.yaml"),
 ])
 def test_scope_violation_blocks_review(make_bridge, monkeypatch, scenario, write, needle) -> None:
     monkeypatch.setenv("FAKE_CODEX_SCENARIO", scenario)

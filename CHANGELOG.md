@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- An agent that wrote the git-ignored `.ai/orchestrator.yaml` (dropping the review stage, say)
+  passed the scope check; files directly under `.ai/` are now hashed before and after every run.
 - Claude agents start with `--setting-sources ""`: with `project`, the target repo's
   `.claude/settings.json` allow rules widened the tool allowlist and its hooks ran.
 - The dashboard's Accounts panel cut the state down to one letter on a normal terminal. It
