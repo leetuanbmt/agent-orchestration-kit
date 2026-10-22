@@ -136,25 +136,31 @@ agent plans:   bridge_plan → bridge_workflow_status(wait_s) → bridge_run_wor
 
 ### 3. Follow it in the dashboard
 
-Run `agent-bridge` in the project. The task list refreshes every 3 seconds and the title counts
-the tasks waiting for you.
+Run `agent-bridge` in the project. One screen, refreshed every 3 seconds:
+
+- **Needs you** (left, top): tasks waiting for you (APPROVED, REVIEW, PAUSED, FAILED, BLOCKED).
+  **Tasks** below it: every task.
+- **Detail** (middle): the selected task's objective, checks (PASS / FAIL), diff stat, reviews.
+- **Search**, **Agents** and **Accounts** (right). Accounts lists every account the machine
+  knows about: project and machine-wide accounts, codex-switch homes not added yet,
+  codex-switch and claude-switch profiles (marked not usable: they hold copied tokens) and
+  installed agent CLIs without an account.
+- The bottom bar shows the executor account's remaining quota.
+
+Press **Enter** on any row for the actions that fit it, so no key has to be remembered. The
+footer shows only the keys that work on the focused row.
 
 | Key | Action |
 |---|---|
-| `f` | Show only tasks that need you (APPROVED, REVIEW, PAUSED, FAILED, BLOCKED) / all |
-| `p` | Read the latest patch |
-| `a` | Approve a task waiting for a human (`APPROVED`) |
-| `v` | Review a task in `REVIEW` yourself: approve, rework or block, with notes |
+| `Tab` / `Shift+Tab`, `↑` `↓` | Move between panels / rows (the mouse works too) |
+| `Enter` | Actions for the selected task or account |
+| `/` | Search tasks by id, state, agent or objective |
+| `p` / `a` / `v` | Patch / approve a task waiting for a human / review a task in `REVIEW` |
 | `c` / `m` | Cancel a task / move it to another agent (new session) |
-| `l` / `x` | On *Agents & accounts*: log in the selected account / mark it available again |
-| `n` / `d` | Add a machine-wide account (on a codex-switch home row: add that home) / remove one |
-| `u` | Open a shell using the selected account (agy: shows the `eval` line instead) |
-| `e` | On *Settings*: edit `.ai/orchestrator.yaml` (or `config.json`) in `$EDITOR`, then reload |
-| `r` / `q` | Refresh / quit |
-
-The *Agents & accounts* tab lists every account the machine knows about: project and
-machine-wide accounts, codex-switch homes not added yet, codex-switch and claude-switch profiles
-(marked not usable: they hold copied tokens), and installed agent CLIs without an account.
+| `l` / `u` / `x` / `d` | On an account: log in / open a shell as it (agy: shows the `eval` line) / mark available / remove |
+| `n` | Add a machine-wide account (on a codex-switch home row: add that home) |
+| `s` | Settings; `e` there edits `.ai/orchestrator.yaml` (or `config.json`) in `$EDITOR` |
+| `?` / `q` | Keys / quit |
 
 The dashboard never starts an agent: a run belongs to the process that started it (the MCP
 server), and quitting the dashboard would interrupt it. The same data is available as JSON:
@@ -429,7 +435,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Result:
 ```console
-164 passed, 5 skipped
+165 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` and `agy` speak the real JSONL / stream-json protocols and

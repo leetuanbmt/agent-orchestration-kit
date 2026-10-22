@@ -32,6 +32,17 @@ def quota_text(quota: Any) -> str:
     return " · ".join(parts) or "UNKNOWN"
 
 
+def remaining_pct(quota: Any) -> float | None:
+    """The tighter of the 5h / week windows, as % left; None when no CLI has reported it."""
+    if isinstance(quota, (int, float)):
+        return float(quota)
+    if not isinstance(quota, dict):
+        return None
+    used = [float(w["used_percent"]) for k in ("primary", "secondary")
+            if isinstance(w := quota.get(k), dict) and w.get("used_percent") is not None]
+    return 100 - max(used) if used else None
+
+
 def ago(ts: float | None, now: float | None = None) -> str:
     if not ts:
         return "-"

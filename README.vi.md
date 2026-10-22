@@ -138,25 +138,32 @@ agent plan:    bridge_plan → bridge_workflow_status(wait_s) → bridge_run_wor
 
 ### 3. Theo dõi trên dashboard
 
-Chạy `agent-bridge` trong project. Danh sách task tự làm mới mỗi 3 giây và tiêu đề đếm số task
-đang chờ bạn.
+Chạy `agent-bridge` trong project. Tất cả nằm trên một màn hình, tự làm mới mỗi 3 giây:
+
+- **Needs you** (trái, trên): task đang chờ bạn (APPROVED, REVIEW, PAUSED, FAILED, BLOCKED).
+  **Tasks** ở dưới: mọi task.
+- **Detail** (giữa): mục tiêu của task đang chọn, kết quả kiểm tra (PASS / FAIL), diff stat,
+  review.
+- **Search**, **Agents** và **Accounts** (phải). Accounts liệt kê mọi account máy đang có:
+  account của project và toàn máy, home codex-switch chưa thêm, profile codex-switch và
+  claude-switch (đánh dấu không dùng được vì chứa token đã copy) và CLI agent đã cài nhưng chưa
+  có account.
+- Thanh dưới đáy hiện quota còn lại của account executor.
+
+Bấm **Enter** trên bất kỳ dòng nào để mở các thao tác hợp lệ cho dòng đó, không cần nhớ phím.
+Footer chỉ hiện những phím dùng được cho dòng đang chọn.
 
 | Phím | Thao tác |
 |---|---|
-| `f` | Chỉ hiện task cần bạn (APPROVED, REVIEW, PAUSED, FAILED, BLOCKED) / tất cả |
-| `p` | Đọc patch mới nhất |
-| `a` | Approve task đang chờ người duyệt (`APPROVED`) |
-| `v` | Tự review task ở `REVIEW`: approve, rework hoặc block, kèm ghi chú |
+| `Tab` / `Shift+Tab`, `↑` `↓` | Chuyển ô / dòng (dùng chuột cũng được) |
+| `Enter` | Thao tác cho task hoặc account đang chọn |
+| `/` | Tìm task theo id, trạng thái, agent hoặc mục tiêu |
+| `p` / `a` / `v` | Xem patch / approve task chờ người duyệt / review task ở `REVIEW` |
 | `c` / `m` | Huỷ task / chuyển task sang agent khác (session mới) |
-| `l` / `x` | Ở tab *Agents & accounts*: đăng nhập account đang chọn / đánh dấu account sẵn sàng lại |
-| `n` / `d` | Thêm account toàn máy (trên dòng home codex-switch: thêm chính home đó) / xoá account |
-| `u` | Mở shell dùng account đang chọn (agy: hiện dòng `eval` thay vì mở shell) |
-| `e` | Ở tab *Settings*: sửa `.ai/orchestrator.yaml` (hoặc `config.json`) bằng `$EDITOR`, rồi nạp lại |
-| `r` / `q` | Làm mới / thoát |
-
-Tab *Agents & accounts* liệt kê mọi account máy đang có: account của project và account toàn
-máy, home codex-switch chưa thêm, profile codex-switch và claude-switch (đánh dấu không dùng
-được vì chứa token đã copy), và các CLI agent đã cài nhưng chưa có account.
+| `l` / `u` / `x` / `d` | Trên account: đăng nhập / mở shell bằng account (agy: hiện dòng `eval`) / đánh dấu sẵn sàng / xoá |
+| `n` | Thêm account toàn máy (trên dòng home codex-switch: thêm chính home đó) |
+| `s` | Settings; trong đó `e` sửa `.ai/orchestrator.yaml` (hoặc `config.json`) bằng `$EDITOR` |
+| `?` / `q` | Bảng phím / thoát |
 
 Dashboard không bao giờ khởi chạy agent: một lần chạy thuộc về process đã khởi chạy nó (MCP
 server), thoát dashboard sẽ làm gián đoạn lần chạy đó. Dữ liệu tương tự có ở dạng JSON:
@@ -435,7 +442,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Kết quả:
 ```console
-164 passed, 5 skipped
+165 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` và `agy` nói đúng giao thức JSONL / stream-json thật và trả lời

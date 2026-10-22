@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed agent CLIs without an account. Dashboard keys `n` / `d` / `u`.
 - `account-list`, `health`, `agents` and `list` print tables with the next command in a
   terminal; `--json` (or a pipe) gives the data. `health` exits 1 when not OK.
+- Dashboard redesigned as one screen of panels (Needs you, Tasks, Detail, Search, Agents,
+  Accounts, executor quota bar). Enter opens the actions that fit the selected row; the footer
+  shows only the keys that work there; `/` searches tasks; settings open with `s`.
 - Terminal dashboard: `agent-bridge` without a subcommand opens a Textual TUI for the project in
   the current directory: task list with a "needs you" filter, task detail and patch view,
   human approval, review, cancel, reassign, account login/clear, and the active settings with
