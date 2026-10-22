@@ -352,7 +352,8 @@ class BridgeApp(App[None]):
         self._fill_tasks("tasks", tasks)
         self.query_one("#needs").border_title = f"Needs you ({len(needs)})"
         self.query_one("#tasks").border_title = f"Tasks ({len(tasks)})"
-        self.title = f"agent-bridge · {len(needs)} need you" if needs else "agent-bridge"
+        name = self.bridge.root.name
+        self.title = f"{name} · {len(needs)} need you" if needs else f"{name} · agent-bridge"
         if self.focused is None:
             self.query_one("#needs" if needs else "#tasks").focus()
 
@@ -403,7 +404,8 @@ class BridgeApp(App[None]):
         pct = remaining_pct(quota)
         self.query_one("#quota", ProgressBar).update(progress=pct or 0)
         self.query_one("#quota-label", Static).update(
-            f"executor {account or '-'} · {quota_text(quota) if pct is not None else 'quota UNKNOWN'}")
+            f"project {self.bridge.root.name} · executor {account or '-'} · "
+            f"{quota_text(quota) if pct is not None else 'quota UNKNOWN'}")
 
     @on(DataTable.RowHighlighted, "#needs, #tasks")
     def task_highlighted(self, event: DataTable.RowHighlighted) -> None:

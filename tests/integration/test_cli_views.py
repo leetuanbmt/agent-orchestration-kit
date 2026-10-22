@@ -31,13 +31,14 @@ def _out(capsys, *argv, tty=True, monkeypatch=None):
 # @pt.id KIT-CLI-VIEW-001-tables
 # @pt.item health, agents and list read as tables in a terminal
 # @pt.condition one task waiting in REVIEW; stdout is a terminal, then a pipe, then --json
-# @pt.expected the terminal gets tables (no JSON) with the next command for the waiting task; a pipe and --json get exactly the data the MCP tools return
+# @pt.expected the terminal gets tables (no JSON) with the next command for the waiting task and the project the tasks belong to; a pipe and --json get exactly the data the MCP tools return
 # @pt.target bridge.cli.main, bridge.render.health_view, bridge.render.agents_view, bridge.render.tasks_view
 # @pt.method integration
 # @pt.legacy none
-def test_views(project, capsys, monkeypatch):
+def test_views(project, repo, capsys, monkeypatch):
     listing = _out(capsys, "list", monkeypatch=monkeypatch)
     assert "{" not in listing and project in listing and "REVIEW" in listing
+    assert f"project {repo.name}" in listing
     assert "● needs you:" in listing and f"agent-bridge result {project}" in listing
     agents = _out(capsys, "agents", monkeypatch=monkeypatch)
     assert "executor" in agents and "available" in agents and "{" not in agents

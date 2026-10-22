@@ -278,7 +278,8 @@ def main(argv: list[str] | None = None) -> None:
             from . import render
             console = Console()
             extra = ({"width": console.width, "show_all": args.all}
-                     if args.cmd == "account-list" else {})
+                     if args.cmd == "account-list" else
+                     {"project": str(find_root())} if args.cmd == "list" else {})
             console.print(getattr(render, view)(out, **extra))
         else:
             print(dumps(out))
