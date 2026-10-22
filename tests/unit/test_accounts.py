@@ -220,9 +220,11 @@ def test_list_surfaces(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "load_config", lambda root: cfg)
     b = Bridge(tmp_path, cfg)
     monkeypatch.setattr(server, "bridge", lambda: b)
+    monkeypatch.setattr("bridge.service.shutil.which", lambda name: None)
     expected = discover(cfg, tmp_path)
     for account in expected["accounts"]:
-        account.update(state="available", last_error=None, max_concurrency=1)
+        account.update(state="available", last_error=None, max_concurrency=1, source="project")
+    expected["unconfigured"] = []
     assert asyncio.run(cli._run(cli.argparse.Namespace(cmd="account-list"))) == expected
     assert asyncio.run(server.bridge_list_accounts()) == expected
     monkeypatch.setattr(b, "list_accounts", Mock(side_effect=ValueError("bad account")))

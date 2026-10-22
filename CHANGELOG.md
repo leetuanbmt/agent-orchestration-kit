@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Recursion guard: agent processes get `AGENT_BRIDGE_AGENT=1` and the bridge refuses to start
   under it.
 - Example configs in `examples/` and an opt-in real Claude smoke test.
+- Read-only adapters `opencode-cli` (opencode `run --format json`, edit/bash/webfetch denied
+  through `OPENCODE_CONFIG_CONTENT`) and `agy-cli` (Antigravity `--mode plan --sandbox`,
+  stream-json on stdin, `--json-schema`) for planner and reviewer roles; providers `opencode`
+  (global login only) and `google` (account home is a whole `HOME`). Opt-in real smoke tests.
+- Machine-wide accounts in `~/.agent-bridge/accounts.json`: `account-add` (human; fresh home
+  under `~/.agent-bridge/homes/` or `--home`, then the provider's own login), `account-remove`
+  (human), `account-use` (`eval` lines or `--shell`, works outside a project). Every project
+  sees them; project declarations win.
+- `account-list` and the dashboard show every account on the machine: registry and project
+  accounts, codex-switch homes and profiles, claude-switch profiles (listed, never used) and
+  installed agent CLIs without an account. Dashboard keys `n` / `d` / `u`.
 - Terminal dashboard: `agent-bridge` without a subcommand opens a Textual TUI for the project in
   the current directory: task list with a "needs you" filter, task detail and patch view,
   human approval, review, cancel, reassign, account login/clear, and the active settings with

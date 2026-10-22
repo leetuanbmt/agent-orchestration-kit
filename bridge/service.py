@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import time
 from collections.abc import Callable
@@ -16,12 +17,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .accounts import Account, AccountLock, discover, login_status, resolve, resolve_profile
+from .accounts import HOME_ENV, Account, AccountLock, binary, discover, load_registry, login_status, \
+    resolve, resolve_profile
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
 from .executor import ADAPTERS, PLAN_SCHEMA, REVIEW_SCHEMA, Adapter, RunRequest, RunResult, \
     build_plan_prompt, build_prompt, build_review_prompt, build_rework_prompt, kill_stale
 from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError
-from .orchestrator import ADAPTER_PROVIDERS, AgentConfig, OrchestratorConfig
+from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .review import diff, parse_command, run_verification, scope_violations, snapshot, \
@@ -48,7 +50,7 @@ def _alive(pid: int | None) -> bool:
 
 def resolve_account(orch: OrchestratorConfig, cfg: BridgeConfig, root: Path,
                     name: str) -> Account:
-    if orch.source.startswith("legacy"):
+    if orch.source.startswith("legacy") and (name == "default" or name in cfg.accounts):
         return resolve(cfg, root, name)
     profile = orch.accounts.get(name)
     if profile is None:
@@ -201,13 +203,26 @@ class Bridge:
     # ---- accounts and agents ---------------------------------------------------------------
 
     def list_accounts(self) -> dict[str, Any]:
-        listing = (discover(self.cfg, self.root) if self.legacy else
+        only_config = set(self.orch.accounts) == {"default", *self.cfg.accounts}
+        listing = (discover(self.cfg, self.root) if self.legacy and only_config else
                    discover(self.cfg, self.root, [self._account(n) for n in self.orch.accounts]))
+        registry = load_registry()
         for account in listing["accounts"]:
             account["quota"] = self._account_quota(account["name"])
             state = self.store.account_state(account["name"])
             account.update(state=state["state"], last_error=state["last_error"],
-                           max_concurrency=self._slots(account["name"]))
+                           max_concurrency=self._slots(account["name"]),
+                           source="registry" if account["name"] in registry else "project")
+        # Agent CLIs installed on this machine that no account here uses yet (no login probe:
+        # some CLIs need the network or start a service just to answer).
+        used = {a.get("provider", "openai") for a in listing["accounts"]}
+        listing["unconfigured"] = [
+            {"provider": provider, "binary": path,
+             "hint": (f"agent-bridge account-add <name> --provider {provider}"
+                      if provider in HOME_ENV else "add it to .ai/orchestrator.yaml "
+                      f"accounts with provider: {provider}")}
+            for provider in sorted(PROVIDERS - used)
+            if (path := shutil.which(binary(self.cfg, provider)))]
         return listing
 
     def list_agents(self) -> dict[str, Any]:

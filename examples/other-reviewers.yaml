@@ -1,0 +1,18 @@
+# Antigravity (agy) plans, Codex implements, opencode reviews. opencode and agy are read-only
+# adapters: they can plan and review but never write. opencode uses its global login (no home);
+# agy's account home is a whole HOME (create one with `agent-bridge account-add gm --provider google`).
+version: 1
+accounts:
+  codex-work: {provider: openai, home: ~/.agent-bridge/homes/work}
+  gm: {provider: google}
+  oc: {provider: opencode}
+agents:
+  agy: {adapter: agy-cli, account: gm, model: gemini-3.8-flash-low}
+  codex: {adapter: codex-cli, account: codex-work}
+  opencode: {adapter: opencode-cli, account: oc, model: ollama-cloud/gpt-oss:120b}
+roles:
+  planner: agy
+  executor: codex
+  reviewer: opencode
+workflow:
+  stages: [plan, execute, test, review]

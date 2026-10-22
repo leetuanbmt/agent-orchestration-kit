@@ -15,7 +15,6 @@
   <img alt="platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
   <img alt="python" src="https://img.shields.io/badge/python-3.12-blue">
   <img alt="dependencies" src="https://img.shields.io/badge/dependencies-mcp%20%7C%20pyyaml-brightgreen">
-  <img alt="tests" src="https://img.shields.io/badge/tests-146%20passed%20%7C%203%20opt--in-brightgreen">
   <img alt="version" src="https://img.shields.io/badge/version-0.1.0%20%2B%20unreleased-blue">
 </p>
 
@@ -28,10 +27,12 @@ whatever the agent says, even if the tests never ran or it edited files outside 
 
 - **Roles**: `planner` splits work into tasks, `executor` implements one task at a time,
   `reviewer` decides approve / rework / block. Custom roles can be added.
-- **Agents**: an adapter (`codex-cli`, `claude-cli`, or `client`, the MCP caller itself), one
-  account, an optional model, read/write capabilities.
-- **Accounts**: isolated logins (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`), each with its own
-  concurrency limit and quota.
+- **Agents**: an adapter (`codex-cli`, `claude-cli`, `client` = the MCP caller itself, or the
+  read-only `opencode-cli` / `agy-cli` for planning and review), one account, an optional model,
+  read/write capabilities.
+- **Accounts**: isolated logins (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, a whole `HOME` for agy),
+  each with its own concurrency limit and quota. Machine-wide accounts are created and switched
+  with `agent-bridge` itself; no other switcher is needed.
 - **`agent-bridge`**: keeps task state in SQLite, routes tasks to agents, runs them with the
   narrowest permissions, checks which files changed and re-runs the verification commands
   itself. An agent's own report is never treated as evidence.
@@ -146,15 +147,21 @@ the tasks waiting for you.
 | `v` | Review a task in `REVIEW` yourself: approve, rework or block, with notes |
 | `c` / `m` | Cancel a task / move it to another agent (new session) |
 | `l` / `x` | On *Agents & accounts*: log in the selected account / mark it available again |
+| `n` / `d` | Add a machine-wide account (on a codex-switch home row: add that home) / remove one |
+| `u` | Open a shell using the selected account (agy: shows the `eval` line instead) |
 | `e` | On *Settings*: edit `.ai/orchestrator.yaml` (or `config.json`) in `$EDITOR`, then reload |
 | `r` / `q` | Refresh / quit |
+
+The *Agents & accounts* tab lists every account the machine knows about: project and
+machine-wide accounts, codex-switch homes not added yet, codex-switch and claude-switch profiles
+(marked not usable: they hold copied tokens), and installed agent CLIs without an account.
 
 The dashboard never starts an agent: a run belongs to the process that started it (the MCP
 server), and quitting the dashboard would interrupt it. The same data is available as JSON:
 
 ```bash
 agent-bridge health        # adapters, remaining quota per account, task counts
-agent-bridge account-list  # accounts, login state, codex-switch homes/profiles
+agent-bridge account-list  # accounts, login state, codex-switch / claude-switch, unused CLIs
 agent-bridge list          # tasks, newest first
 ```
 
@@ -184,8 +191,8 @@ workflow:
 
 | Section | Keys |
 |---|---|
-| `accounts.<id>` | `provider` (`openai` \| `anthropic`), `home` (isolated auth home; omit for the inherited global login, used read-only), `max_concurrency` (1–8) |
-| `agents.<id>` | `adapter` (`codex-cli` \| `claude-cli` \| `client`), `account`, `model`, `capabilities` (`[read, write]` subset), `allow_write` (claude-cli only writes when true), `allow_bash` (claude-cli), `timeout_s`, `enabled` |
+| `accounts.<id>` | `provider` (`openai` \| `anthropic` \| `google` \| `opencode`; opencode has no `home`), `home` (isolated auth home; omit for the inherited global login, used read-only), `max_concurrency` (1–8) |
+| `agents.<id>` | `adapter` (`codex-cli` \| `claude-cli` \| `client` \| `opencode-cli` \| `agy-cli`; the last two are read-only), `account`, `model`, `capabilities` (`[read, write]` subset), `allow_write` (claude-cli only writes when true), `allow_bash` (claude-cli), `timeout_s`, `enabled` |
 | `roles.<name>` | an agent id, or `{agents: [...], strategy: ordered \| explicit, requires: read \| write}`. `executor` is required and must be able to write; `planner`/`reviewer` need read |
 | `routing.quota_fallback` | `enabled`, `min_remaining_pct`, `agents` (candidates in order; default: the executor role) |
 | `workflow` | `stages` (ordered subset of `plan, execute, test, review`; needs `execute` and at least one gate), `max_rework` (0–4) |
@@ -262,7 +269,8 @@ secrets), stops at `APPROVED` until a human runs `agent-bridge approve <id>` in 
 | `review` / `resume` / `cancel` | Review, continue or cancel a task |
 | `plan "<objective>"` / `run-workflow <W…>` / `workflow-status <W…>` | Planner-agent workflows |
 | `list` | List tasks |
-| `account-list` | Accounts, login state, codex-switch homes/profiles |
+| `account-list` | Accounts, login state, codex-switch / claude-switch, installed CLIs without an account |
+| `account-use <name> [--shell]` | Print `export`/function lines for `eval "$(…)"`, or open a subshell, so your interactive CLI uses that account |
 | `account-clear <name>` | Clear an account's unavailable flag after the user confirms |
 
 **Human-only** (need an interactive terminal and a typed confirmation, or the dashboard):
@@ -271,7 +279,9 @@ secrets), stops at `APPROVED` until a human runs `agent-bridge approve <id>` in 
 |---|---|
 | `approve <id>` | Approve a high-risk / sensitive-path task |
 | `reassign <id> <agent\|account>` | Move a task to another agent (new session) |
-| `account-login <name>` | Fresh login into the account's own home (`codex login` or `claude auth login`) |
+| `account-login <name>` | Fresh login into the account's own home (`codex login`, `claude auth login`, `agy`, `opencode auth login`) |
+| `account-add <name> --provider openai\|anthropic\|google [--home DIR]` | Create a machine-wide account (fresh home under `~/.agent-bridge/homes/` unless `--home`), then log in |
+| `account-remove <name>` | Forget a machine-wide account; deletes its home only if `account-add` created it |
 
 ---
 
@@ -282,7 +292,7 @@ See `.ai/config.example.json`. Unknown keys are rejected.
 | Key | Default | Meaning |
 |---|---|---|
 | `sandbox` | `workspace-write` | or `read-only`; `danger-full-access` is not accepted |
-| `codex_bin` / `claude_bin` | `codex` / `claude` | CLI executables |
+| `codex_bin` / `claude_bin` / `opencode_bin` / `agy_bin` | `codex` / `claude` / `opencode` / `agy` | CLI executables |
 | `default_timeout_s` / `max_timeout_s` | 1800 / 7200 | per-run limits |
 | `max_attempts` | 3 | legacy setup only; with `orchestrator.yaml` use `workflow.max_rework` |
 | `network_retries` / `retry_backoff_s` | 1 / 10 | bounded retry for network errors only |
@@ -319,6 +329,25 @@ outside the project and outside the global homes, and never shared by two accoun
 fails loudly if the global `~/.codex/auth.json` changes during login. `codex-switch home add`
 homes work as Codex accounts; `codex-switch` snapshot profiles are listed but never used, because
 using them would mean copying refresh tokens.
+
+### Machine-wide accounts and switching
+
+`agent-bridge account-add work --provider openai` (human) creates `~/.agent-bridge/homes/work`
+(mode 0700), records it in `~/.agent-bridge/accounts.json` and runs the provider's own login
+inside it: a fresh session, never a copy of another login. `--home DIR` registers an existing
+home instead, e.g. a `codex-switch home add` home. Every project sees these accounts by name;
+an account the project declares itself wins.
+
+To use an account in your own terminal:
+
+```bash
+eval "$(agent-bridge account-use work)"   # export CODEX_HOME=… / CLAUDE_CONFIG_DIR=…
+agent-bridge account-use work --shell     # or a subshell; exit to return
+```
+
+`~/.codex` and `~/.claude` are never overwritten. For agy the account home is a whole `HOME`,
+so `account-use` defines an `agy` shell function instead of changing `HOME`. opencode has one
+global login (`opencode auth login`); its accounts take no `home`.
 
 - A task stays on its agent and account. Retries and resumes use the same home and session. A
   human moves it with `agent-bridge reassign <id> <agent>` (new session), or the bridge does when
@@ -362,20 +391,26 @@ the user's authorisation; the legacy `auto_switch` block in `config.json` maps o
    them. **This is still weaker isolation than Codex**: read tools can read anything the user
    can, and Bash (`allow_bash: true`) is not path-confined at all. Prefer Codex as executor;
    never combine `allow_bash` with untrusted work.
-3. **Recursion guard:** every agent process gets `AGENT_BRIDGE_AGENT=1`; the server and CLI refuse
+3. **opencode and agy:** read-only only (planner / reviewer); config refuses `allow_write`.
+   opencode runs with `OPENCODE_CONFIG_CONTENT` denying edit, bash, webfetch and external
+   directories, and project config disabled; a probe wrote nothing. A path-scoped edit rule
+   also wrote nothing, so writing stays off until scoping is proven. agy runs in `--mode plan
+   --sandbox`, which wrote no files in probes; it keeps browser tools that the CLI cannot turn
+   off. Neither has an OS sandbox like Codex.
+4. **Recursion guard:** every agent process gets `AGENT_BRIDGE_AGENT=1`; the server and CLI refuse
    to start under it.
-4. **Processes:** argv lists, no shell; own process group, SIGTERM then SIGKILL on timeout or
+5. **Processes:** argv lists, no shell; own process group, SIGTERM then SIGKILL on timeout or
    cancel; orphaned agent groups from a dead runner are killed on the next start (only if the
-   PID is a `codex` or `claude` process).
-5. **Environment:** credential-shaped variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, …) are removed.
-6. **Paths:** checked at creation (absolute, `..`, `~`, symlink escape, protected, over-broad) and
+   PID is a `codex`, `claude`, `opencode` or `agy` process).
+6. **Environment:** credential-shaped variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, …) are removed.
+7. **Paths:** checked at creation (absolute, `..`, `~`, symlink escape, protected, over-broad) and
    after each run for every adapter (hash snapshot, full worktree diff, `HEAD` must not move).
-7. **Verification:** re-run by the bridge, argv only, allowlisted executables, timeout.
-8. **Approval:** executors cannot approve. The client or a reviewer agent approves; the bridge
+8. **Verification:** re-run by the bridge, argv only, allowlisted executables, timeout.
+9. **Approval:** executors cannot approve. The client or a reviewer agent approves; the bridge
    approves only in gates-only workflows. High-risk or sensitive-path tasks need a human at an
    interactive terminal. `.claude/settings.json` also denies these commands, account logins,
    `sqlite3` and edits under `.ai/` to Claude Code.
-9. **Audit:** every transition, attempt, routing decision, review (with reviewer), account change
+10. **Audit:** every transition, attempt, routing decision, review (with reviewer), account change
    and workflow state is an event in `bridge.db`. Stored output passes through secret redaction.
 
 ---
@@ -386,18 +421,19 @@ the user's authorisation; the legacy `auto_switch` block in `config.json` maps o
 scripts/check.sh                                   # full suite (fake codex + fake claude: deterministic)
 CODEX_SMOKE=1 uv run pytest -m real_codex          # two real Codex runs (task + single-agent workflow), opt-in, uses your quota
 CLAUDE_SMOKE=1 uv run pytest tests/e2e/test_real_claude_smoke.py   # one real Claude review (haiku)
+OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  # real opencode / agy reviews
 ```
 
 Result:
 ```console
-150 passed, 3 skipped
+161 passed, 5 skipped
 ```
 
-`tests/fakes/codex` and `tests/fakes/claude` speak the real JSONL / stream-json protocols and
+`tests/fakes/codex`, `claude`, `opencode` and `agy` speak the real JSONL / stream-json protocols and
 answer by output schema (executor, reviewer, planner). The suite covers configurations A–E
 (Claude→Codex→Claude, Codex→Claude→Codex, two Codex executor accounts, single agent, gates
 only), routing, pinning, affinity, quota fallback, bounded rework, reviewer failure, config
-validation, account isolation, concurrency slots, legacy mapping and schema upgrade.
+validation, account isolation, concurrency slots, legacy mapping, schema upgrade, machine-wide accounts and the dashboard.
 
 ---
 
@@ -405,7 +441,7 @@ validation, account isolation, concurrency slots, legacy mapping and schema upgr
 
 | Implemented | Not supported (yet) |
 |---|---|
-| Adapters `codex-cli`, `claude-cli`, `client` | Other CLIs (Gemini, Aider, …): add an `Adapter` subclass |
+| Adapters `codex-cli`, `claude-cli`, `client`; read-only `opencode-cli`, `agy-cli` | opencode / agy as executors (path-scoped writes not proven); other CLIs: add an `Adapter` subclass |
 | Roles planner / executor / reviewer + custom roles in config | Custom roles have no stage of their own; `tester` is the bridge's `test` stage |
 | Ordered and explicit routing, pinning, affinity, per-account limits | Load-balancing strategies beyond "first eligible" |
 | Opt-in quota fallback across agents | Fallback on AUTH (by design: never) |

@@ -14,6 +14,7 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from .accounts import load_registry
 from .config import AI_DIR, BridgeConfig
 
 ORCHESTRATOR_FILE = "orchestrator.yaml"
@@ -24,9 +25,17 @@ ORCHESTRATOR_FILE = "orchestrator.yaml"
 ADAPTER_PROVIDERS: dict[str, str | None] = {
     "codex-cli": "openai",
     "claude-cli": "anthropic",
+    "opencode-cli": "opencode",
+    "agy-cli": "google",
     "client": None,
 }
 PROVIDERS = frozenset(p for p in ADAPTER_PROVIDERS.values() if p)
+# Adapters with no verified way to confine writes to a task's paths: planner/reviewer only.
+# Probed on opencode 2.1.2 and agy 1.4.5: their read-only modes refused every write.
+READ_ONLY_ADAPTERS = frozenset({"opencode-cli", "agy-cli"})
+# opencode keeps credentials behind one background service per user, so it has no isolated
+# home: its only account is the global `opencode auth login`.
+GLOBAL_ONLY_PROVIDERS = frozenset({"opencode"})
 STAGES = ("plan", "execute", "test", "review")
 BUILTIN_ROLES = ("advisor", "planner", "executor", "reviewer", "tester")
 Capability = Literal["read", "write"]
@@ -46,6 +55,9 @@ class AccountProfile(BaseModel):
         if self.provider not in PROVIDERS:
             raise ValueError(f"unsupported provider {self.provider!r}; supported: "
                              f"{sorted(PROVIDERS)}")
+        if self.home and self.provider in GLOBAL_ONLY_PROVIDERS:
+            raise ValueError(f"{self.provider} accounts use the global login (no home); "
+                             "log in with: opencode auth login")
         return self
 
 
@@ -79,6 +91,10 @@ class AgentConfig(BaseModel):
                                  "model, allow_write or allow_bash")
         elif self.account is None:
             raise ValueError(f"adapter {self.adapter} needs an account")
+        if self.adapter in READ_ONLY_ADAPTERS and (self.allow_write
+                                                   or "write" in (self.capabilities or [])):
+            raise ValueError(f"{self.adapter} is read-only (planner/reviewer): no way to "
+                             "confine its writes to a task's paths has been verified")
         if self.allow_bash and self.adapter != "claude-cli":
             raise ValueError("allow_bash only applies to claude-cli (codex-cli is sandboxed)")
         return self
@@ -86,7 +102,8 @@ class AgentConfig(BaseModel):
     def can(self, capability: str) -> bool:
         if self.adapter == "client":
             return capability == "read"
-        allowed = {"read"} | ({"write"} if self.writes else set())
+        allowed = {"read"} | ({"write"} if self.writes and self.adapter not in
+                              READ_ONLY_ADAPTERS else set())
         return capability in allowed and (self.capabilities is None
                                           or capability in self.capabilities)
 
@@ -236,14 +253,19 @@ class OrchestratorConfig(BaseModel):
         return self.workflow.max_rework + 1
 
 
-def legacy(cfg: BridgeConfig) -> OrchestratorConfig:
-    """The setup implied by `.ai/config.json`: agents are named after the Codex accounts."""
+def legacy(cfg: BridgeConfig, registry: dict | None = None) -> OrchestratorConfig:
+    """The setup implied by `.ai/config.json`: agents are named after the Codex accounts.
+
+    Machine-wide registry accounts are added too; Codex ones become agents tasks can be
+    pinned or reassigned to, but the executor role keeps its `config.json` order."""
     accounts = {"default": AccountProfile(provider="openai")}
     accounts |= {name: AccountProfile(provider="openai", home=a.codex_home)
                  for name, a in sorted(cfg.accounts.items())}
+    for name, entry in sorted((registry or {}).items()):
+        accounts.setdefault(name, AccountProfile(**entry))
     agents = {"client": AgentConfig(adapter="client")}
     agents |= {name: AgentConfig(adapter="codex-cli", account=name, model=cfg.model)
-               for name in accounts}
+               for name, acc in accounts.items() if acc.provider == "openai"}
     fallback = cfg.auto_switch
     executors = list(dict.fromkeys([cfg.default_account, *fallback.fallback_accounts]))
     return OrchestratorConfig(
@@ -258,13 +280,17 @@ def legacy(cfg: BridgeConfig) -> OrchestratorConfig:
     )
 
 
-def parse(text: str, source: str = ORCHESTRATOR_FILE) -> OrchestratorConfig:
+def parse(text: str, source: str = ORCHESTRATOR_FILE,
+          registry: dict | None = None) -> OrchestratorConfig:
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as e:
         raise ValueError(f"{source}: invalid YAML: {e}") from e
     if not isinstance(data, dict):
         raise ValueError(f"{source}: expected a mapping at the top level")
+    if registry:
+        # Registry accounts are usable by name; the project's own declarations win.
+        data["accounts"] = {**registry, **(data.get("accounts") or {})}
     try:
         return OrchestratorConfig.model_validate({**data, "source": source})
     except ValidationError as e:
@@ -276,9 +302,10 @@ def parse(text: str, source: str = ORCHESTRATOR_FILE) -> OrchestratorConfig:
 
 def load(root: Path, cfg: BridgeConfig) -> OrchestratorConfig:
     path = root / AI_DIR / ORCHESTRATOR_FILE
+    registry = load_registry()
     if not path.exists():
-        return legacy(cfg)
+        return legacy(cfg, registry)
     if cfg.accounts or cfg.auto_switch.enabled:
         raise ValueError(f"{path}: accounts and auto_switch moved to orchestrator.yaml; "
                          "remove them from .ai/config.json")
-    return parse(path.read_text(), str(path))
+    return parse(path.read_text(), str(path), registry)

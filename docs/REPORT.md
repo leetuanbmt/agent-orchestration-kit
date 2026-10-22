@@ -120,7 +120,7 @@ Verification of this change:
 
 | Check | Result |
 |---|---|
-| `scripts/check.sh` | 150 passed, 3 skipped (opt-in real smoke tests) |
+| `scripts/check.sh` | 161 passed, 5 skipped (opt-in real smoke tests) |
 | Real Claude CLI, `CLAUDE_SMOKE=1` | 1 passed: fake Codex made the change, real `claude -p` (haiku) reviewed read-only with no MCP servers and approved as actor `agent`; task DONE |
 | Real Codex, `CODEX_SMOKE=1 -m real_codex` | 2 passed: the 0.1 lifecycle (READY→REVIEW→DONE) and a single-agent workflow where real Codex planned with the plan schema, implemented, and approved with the review schema (read-only); workflow DONE |
 | Claude write scoping probe | see *Limitations*: scoped Edit/Write rules refuse writes outside `allowed_paths` |
@@ -133,7 +133,30 @@ wrappers, and migrates an older install. `agent-bridge` alone opens a Textual da
 reassign, account login/clear, config edit) and never starts an agent, since a run belongs to
 the process that started it. Its flows are tested headless with Textual's Pilot.
 
+### opencode, Antigravity and machine-wide accounts
+
+| Piece | Implementation |
+|---|---|
+| `opencode-cli` | `opencode run --format json --standalone [-m] [--session]`, prompt on stdin; schema in the prompt, JSON parsed from the reply text (fenced or bare); `OPENCODE_CONFIG_CONTENT` denies edit, bash, webfetch, external_directory; `OPENCODE_DISABLE_PROJECT_CONFIG=1`; `provider.quota` errors pause as QUOTA |
+| `agy-cli` | `agy --input-format stream-json --output-format stream-json -p= --mode plan --sandbox --json-schema …`, one `{"event":"user"}` line on stdin; `result.structured_output`; account home = `HOME` |
+| Registry | `~/.agent-bridge/accounts.json` + `homes/<name>` (0700); merged into every project's accounts, project declarations win; legacy setups gain a Codex agent per registry openai account |
+| Switching | `account-use` prints `export CODEX_HOME=…` / `CLAUDE_CONFIG_DIR=…` or an `agy` shell function, or opens a subshell; global homes are never rewritten |
+
+Probes on this machine (opencode 2.1.2, agy 1.4.5): with the deny config opencode wrote no file
+when asked to; a path-scoped `edit` rule (`{"*":"deny","src/**":"allow"}`) also wrote nothing,
+so writing could not be shown to be scoped and both adapters stay read-only. agy in plan mode
+wrote only its own plan artifact outside the worktree. Isolating opencode by XDG dirs failed
+(its background service clashed on a fixed port), so opencode accounts use the global login.
+
+| Check | Result |
+|---|---|
+| Real opencode reviewer, `OPENCODE_SMOKE=1` (ollama-cloud/gpt-oss:120b) | approved as actor `agent`; worktree held only the executor's change; task DONE |
+| Real agy reviewer, `AGY_SMOKE=1` (gemini-3.8-flash-low, `--mode plan --sandbox`) | approved as actor `agent`; worktree held only the executor's change; task DONE |
+
 ## 9. Known limitations / unsupported
+
+- opencode and agy cannot execute (write) tasks. agy keeps browser tools in plan mode that the
+  CLI cannot disable; opencode has no per-account login isolation.
 
 - A Claude executor (`allow_write`) has no OS sandbox. Probe on 2.1.306 (haiku, `dontAsk`):
   an unscoped `Write` created a file outside the working directory; with `Edit(./src/**)` and

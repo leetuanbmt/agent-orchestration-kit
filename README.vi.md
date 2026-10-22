@@ -15,7 +15,6 @@
   <img alt="platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
   <img alt="python" src="https://img.shields.io/badge/python-3.12-blue">
   <img alt="dependencies" src="https://img.shields.io/badge/dependencies-mcp%20%7C%20pyyaml-brightgreen">
-  <img alt="tests" src="https://img.shields.io/badge/tests-146%20passed%20%7C%203%20opt--in-brightgreen">
   <img alt="version" src="https://img.shields.io/badge/version-0.1.0%20%2B%20unreleased-blue">
 </p>
 
@@ -28,10 +27,12 @@ xong, kể cả khi test chưa chạy hay nó sửa ra ngoài phạm vi được
 
 - **Role**: `planner` chia việc thành task, `executor` implement từng task một, `reviewer` quyết
   định approve / rework / block. Có thể thêm role tuỳ chỉnh.
-- **Agent**: một adapter (`codex-cli`, `claude-cli`, hoặc `client` là chính MCP client), một
-  account, model tuỳ chọn, quyền đọc/ghi.
-- **Account**: các phiên đăng nhập tách biệt (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`), mỗi account có
-  giới hạn chạy song song và quota riêng.
+- **Agent**: một adapter (`codex-cli`, `claude-cli`, `client` là chính MCP client, hoặc
+  `opencode-cli` / `agy-cli` chỉ đọc, dùng để lập kế hoạch và review), một account, model tuỳ
+  chọn, quyền đọc/ghi.
+- **Account**: các phiên đăng nhập tách biệt (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, cả một `HOME`
+  với agy), mỗi account có giới hạn chạy song song và quota riêng. Account dùng chung toàn máy
+  được tạo và chuyển bằng chính `agent-bridge`, không cần công cụ switch nào khác.
 - **`agent-bridge`**: giữ trạng thái task trong SQLite, định tuyến task tới agent, chạy agent với
   quyền hẹp nhất, kiểm tra file nào thay đổi và tự chạy lại lệnh verification. Lời tự báo cáo
   của agent không được tính là bằng chứng.
@@ -148,15 +149,21 @@ Chạy `agent-bridge` trong project. Danh sách task tự làm mới mỗi 3 gi�
 | `v` | Tự review task ở `REVIEW`: approve, rework hoặc block, kèm ghi chú |
 | `c` / `m` | Huỷ task / chuyển task sang agent khác (session mới) |
 | `l` / `x` | Ở tab *Agents & accounts*: đăng nhập account đang chọn / đánh dấu account sẵn sàng lại |
+| `n` / `d` | Thêm account toàn máy (trên dòng home codex-switch: thêm chính home đó) / xoá account |
+| `u` | Mở shell dùng account đang chọn (agy: hiện dòng `eval` thay vì mở shell) |
 | `e` | Ở tab *Settings*: sửa `.ai/orchestrator.yaml` (hoặc `config.json`) bằng `$EDITOR`, rồi nạp lại |
 | `r` / `q` | Làm mới / thoát |
+
+Tab *Agents & accounts* liệt kê mọi account máy đang có: account của project và account toàn
+máy, home codex-switch chưa thêm, profile codex-switch và claude-switch (đánh dấu không dùng
+được vì chứa token đã copy), và các CLI agent đã cài nhưng chưa có account.
 
 Dashboard không bao giờ khởi chạy agent: một lần chạy thuộc về process đã khởi chạy nó (MCP
 server), thoát dashboard sẽ làm gián đoạn lần chạy đó. Dữ liệu tương tự có ở dạng JSON:
 
 ```bash
 agent-bridge health        # adapter, quota còn lại theo account, số task
-agent-bridge account-list  # account, trạng thái đăng nhập, home/profile của codex-switch
+agent-bridge account-list  # account, trạng thái đăng nhập, codex-switch / claude-switch, CLI chưa dùng
 agent-bridge list          # task, mới nhất trước
 ```
 
@@ -186,8 +193,8 @@ workflow:
 
 | Mục | Key |
 |---|---|
-| `accounts.<id>` | `provider` (`openai` \| `anthropic`), `home` (auth home tách biệt; bỏ trống để dùng login global kế thừa, chỉ đọc), `max_concurrency` (1–8) |
-| `agents.<id>` | `adapter` (`codex-cli` \| `claude-cli` \| `client`), `account`, `model`, `capabilities` (tập con của `[read, write]`), `allow_write` (claude-cli chỉ ghi khi bật), `allow_bash` (claude-cli), `timeout_s`, `enabled` |
+| `accounts.<id>` | `provider` (`openai` \| `anthropic` \| `google` \| `opencode`; opencode không có `home`), `home` (auth home tách biệt; bỏ trống để dùng login global kế thừa, chỉ đọc), `max_concurrency` (1–8) |
+| `agents.<id>` | `adapter` (`codex-cli` \| `claude-cli` \| `client` \| `opencode-cli` \| `agy-cli`; hai cái cuối chỉ đọc), `account`, `model`, `capabilities` (tập con của `[read, write]`), `allow_write` (claude-cli chỉ ghi khi bật), `allow_bash` (claude-cli), `timeout_s`, `enabled` |
 | `roles.<name>` | một agent id, hoặc `{agents: [...], strategy: ordered \| explicit, requires: read \| write}`. Bắt buộc có `executor` và phải ghi được; `planner`/`reviewer` cần đọc |
 | `routing.quota_fallback` | `enabled`, `min_remaining_pct`, `agents` (ứng viên theo thứ tự; mặc định: role executor) |
 | `workflow` | `stages` (tập con có thứ tự của `plan, execute, test, review`; cần `execute` và ít nhất một gate), `max_rework` (0–4) |
@@ -266,7 +273,8 @@ terminal.
 | `review` / `resume` / `cancel` | Review, chạy tiếp hoặc huỷ task |
 | `plan "<objective>"` / `run-workflow <W…>` / `workflow-status <W…>` | Workflow do planner agent lập |
 | `list` | Liệt kê task |
-| `account-list` | Account, trạng thái đăng nhập, home/profile codex-switch |
+| `account-list` | Account, trạng thái đăng nhập, codex-switch / claude-switch, CLI đã cài chưa có account |
+| `account-use <name> [--shell]` | In dòng `export`/function cho `eval "$(…)"`, hoặc mở subshell, để CLI interactive của bạn dùng account đó |
 | `account-clear <name>` | Gỡ cờ "unavailable" của account sau khi user xác nhận |
 
 **Chỉ dành cho người** (cần terminal interactive và gõ xác nhận, hoặc dùng dashboard):
@@ -275,7 +283,9 @@ terminal.
 |---|---|
 | `approve <id>` | Duyệt task rủi ro cao / đụng path nhạy cảm |
 | `reassign <id> <agent\|account>` | Chuyển task sang agent khác (session mới) |
-| `account-login <name>` | Đăng nhập mới vào home riêng của account (`codex login` hoặc `claude auth login`) |
+| `account-login <name>` | Đăng nhập mới vào home riêng của account (`codex login`, `claude auth login`, `agy`, `opencode auth login`) |
+| `account-add <name> --provider openai\|anthropic\|google [--home DIR]` | Tạo account toàn máy (home mới trong `~/.agent-bridge/homes/` nếu không có `--home`), rồi đăng nhập |
+| `account-remove <name>` | Bỏ account toàn máy; chỉ xoá home nếu `account-add` đã tạo nó |
 
 ---
 
@@ -286,7 +296,7 @@ Xem `.ai/config.example.json`. Key lạ bị từ chối.
 | Key | Mặc định | Ý nghĩa |
 |---|---|---|
 | `sandbox` | `workspace-write` | hoặc `read-only`; không chấp nhận `danger-full-access` |
-| `codex_bin` / `claude_bin` | `codex` / `claude` | file chạy của CLI |
+| `codex_bin` / `claude_bin` / `opencode_bin` / `agy_bin` | `codex` / `claude` / `opencode` / `agy` | file chạy của CLI |
 | `default_timeout_s` / `max_timeout_s` | 1800 / 7200 | giới hạn mỗi lượt chạy |
 | `max_attempts` | 3 | chỉ cho cấu hình legacy; có `orchestrator.yaml` thì dùng `workflow.max_rework` |
 | `network_retries` / `retry_backoff_s` | 1 / 10 | retry có giới hạn, chỉ cho lỗi network |
@@ -323,6 +333,25 @@ project và ngoài các home global, và không bao giờ dùng chung giữa hai
 lỗi rõ ràng nếu `~/.codex/auth.json` global bị thay đổi trong lúc đăng nhập. Home tạo bằng
 `codex-switch home add` dùng được làm account Codex; profile snapshot của `codex-switch` chỉ được
 liệt kê, không bao giờ được dùng, vì dùng nghĩa là phải copy refresh token.
+
+### Account toàn máy và chuyển account
+
+`agent-bridge account-add work --provider openai` (người chạy) tạo `~/.agent-bridge/homes/work`
+(mode 0700), ghi vào `~/.agent-bridge/accounts.json` và chạy lệnh đăng nhập của chính provider
+trong home đó: một phiên mới, không bao giờ copy từ login khác. `--home DIR` đăng ký một home có
+sẵn, ví dụ home tạo bằng `codex-switch home add`. Mọi project đều thấy các account này theo tên;
+account mà project tự khai báo thì được ưu tiên.
+
+Để dùng một account trong terminal của bạn:
+
+```bash
+eval "$(agent-bridge account-use work)"   # export CODEX_HOME=… / CLAUDE_CONFIG_DIR=…
+agent-bridge account-use work --shell     # hoặc mở subshell; exit để quay lại
+```
+
+`~/.codex` và `~/.claude` không bao giờ bị ghi đè. Với agy, home của account là cả một `HOME`,
+nên `account-use` định nghĩa hàm shell `agy` thay vì đổi `HOME`. opencode chỉ có một login global
+(`opencode auth login`); account của nó không có `home`.
 
 - Task ở yên trên agent và account của nó. Retry và resume dùng cùng home và session. Người dùng
   chuyển nó bằng `agent-bridge reassign <id> <agent>` (session mới), hoặc bridge tự chuyển khi bật
@@ -366,21 +395,27 @@ là sự cho phép của user; block `auto_switch` legacy trong `config.json` đ
    worktree, còn rule theo path thì bị từ chối. **Mức cô lập vẫn yếu hơn Codex**: tool đọc đọc
    được mọi thứ user đọc được, và Bash (`allow_bash: true`) hoàn toàn không bị giới hạn path.
    Nên dùng Codex làm executor; không bao giờ bật `allow_bash` cho việc không đáng tin cậy.
-3. **Chống đệ quy:** mọi process agent có `AGENT_BRIDGE_AGENT=1`; server và CLI từ chối khởi động
+3. **opencode và agy:** chỉ đọc (planner / reviewer); config từ chối `allow_write`. opencode
+   chạy với `OPENCODE_CONFIG_CONTENT` cấm edit, bash, webfetch và thư mục ngoài, tắt config của
+   project; probe không ghi file nào. Rule edit giới hạn theo path cũng không ghi được gì, nên
+   quyền ghi tắt cho tới khi chứng minh được việc giới hạn path. agy chạy `--mode plan
+   --sandbox`, probe không ghi file nào; nó vẫn có các tool trình duyệt mà CLI không tắt được.
+   Cả hai không có OS sandbox như Codex.
+4. **Chống đệ quy:** mọi process agent có `AGENT_BRIDGE_AGENT=1`; server và CLI từ chối khởi động
    khi có biến này.
-4. **Process:** argv list, không shell; process group riêng, SIGTERM rồi SIGKILL khi timeout hoặc
+5. **Process:** argv list, không shell; process group riêng, SIGTERM rồi SIGKILL khi timeout hoặc
    huỷ; process group agent mồ côi của runner đã chết bị kill ở lần khởi động sau (chỉ khi PID là
-   process `codex` hoặc `claude`).
-5. **Environment:** biến trông giống credential (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, …) bị xoá.
-6. **Path:** kiểm tra khi tạo task (tuyệt đối, `..`, `~`, symlink thoát ra ngoài, protected, quá
+   process `codex`, `claude`, `opencode` hoặc `agy`).
+6. **Environment:** biến trông giống credential (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, …) bị xoá.
+7. **Path:** kiểm tra khi tạo task (tuyệt đối, `..`, `~`, symlink thoát ra ngoài, protected, quá
    rộng) và sau mỗi lượt chạy với mọi adapter (hash snapshot, diff toàn worktree, `HEAD` không
    được đổi).
-7. **Verification:** bridge tự chạy lại, chỉ argv, file chạy nằm trong allowlist, có timeout.
-8. **Duyệt:** executor không tự approve được. Client hoặc reviewer agent approve; bridge chỉ
+8. **Verification:** bridge tự chạy lại, chỉ argv, file chạy nằm trong allowlist, có timeout.
+9. **Duyệt:** executor không tự approve được. Client hoặc reviewer agent approve; bridge chỉ
    approve trong workflow gates-only. Task rủi ro cao hoặc đụng path nhạy cảm cần người ở terminal
    interactive. `.claude/settings.json` cũng chặn Claude Code chạy các lệnh này, lệnh đăng nhập
    account, `sqlite3` và sửa file dưới `.ai/`.
-9. **Audit:** mọi chuyển trạng thái, attempt, quyết định định tuyến, review (kèm reviewer), thay
+10. **Audit:** mọi chuyển trạng thái, attempt, quyết định định tuyến, review (kèm reviewer), thay
    đổi account và trạng thái workflow đều là event trong `bridge.db`. Output được lưu đều qua bước
    che secret.
 
@@ -392,18 +427,19 @@ là sự cho phép của user; block `auto_switch` legacy trong `config.json` đ
 scripts/check.sh                                   # toàn bộ suite (fake codex + fake claude: tất định)
 CODEX_SMOKE=1 uv run pytest -m real_codex          # hai lượt Codex thật (task + workflow một agent), opt-in, tốn quota của bạn
 CLAUDE_SMOKE=1 uv run pytest tests/e2e/test_real_claude_smoke.py   # một lượt review bằng Claude thật (haiku)
+OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  # review bằng opencode / agy thật
 ```
 
 Kết quả:
 ```console
-150 passed, 3 skipped
+161 passed, 5 skipped
 ```
 
-`tests/fakes/codex` và `tests/fakes/claude` nói đúng giao thức JSONL / stream-json thật và trả lời
+`tests/fakes/codex`, `claude`, `opencode` và `agy` nói đúng giao thức JSONL / stream-json thật và trả lời
 theo output schema (executor, reviewer, planner). Suite bao phủ cấu hình A–E
 (Claude→Codex→Claude, Codex→Claude→Codex, hai account Codex executor, một agent, chỉ gate),
 định tuyến, ghim agent, affinity, quota fallback, giới hạn rework, reviewer lỗi, validate config,
-cô lập account, slot chạy song song, ánh xạ legacy và nâng cấp schema.
+cô lập account, slot chạy song song, ánh xạ legacy, nâng cấp schema, account toàn máy và dashboard.
 
 ---
 
@@ -411,7 +447,7 @@ cô lập account, slot chạy song song, ánh xạ legacy và nâng cấp schem
 
 | Đã hỗ trợ | Chưa hỗ trợ |
 |---|---|
-| Adapter `codex-cli`, `claude-cli`, `client` | CLI khác (Gemini, Aider, …): thêm một subclass `Adapter` |
+| Adapter `codex-cli`, `claude-cli`, `client`; `opencode-cli`, `agy-cli` chỉ đọc | opencode / agy làm executor (chưa chứng minh giới hạn ghi theo path); CLI khác: thêm một subclass `Adapter` |
 | Role planner / executor / reviewer + role tuỳ chỉnh trong config | Role tuỳ chỉnh chưa có stage riêng; `tester` chính là stage `test` của bridge |
 | Định tuyến ordered và explicit, ghim agent, affinity, giới hạn theo account | Chiến lược cân bằng tải ngoài "đủ điều kiện đầu tiên" |
 | Quota fallback opt-in giữa các agent | Fallback khi AUTH (theo thiết kế: không bao giờ) |

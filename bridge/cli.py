@@ -17,9 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from . import install, orchestrator
-from .accounts import (account_env, codex_overrides, global_auth_fingerprint,
-                       global_claude_identity, login_status)
-from .config import find_root, load_config
+from .accounts import (account_env, global_auth_fingerprint, global_claude_identity,
+                       global_login_marker, load_registry, login_argv, login_status, register,
+                       resolve_profile, shell_use, unregister)
+from .config import BridgeConfig, find_root, load_config
 from .executor import AGENT_ENV
 from .service import Bridge, dumps, resolve_account
 
@@ -39,6 +40,38 @@ def _server_entry() -> dict[str, Any]:
     if on_path and Path(on_path).resolve() == Path(sys.argv[0]).resolve():
         return install.tool_server()
     return install.uv_server()
+
+
+HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove"}
+
+
+def _config_here() -> Any:
+    try:
+        return load_config(find_root())
+    except RuntimeError:  # account-add works outside a project too
+        return BridgeConfig()
+
+
+def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
+    """Run the provider's own login inside the account's home; refuse if the global one moved."""
+    if acc.home is not None:
+        acc.home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    markers = {"openai": lambda: global_auth_fingerprint(),
+               "anthropic": lambda: global_claude_identity(cfg),
+               "google": lambda: global_login_marker(cfg, "google")}
+    marker = markers.get(acc.provider) if acc.home is not None else None
+    if acc.provider == "google":
+        print("agy: sign in in the window that opens, then quit it (Ctrl+D twice).",
+              file=sys.stderr)
+    before = marker() if marker else None
+    try:
+        subprocess.run(login_argv(cfg, acc, device_auth), env=account_env(acc, os.environ),
+                       check=False)
+    finally:
+        if marker and marker() != before:
+            print("ERROR: global auth was modified", file=sys.stderr)
+            raise SystemExit(3)
+    return login_status(cfg, acc)
 
 
 async def _run(args: argparse.Namespace) -> Any:
@@ -61,34 +94,51 @@ async def _run(args: argparse.Namespace) -> Any:
         return {"ok": True, "source": orch.source, "stages": orch.workflow.stages,
                 "accounts": sorted(orch.accounts), "agents": sorted(orch.agents),
                 "roles": {r: orch.role(r).agents for r in orch.roles}}
-    if args.cmd in {"account-list", "account-login"}:
-        if args.cmd == "account-login" and not (sys.stdin.isatty() and sys.stdout.isatty()):
-            print("refused: account-login needs an interactive terminal (human only)",
-                  file=sys.stderr)
+    if args.cmd in HUMAN_ACCOUNT_CMDS and not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print(f"refused: {args.cmd} needs an interactive terminal (human only)", file=sys.stderr)
+        raise SystemExit(2)
+    if args.cmd == "account-add":
+        acc = register(args.name, args.provider, args.home)
+        print(f"registered {acc.name} ({acc.provider}) at {acc.home}")
+        cfg = _config_here()
+        logged_in = login_status(cfg, acc) is True or _login(cfg, acc, args.device_auth)
+        return {"account": acc.name, "provider": acc.provider, "logged_in": logged_in}
+    if args.cmd == "account-remove":
+        typed = input(f"Type the account name to remove {args.name}: ").strip()
+        if typed != args.name:
             raise SystemExit(2)
-        root = find_root()
-        cfg = load_config(root)
-        if args.cmd == "account-list":
-            return Bridge(root, cfg).list_accounts()
-        acc = resolve_account(orchestrator.load(root, cfg), cfg, root, args.name)
-        if acc.home is None:
-            raise ValueError("account-login requires a configured named account")
-        acc.home.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if acc.provider == "openai":
-            argv = [cfg.codex_bin, "login", *codex_overrides(acc),
-                    *(["--device-auth"] if args.device_auth else [])]
-            fingerprint = global_auth_fingerprint
-        else:
-            argv = [cfg.claude_bin, "auth", "login"]
-            fingerprint = lambda: global_claude_identity(cfg)  # noqa: E731
-        before = fingerprint()
+        return {"account": args.name, "home_deleted": unregister(args.name)}
+    if args.cmd in {"account-list", "account-login", "account-use"}:
         try:
-            subprocess.run(argv, env=account_env(acc, os.environ), check=False)
-        finally:
-            if fingerprint() != before:
-                print("ERROR: global auth was modified", file=sys.stderr)
-                raise SystemExit(3)
-        return login_status(cfg, acc)
+            root = find_root()
+        except RuntimeError:
+            # Outside a project only machine-wide accounts exist; switching is the common case.
+            if args.cmd != "account-use" or args.name not in load_registry():
+                raise
+            entry = load_registry()[args.name]
+            root, cfg = None, BridgeConfig()
+            acc = resolve_profile(args.name, entry["provider"], entry.get("home"), None)
+        if root is not None:
+            cfg = load_config(root)
+            if args.cmd == "account-list":
+                return Bridge(root, cfg).list_accounts()
+            acc = resolve_account(orchestrator.load(root, cfg), cfg, root, args.name)
+        if args.cmd == "account-use":
+            if args.shell:
+                if acc.provider == "google":
+                    # agy's account home is a whole HOME; a shell inside it would lose yours.
+                    raise ValueError(f'use: eval "$(agent-bridge account-use {acc.name})"')
+                shell = os.environ.get("SHELL", "/bin/sh")
+                print(f"agent-bridge: {shell} using account {acc.name}; exit to return",
+                      file=sys.stderr)
+                subprocess.run([shell], env=account_env(acc, os.environ), check=False)
+                return None
+            print(shell_use(acc))
+            return None
+        if acc.home is None and acc.provider != "opencode":
+            raise ValueError("account-login requires a configured named account (with its own "
+                             "home)")
+        return _login(cfg, acc, args.device_auth)
     b = Bridge()
     if args.cmd not in {"approve", "reassign"}:
         b.recover()
@@ -151,6 +201,19 @@ def main(argv: list[str] | None = None) -> None:
     login = sub.add_parser("account-login", help="HUMAN ONLY: log in an isolated account")
     login.add_argument("name")
     login.add_argument("--device-auth", action="store_true")
+    add = sub.add_parser("account-add", help="HUMAN ONLY: create a machine-wide account and "
+                                             "log in (fresh login in its own home)")
+    add.add_argument("name")
+    add.add_argument("--provider", required=True, choices=["openai", "anthropic", "google"])
+    add.add_argument("--home", help="register an existing isolated home (e.g. a codex-switch "
+                                    "home) instead of creating one")
+    add.add_argument("--device-auth", action="store_true")
+    sub.add_parser("account-remove", help="HUMAN ONLY: forget a machine-wide account and "
+                                          "delete the home it created").add_argument("name")
+    use = sub.add_parser("account-use", help="point your interactive CLI at an account: "
+                                             'eval "$(agent-bridge account-use <name>)"')
+    use.add_argument("name")
+    use.add_argument("--shell", action="store_true", help="open a subshell using the account")
     c = sub.add_parser("create", help="create a task from a JSON spec file")
     c.add_argument("spec")
     for name in ("execute", "result"):

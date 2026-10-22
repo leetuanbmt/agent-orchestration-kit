@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -16,9 +19,14 @@ from pathlib import Path
 from .config import BridgeConfig
 from .state import ConflictError
 
-# Env var that points each provider's CLI at an isolated auth home.
-HOME_ENV = {"openai": "CODEX_HOME", "anthropic": "CLAUDE_CONFIG_DIR"}
-GLOBAL_HOME = {"openai": ".codex", "anthropic": ".claude"}
+# Env var that points each provider's CLI at an isolated auth home. agy has no such variable
+# and keeps its login under $HOME/.gemini, so its isolated home is a whole HOME (probed on
+# agy 1.4.5). opencode has none at all: its only account is the global login.
+HOME_ENV = {"openai": "CODEX_HOME", "anthropic": "CLAUDE_CONFIG_DIR", "google": "HOME"}
+GLOBAL_HOME = {"openai": ".codex", "anthropic": ".claude", "google": ".gemini"}
+# Machine-wide accounts created by `agent-bridge account-add`, usable from every project.
+REGISTRY_DIR = ".agent-bridge"
+_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 
 
 @dataclass(frozen=True)
@@ -32,7 +40,8 @@ class Account:
         return self.home
 
 
-def resolve_profile(name: str, provider: str, home: str | None, root: Path) -> Account:
+def resolve_profile(name: str, provider: str, home: str | None, root: Path | None) -> Account:
+    """`root` is the project the account is used from; None when registering it machine-wide."""
     if home is None:
         return Account(name, None, provider)
     path = Path(home).expanduser()
@@ -41,7 +50,8 @@ def resolve_profile(name: str, provider: str, home: str | None, root: Path) -> A
     path = path.resolve()
     global_home = (Path.home() / GLOBAL_HOME[provider]).resolve()
     snapshots = (Path.home() / ".codex-accounts").resolve()
-    shared = path.is_relative_to(root.resolve()) or path == global_home
+    shared = (root is not None and path.is_relative_to(root.resolve())) or path == global_home
+    shared |= path == Path.home().resolve()
     if provider == "openai":
         # codex-switch snapshot profiles hold copied tokens; only its fresh-login homes count.
         shared |= path.is_relative_to(snapshots) and path.parent != snapshots / "homes"
@@ -81,20 +91,155 @@ def codex_overrides(acc: Account) -> list[str]:
     return ["-c", 'cli_auth_credentials_store="file"']
 
 
+def binary(cfg: BridgeConfig, provider: str) -> str:
+    return {"openai": cfg.codex_bin, "anthropic": cfg.claude_bin, "google": cfg.agy_bin,
+            "opencode": cfg.opencode_bin}[provider]
+
+
 def login_status(cfg: BridgeConfig, acc: Account) -> bool | None:
-    argv = ([cfg.codex_bin, "login", "status", *codex_overrides(acc)] if acc.provider == "openai"
-            else [cfg.claude_bin, "auth", "status"])
+    exe = binary(cfg, acc.provider)
+    argv = {"openai": [exe, "login", "status", *codex_overrides(acc)],
+            "anthropic": [exe, "auth", "status"],
+            # agy has no status command; listing models needs a signed-in account.
+            "google": [exe, "models"],
+            "opencode": [exe, "auth", "list"]}[acc.provider]
     try:
         result = subprocess.run(argv, env=account_env(acc, os.environ), timeout=20,
-                                capture_output=True, check=False, stdin=subprocess.DEVNULL)
+                                capture_output=True, text=True, check=False,
+                                stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if acc.provider == "openai":
-        return result.returncode == 0
+    if acc.provider == "anthropic":
+        try:
+            return bool(json.loads(result.stdout).get("loggedIn"))
+        except (ValueError, AttributeError):
+            return False
+    if acc.provider == "opencode":
+        return result.returncode == 0 and "stored" in result.stdout
+    return result.returncode == 0
+
+
+def login_argv(cfg: BridgeConfig, acc: Account, device_auth: bool = False) -> list[str]:
+    """The interactive login a human runs for this account (inside its home, if it has one)."""
+    exe = binary(cfg, acc.provider)
+    return {"openai": [exe, "login", *codex_overrides(acc),
+                       *(["--device-auth"] if device_auth else [])],
+            "anthropic": [exe, "auth", "login"],
+            # agy signs in on its first interactive start; the human exits it afterwards.
+            "google": [exe],
+            "opencode": [exe, "auth", "login"]}[acc.provider]
+
+
+def global_login_marker(cfg: BridgeConfig, provider: str) -> object:
+    """Something that changes when the provider's global login changes, read without tokens."""
+    if provider == "openai":
+        return global_auth_fingerprint()
+    if provider == "anthropic":
+        return global_claude_identity(cfg)
+    if provider == "google":
+        token = Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
+        with contextlib.suppress(OSError):
+            st = token.stat()
+            return st.st_mtime_ns, st.st_size
+    return None
+
+
+# ---- machine-wide registry --------------------------------------------------------------------
+
+
+def registry_dir() -> Path:
+    return Path.home() / REGISTRY_DIR
+
+
+def load_registry() -> dict[str, dict[str, str | None]]:
+    path = registry_dir() / "accounts.json"
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: expected an object")
+    return data
+
+
+def _save_registry(data: dict[str, dict[str, str | None]]) -> None:
+    base = registry_dir()
+    base.mkdir(mode=0o700, exist_ok=True)
+    tmp = base / "accounts.json.tmp"
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, base / "accounts.json")
+
+
+def register(name: str, provider: str, home: str | None = None) -> Account:
+    """Record a machine-wide account; without `home`, create a fresh one under the registry."""
+    if name == "default" or not _NAME.fullmatch(name):
+        raise ValueError(f"invalid or reserved account name: {name!r} (use [a-z0-9_-])")
+    if provider not in HOME_ENV and provider != "opencode":
+        raise ValueError(f"unknown provider {provider!r}")
+    if provider not in HOME_ENV:
+        raise ValueError(f"{provider} has no isolated accounts; its global login is used "
+                         "(opencode auth login)")
+    data = load_registry()
+    if name in data:
+        raise ValueError(f"account {name} already exists")
+    if home is None:
+        path = registry_dir() / "homes" / name
+        path.mkdir(mode=0o700, parents=True, exist_ok=False)
+        if provider == "openai":
+            # Interactive `codex` started with this CODEX_HOME must find the file-stored login.
+            (path / "config.toml").write_text('cli_auth_credentials_store = "file"\n')
+        home = str(path)
+    acc = resolve_profile(name, provider, home, None)
+    for other, entry in data.items():
+        if entry.get("home") and Path(entry["home"]).resolve() == acc.home:
+            raise ValueError(f"{acc.home} is already the home of account {other}")
+    data[name] = {"provider": provider, "home": str(acc.home)}
+    _save_registry(data)
+    return acc
+
+
+def unregister(name: str) -> bool:
+    """Forget a registry account; delete its home only when the registry created it."""
+    data = load_registry()
+    entry = data.pop(name, None)
+    if entry is None:
+        raise ValueError(f"no registry account {name!r}")
+    _save_registry(data)
+    home = Path(entry["home"]) if entry.get("home") else None
+    owned = home is not None and home.parent == registry_dir() / "homes"
+    if owned and home.is_dir() and not home.is_symlink():
+        shutil.rmtree(home)
+    return owned
+
+
+def shell_use(acc: Account) -> str:
+    """Shell code that points interactive CLIs at this account (`eval "$(...)"`)."""
+    var = HOME_ENV.get(acc.provider)
+    if acc.provider == "google":
+        if acc.home is None:
+            return "unset -f agy 2>/dev/null; true"
+        return f"agy() {{ HOME={shlex.quote(str(acc.home))} command agy \"$@\"; }}"
+    if var is None:
+        return "true  # opencode always uses its global login"
+    if acc.home is None:
+        return f"unset {var}"
+    return f"export {var}={shlex.quote(str(acc.home))}"
+
+
+def claude_switch_profiles() -> dict:
+    """claude-switch profiles hold copied tokens: listed so the user knows they exist, never used."""
+    if shutil.which("claude-switch") is None:
+        return {"installed": False, "profiles": []}
     try:
-        return bool(json.loads(result.stdout).get("loggedIn"))
-    except (ValueError, AttributeError):
-        return False
+        out = subprocess.run(["claude-switch", "list"], capture_output=True, text=True,
+                             timeout=20, check=False, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"installed": True, "profiles": []}
+    profiles = []
+    for line in out.stdout.splitlines():
+        parts = line.lstrip("* ").split()
+        if parts and _NAME.fullmatch(parts[0]):
+            profiles.append({"name": parts[0], "email": parts[1] if len(parts) > 1 else None})
+    return {"installed": True, "profiles": profiles}
 
 
 def global_auth_fingerprint() -> str | None:
@@ -177,6 +322,7 @@ def discover(cfg: BridgeConfig, root: Path, profiles: list[Account] | None = Non
             homes_error = "invalid home list JSON"
     return {
         "default_account": cfg.default_account, "accounts": accounts,
+        "claude_switch": claude_switch_profiles(),
         "codex_switch": {
             "installed": switch["installed"],
             "homes": homes,
@@ -205,7 +351,8 @@ class AccountLock:
         homes = [Path.home() / home for home in GLOBAL_HOME.values()]
         if acc.home is not None:
             homes.append(acc.home)
-        homes += [Path(os.environ[v]) for v in HOME_ENV.values() if os.environ.get(v)]
+        homes += [Path(os.environ[v]) for v in HOME_ENV.values()
+                  if v != "HOME" and os.environ.get(v)]
         if any(self.path.resolve().is_relative_to(home.resolve()) for home in homes):
             raise ValueError("lock_dir must be outside the account homes")
         self._file = None

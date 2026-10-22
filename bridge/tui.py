@@ -7,6 +7,7 @@ belongs to the process that started it, and closing the dashboard would interrup
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 import subprocess
@@ -47,6 +48,37 @@ def quota_text(quota: Any) -> str:
         if isinstance(window, dict) and window.get("used_percent") is not None:
             parts.append(f"{label} {100 - float(window['used_percent']):.0f}% left")
     return " · ".join(parts) or "UNKNOWN"
+
+
+def account_rows(listing: dict[str, Any]) -> list[tuple[str, tuple[Any, ...]]]:
+    """Every account the machine knows about; only rows keyed by a bare name are usable here.
+
+    codex-switch homes can be added (`n`); claude-switch profiles hold copied tokens and are
+    shown so the user knows they exist, never used."""
+    rows: list[tuple[str, tuple[Any, ...]]] = []
+    for acc in listing["accounts"]:
+        rows.append((acc["name"], (acc["name"], acc.get("provider", "openai"), acc["source"],
+                                   "yes" if acc.get("logged_in") else "no", acc.get("state", "-"),
+                                   quota_text(acc.get("quota")),
+                                   acc.get("home") or "(global login)")))
+    for home in listing["codex_switch"]["homes"]:
+        if not home["configured"]:
+            rows.append((f"codex-switch:{home['name']}", (
+                home["name"], "openai", "codex-switch", "yes" if home["logged_in"] else "no",
+                Text("press n to add", style="yellow"), "-", home["codex_home"])))
+    for profile in listing["codex_switch"]["profiles"]:
+        rows.append((f"codex-profile:{profile['name']}", (
+            profile["name"], "openai", "codex-switch", "-",
+            Text("not usable: copied tokens", style="dim"), "-", "-")))
+    for profile in listing.get("claude_switch", {}).get("profiles", []):
+        rows.append((f"claude-switch:{profile['name']}", (
+            profile["name"], "anthropic", "claude-switch", "-",
+            Text("not usable: copied tokens", style="dim"), "-", profile.get("email") or "-")))
+    for cli in listing.get("unconfigured", []):
+        rows.append((f"installed:{cli['provider']}", (
+            "-", cli["provider"], "installed", "-", Text("no account: press n", style="yellow"),
+            "-", cli["binary"])))
+    return rows
 
 
 def detail_text(result: dict[str, Any], tries: int) -> Text:
@@ -178,6 +210,9 @@ class BridgeApp(App[None]):
         Binding("m", "move", "Reassign"),
         Binding("p", "patch", "Patch"),
         Binding("l", "login", "Login account"),
+        Binding("n", "add_account", "Add account"),
+        Binding("d", "remove_account", "Remove account"),
+        Binding("u", "use_account", "Shell as account"),
         Binding("x", "clear_account", "Clear account"),
         Binding("e", "edit_config", "Edit config"),
     ]
@@ -209,7 +244,7 @@ class BridgeApp(App[None]):
         self.query_one("#agent-table", DataTable).add_columns(
             "Agent", "Adapter", "Account", "Model", "Roles", "Status")
         self.query_one("#account-table", DataTable).add_columns(
-            "Account", "Provider", "Logged in", "State", "Quota", "Home")
+            "Account", "Provider", "Source", "Logged in", "State", "Quota", "Home")
         self.action_refresh()
         self.set_interval(3, self.refresh_tasks)
 
@@ -244,13 +279,19 @@ class BridgeApp(App[None]):
                 a["unavailable_reason"] or "unavailable", style="red")
             agents.add_row(a["agent"], a["adapter"], a["account"] or "-", a["model"] or "-",
                            ", ".join(a["roles"]) or "-", status, key=a["agent"])
-        accounts = self.query_one("#account-table", DataTable)
-        accounts.clear()
-        for acc in self.bridge.list_accounts()["accounts"]:
-            accounts.add_row(acc["name"], acc.get("provider", "openai"),
-                             "yes" if acc.get("logged_in") else "no", acc.get("state", "-"),
-                             quota_text(acc.get("quota")), acc.get("home") or "(global login)",
-                             key=acc["name"])
+        self.refresh_accounts()
+
+    @work(thread=True, exclusive=True, group="accounts")
+    def refresh_accounts(self) -> None:
+        # Login probes run each provider's CLI; keep them off the UI thread.
+        rows = account_rows(self.bridge.list_accounts())
+        self.call_from_thread(self._fill_accounts, rows)
+
+    def _fill_accounts(self, rows: list[tuple[str, tuple[Any, ...]]]) -> None:
+        table = self.query_one("#account-table", DataTable)
+        table.clear()
+        for key, cells in rows:
+            table.add_row(*cells, key=key)
 
     def refresh_settings(self) -> None:
         b = self.bridge
@@ -374,7 +415,7 @@ class BridgeApp(App[None]):
 
     # ---- account and settings actions ------------------------------------------------------
 
-    def _account(self) -> str | None:
+    def _row(self) -> str | None:
         table = self.query_one("#account-table", DataTable)
         if self.query_one(TabbedContent).active != "agents" or not table.row_count:
             self.notify("Open the Agents & accounts tab and select an account",
@@ -382,14 +423,66 @@ class BridgeApp(App[None]):
             return None
         return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
 
+    def _account(self) -> str | None:
+        key = self._row()
+        if key and ":" in key:
+            self.notify("That row is not an account yet (press n to add one)",
+                        severity="warning")
+            return None
+        return key
+
+    def _human_cmd(self, *args: str) -> None:
+        """Run a human-only CLI command in the real terminal (it prompts and logs in there)."""
+        with self.suspend():
+            subprocess.run([sys.executable, "-m", "bridge", *args], cwd=self.bridge.root,
+                           check=False)
+            input("\nPress Enter to return to agent-bridge...")
+        with self._guard():
+            self.bridge = Bridge(self.bridge.root)  # registry accounts join the config
+        self.refresh_agents()
+
     def action_login(self) -> None:
         name = self._account()
         if name:
-            with self.suspend():
-                subprocess.run([sys.executable, "-m", "bridge", "account-login", name],
-                               cwd=self.bridge.root, check=False)
-                input("\nPress Enter to return to agent-bridge...")
-            self.refresh_agents()
+            self._human_cmd("account-login", name)
+
+    @work
+    async def action_add_account(self) -> None:
+        key = self._row() or ""
+        kind, _, name = key.partition(":")
+        if kind == "codex-switch":
+            listing = await asyncio.to_thread(self.bridge.list_accounts)
+            home = next(h["codex_home"] for h in listing["codex_switch"]["homes"]
+                        if h["name"] == name)
+            if await self.push_screen_wait(Confirm(f"Add codex-switch home {name} as a "
+                                                   f"machine-wide account?\n\n{home}")):
+                self._human_cmd("account-add", name, "--provider", "openai", "--home", home)
+            return
+        providers = ["openai", "anthropic", "google"]
+        if kind == "installed" and name in providers:
+            providers.insert(0, providers.pop(providers.index(name)))
+        answer = await self.push_screen_wait(Ask(
+            "New machine-wide account with its own fresh login", "name", providers))
+        if answer:
+            self._human_cmd("account-add", answer["text"], "--provider", answer["choice"])
+
+    def action_remove_account(self) -> None:
+        name = self._account()
+        if name:
+            self._human_cmd("account-remove", name)
+
+    def action_use_account(self) -> None:
+        name = self._account()
+        if not name:
+            return
+        if self.bridge.orch.accounts[name].provider == "google":
+            # agy's account home is a whole HOME; a subshell inside it would lose the user's.
+            self.notify(f'In your shell run: eval "$(agent-bridge account-use {name})"',
+                        timeout=15)
+            return
+        with self.suspend():
+            subprocess.run([sys.executable, "-m", "bridge", "account-use", name, "--shell"],
+                           cwd=self.bridge.root, check=False)
 
     def action_clear_account(self) -> None:
         name = self._account()
