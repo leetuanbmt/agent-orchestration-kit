@@ -209,11 +209,11 @@ def test_login_guard(tmp_path, monkeypatch, capsys):
 # @pt.id KIT-ACCT-008-list-surfaces
 # @pt.item CLI and MCP account listing
 # @pt.condition Account-list is invoked through either interface
-# @pt.expected Discovery includes state/last_error and MCP validation errors use the safe wrapper
-# @pt.target bridge.cli._run, bridge.server.bridge_list_accounts
+# @pt.expected Discovery includes state/last_error and MCP validation errors use the safe wrapper; a terminal gets a table and the add command for an unused CLI, --json or a pipe gets the data
+# @pt.target bridge.cli._run, bridge.cli._print_accounts, bridge.server.bridge_list_accounts
 # @pt.method unit
 # @pt.legacy none (new kit)
-def test_list_surfaces(tmp_path, monkeypatch):
+def test_list_surfaces(tmp_path, monkeypatch, capsys):
     cfg = BridgeConfig(codex_bin=str(tmp_path / "missing"))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(cli, "find_root", lambda: tmp_path)
@@ -225,8 +225,18 @@ def test_list_surfaces(tmp_path, monkeypatch):
     for account in expected["accounts"]:
         account.update(state="available", last_error=None, max_concurrency=1, source="project")
     expected["unconfigured"] = []
-    assert asyncio.run(cli._run(cli.argparse.Namespace(cmd="account-list"))) == expected
+    listing = cli.argparse.Namespace(cmd="account-list", json=False)
+    assert asyncio.run(cli._run(listing)) == expected  # not a terminal
+    assert asyncio.run(cli._run(cli.argparse.Namespace(cmd="account-list", json=True))) == expected
     assert asyncio.run(server.bridge_list_accounts()) == expected
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("bridge.service.shutil.which",
+                        lambda name: "/bin/agy" if name == "agy" else None)
+    capsys.readouterr()
+    assert asyncio.run(cli._run(listing)) is None
+    out = capsys.readouterr().out
+    assert "default" in out and "project" in out and "{" not in out
+    assert "agent-bridge account-add <name> --provider google" in out
     monkeypatch.setattr(b, "list_accounts", Mock(side_effect=ValueError("bad account")))
     with pytest.raises(server.ToolError, match="bad account"):
         asyncio.run(server.bridge_list_accounts())
