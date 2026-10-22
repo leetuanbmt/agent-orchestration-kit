@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `agents`, `bridge_list_agents` and the dashboard no longer show an agent as available when
+  its account is logged out ("account <name> logged out"). Routing is unchanged.
+
 ### Added
 - Configurable orchestration in `.ai/orchestrator.yaml`: accounts (provider, isolated home,
   `max_concurrency`), agents (adapter, account, model, capabilities), roles (planner, executor,

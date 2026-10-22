@@ -334,18 +334,22 @@ class BridgeApp(App[None]):
             table.move_cursor(row=table.get_row_index(self.selected))
 
     def refresh_agents(self) -> None:
-        agents = self.query_one("#agents", DataTable)
-        agents.clear()
-        for a in self.bridge.list_agents()["agents"]:
-            dot = Text("●", style="green" if a["available"] else "red")
-            agents.add_row(dot, a["agent"], ", ".join(a["roles"]) or "-", key=a["agent"])
         self.refresh_accounts()
 
     @work(thread=True, exclusive=True, group="accounts")
     def refresh_accounts(self) -> None:
         # Login probes run each provider's CLI; keep them off the UI thread.
         listing = self.bridge.list_accounts()
+        logins = {a["name"]: a.get("logged_in") for a in listing["accounts"]}
+        self.call_from_thread(self._fill_agents, self.bridge.list_agents(logins))
         self.call_from_thread(self._fill_accounts, listing)
+
+    def _fill_agents(self, listing: dict[str, Any]) -> None:
+        agents = self.query_one("#agents", DataTable)
+        agents.clear()
+        for a in listing["agents"]:
+            dot = Text("●", style="green" if a["available"] else "red")
+            agents.add_row(dot, a["agent"], ", ".join(a["roles"]) or "-", key=a["agent"])
 
     def _fill_accounts(self, listing: dict[str, Any]) -> None:
         table = self.query_one("#accounts", DataTable)
@@ -511,7 +515,7 @@ class BridgeApp(App[None]):
         row = self._selected_task()
         if not row:
             return
-        names = [a["agent"] for a in self.bridge.list_agents()["agents"] if a["write"]]
+        names = [a["agent"] for a in self.bridge.list_agents(logins={})["agents"] if a["write"]]
         answer = await self.push_screen_wait(Ask(
             f"Move {row['id']} to another agent (starts a new session)", None, names))
         if answer:

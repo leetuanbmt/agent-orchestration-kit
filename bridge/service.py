@@ -225,14 +225,27 @@ class Bridge:
             if (path := shutil.which(binary(self.cfg, provider)))]
         return listing
 
-    def list_agents(self) -> dict[str, Any]:
+    def list_agents(self, logins: dict[str, bool | None] | None = None) -> dict[str, Any]:
+        """`logins` (account → logged in, from a listing already made) skips the login probes.
+
+        A logged-out account only shows here: routing keeps relying on the AUTH pause, so a
+        stale probe never blocks work after the human logs in.
+        """
         roles: dict[str, list[str]] = {}
         for role in self.orch.roles:
             for name in self.orch.role(role).agents:
                 roles.setdefault(name, []).append(role)
+        reasons = {name: self._unavailable(name, "read") for name in self.orch.agents}
+        if logins is None:
+            logins = {}
+            for name in {a.account for n, a in self.orch.agents.items()
+                         if a.account and reasons[n] is None}:
+                logins[name] = login_status(self.cfg, self._account(name))
         agents = []
         for name, agent in self.orch.agents.items():
-            reason = self._unavailable(name, "read")
+            reason = reasons[name]
+            if reason is None and agent.account and logins.get(agent.account) is False:
+                reason = f"account {agent.account} logged out"
             agents.append({
                 "agent": name, "adapter": agent.adapter,
                 "provider": ADAPTER_PROVIDERS[agent.adapter], "account": agent.account,
