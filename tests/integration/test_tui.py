@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from textual.widgets import DataTable, Input, Select, Static, TabbedContent
+from textual.widgets import DataTable, Input, OptionList, ProgressBar, Select, Static
 
 from bridge.models import State
-from bridge.tui import BridgeApp, PatchView, account_rows
+from bridge.tui import CURSOR, ActionMenu, BridgeApp, PatchView, account_rows
 from tests.conftest import run, spec
 
 
-def _select(app: BridgeApp, task_id: str) -> None:
-    table = app.query_one("#task-table", DataTable)
+def _select(app: BridgeApp, task_id: str, panel: str = "tasks") -> None:
+    table = app.query_one(f"#{panel}", DataTable)
+    table.focus()
     table.move_cursor(row=table.get_row_index(task_id))
 
 
@@ -22,9 +23,9 @@ async def _settle(pilot) -> None:  # noqa: ANN001 - workers refresh the table as
 # @pt.id KIT-TUI-001-human-actions
 # @pt.item Dashboard lists waiting tasks and performs approve, review and patch view
 # @pt.condition one high-risk task waiting in APPROVED, one task waiting in REVIEW
-# @pt.expected both rows are flagged as needing the human; `a` + Yes closes the approved task
+# @pt.expected both rows are in the Needs you panel; `a` + Yes closes the approved task
 #              as DONE by the human; `v` + notes sends the review task to REWORK; `p` shows the
-#              patch; approving a task in the wrong state only shows a notification
+#              patch; a key that does not fit the task's state does nothing
 # @pt.target bridge.tui.BridgeApp
 # @pt.method integration
 # @pt.legacy none (new kit)
@@ -44,7 +45,8 @@ def test_tui_human_actions(make_bridge, monkeypatch) -> None:
         app = BridgeApp(b)
         async with app.run_test(size=(160, 45)) as pilot:
             await _settle(pilot)
-            assert app.query_one("#task-table", DataTable).row_count == 2
+            assert app.query_one("#tasks", DataTable).row_count == 2
+            assert app.query_one("#needs").border_title == "Needs you (2)"
             assert app.title == "agent-bridge · 2 need you"
 
             _select(app, review)
@@ -57,7 +59,7 @@ def test_tui_human_actions(make_bridge, monkeypatch) -> None:
             await _settle(pilot)
             assert app.screen is app.screen_stack[0]
             assert b.store.get(review)["state"] == State.REVIEW
-            await pilot.press("a")  # wrong state: refused with a notification, no dialog
+            await pilot.press("a")  # does not fit REVIEW: nothing happens
             await _settle(pilot)
             assert b.store.get(review)["state"] == State.REVIEW
             assert not isinstance(app.screen, PatchView)
@@ -146,9 +148,8 @@ roles: {executor: codex, reviewer: agy}
         app = BridgeApp(b)
         monkeypatch.setattr(app, "_human_cmd", lambda *args: calls.append(args))
         async with app.run_test(size=(180, 45)) as pilot:
-            app.query_one(TabbedContent).active = "agents"
             await _settle(pilot)
-            table = app.query_one("#account-table", DataTable)
+            table = app.query_one("#accounts", DataTable)
             keys = [k.value for k in table.rows]
             assert keys[:2] == ["cx", "gm"] and "installed:opencode" in keys
 
@@ -170,5 +171,54 @@ roles: {executor: codex, reviewer: agy}
             await _settle(pilot)
             assert len(calls) == 1
             assert any("account-use gm" in str(n.message) for n in app._notifications)
+
+    run(drive())
+
+
+# @pt.id KIT-TUI-004-panels
+# @pt.item One-screen panels: Enter menu, search, cursor and quota bar
+# @pt.condition one task in REVIEW and one CANCELLED; the executor account has reported 30% used
+# @pt.expected Enter on the REVIEW task offers only the actions that fit it and runs the chosen one; the cursor marks the selected row; `/` filters the task list; the bottom bar shows the executor's quota left
+# @pt.target bridge.tui.BridgeApp, bridge.tui.task_actions, bridge.render.remaining_pct
+# @pt.method integration
+# @pt.legacy none
+def test_tui_panels(make_bridge, monkeypatch) -> None:
+    monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n")
+    b = make_bridge()
+    review = run(b.create_task(spec()))["task_id"]
+    run(b.execute_task(review, wait=True))
+    other = run(b.create_task(spec(objective="Other thing")))["task_id"]
+    run(b.cancel_task(other, "not needed"))
+    quota = {"primary": {"used_percent": 30.0}, "secondary": {"used_percent": 10.0}}
+    monkeypatch.setattr(b, "_account_quota", lambda name: quota)
+
+    async def drive() -> None:
+        app = BridgeApp(b)
+        async with app.run_test(size=(180, 45)) as pilot:
+            await _settle(pilot)
+            assert app.query_one("#quota", ProgressBar).progress == 70
+            assert "70% left" in str(app.query_one("#quota-label", Static).render())
+
+            _select(app, review, "needs")
+            await _settle(pilot)
+            assert app.query_one("#needs", DataTable).get_cell(review, "cur") == CURSOR
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, ActionMenu)
+            menu = app.screen.query_one(OptionList)
+            offered = [menu.get_option_at_index(i).id for i in range(menu.option_count)]
+            assert offered == ["review", "patch", "move", "cancel_task"]
+            menu.highlighted = offered.index("patch")
+            await pilot.press("enter")
+            await _settle(pilot)
+            assert isinstance(app.screen, PatchView) and "+x = 2" in app.screen.patch
+            await pilot.press("escape")
+
+            await pilot.press("slash")
+            await pilot.press(*"other")
+            await _settle(pilot)
+            tasks = app.query_one("#tasks", DataTable)
+            assert [k.value for k in tasks.rows] == [other]
+            assert app.query_one("#needs").border_title == "Needs you (0)"
 
     run(drive())
