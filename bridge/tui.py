@@ -205,6 +205,8 @@ class BridgeApp(App[None]):
     CSS = """
     $hi: #e8916a;
     Screen { background: $background; }
+    ModalScreen { background: $background 60%; }
+    OptionList > .option-list--option-highlighted { background: $hi 40%; color: $text; }
     .panel { border: round $panel-lighten-2; border-title-color: $hi;
              border-title-style: bold; padding: 0 1; background: $background; }
     .panel:focus, .panel:focus-within { border: round $hi; }
@@ -217,7 +219,7 @@ class BridgeApp(App[None]):
     #search:focus { border: round $hi; }
     #agents { height: auto; max-height: 40%; }
     #accounts { height: 1fr; }
-    #bar { height: 3; border: round $panel-lighten-2; padding: 0 1; }
+    #quota-row { height: 3; border: round $panel-lighten-2; padding: 0 1; }
     #quota { width: 1fr; }
     #quota Bar { width: 1fr; }
     #quota Bar > .bar--bar, #quota Bar > .bar--complete { color: $hi; }
@@ -275,7 +277,8 @@ class BridgeApp(App[None]):
                                   "Agents")
                 yield self._panel(DataTable(id="accounts", cursor_type="row",
                                             show_header=False), "Accounts")
-        with Horizontal(id="bar"):
+        # Not "bar": ProgressBar's own inner Bar widget already uses that id.
+        with Horizontal(id="quota-row"):
             yield ProgressBar(total=100, show_eta=False, show_percentage=False, id="quota")
             yield Static("quota UNKNOWN", id="quota-label")
         yield Footer()
@@ -353,7 +356,7 @@ class BridgeApp(App[None]):
             dot = Text("●" if ":" not in key else "○", style="green" if usable else "red"
                        if ":" not in key else "dim")
             table.add_row(dot, name, provider, state if ":" in key else
-                          ("not logged in" if logged_in != "yes" else state), key=key)
+                          ("logged out" if logged_in != "yes" else state), key=key)
         executor = self.bridge.orch.role("executor").agents
         account = self.bridge.orch.agents[executor[0]].account if executor else None
         quota = next((a.get("quota") for a in listing["accounts"] if a["name"] == account), None)
