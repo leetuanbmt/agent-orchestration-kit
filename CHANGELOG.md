@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs `opencode auth login` to pick the integration and method (API key, token).
 
 ### Added
+- `agent-bridge config-init [example]` (human only) writes `.ai/orchestrator.yaml` from a shipped
+  example and never overwrites one; without an example it lists them and the path of
+  `config.example.json`. The wheel now carries `examples/` and `.ai/config.example.json`, so a
+  global install has them without a checkout.
 - Configurable orchestration in `.ai/orchestrator.yaml`: accounts (provider, isolated home,
   `max_concurrency`), agents (adapter, account, model, capabilities), roles (planner, executor,
   reviewer, custom; ordered or explicit), routing (opt-in quota fallback) and workflow stages
