@@ -370,6 +370,13 @@ trong home đó: một phiên mới, không bao giờ copy từ login khác. `--
 sẵn, ví dụ home tạo bằng `codex-switch home add`. Mọi project đều thấy các account này theo tên;
 account mà project tự khai báo thì được ưu tiên.
 
+Một tên dùng được cho nhiều provider: sau `account-add work --provider openai`, lệnh
+`account-add work --provider google` tạo account google với mã `work@google` (home
+`~/.agent-bridge/homes/work@google`). Danh sách hiện cả hai là `work`. Agent khai báo
+`account: work` sẽ nhận account đúng provider của adapter. Các lệnh `account-login`,
+`account-use`, `account-clear` và `account-remove` cần thêm `--provider` (hoặc gõ mã
+`work@google`) khi tên bị trùng.
+
 Để dùng một account trong terminal của bạn:
 
 ```bash
@@ -462,7 +469,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Kết quả:
 ```console
-169 passed, 5 skipped
+171 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` và `agy` nói đúng giao thức JSONL / stream-json thật và trả lời

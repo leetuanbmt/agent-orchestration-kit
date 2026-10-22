@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- One account name can be reused across providers: the second `account-add work` for another
+  provider gets the id `work@provider`; listings show `work`; an agent's `account: work`
+  resolves by its adapter's provider; account commands take `--provider` when a name is shared.
 - Dashboard: Search, Agents and Accounts moved to the left column. Selecting an account shows
   its provider, login, state, quota, home, the agents using it and its last error in Detail.
 - `account-list` shows usable accounts only, with a count of the hidden rows; `--all` lists
