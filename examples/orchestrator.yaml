@@ -1,4 +1,4 @@
-# Copy to .ai/orchestrator.yaml. Validate with: uv run codex-bridge config-check
+# Copy to .ai/orchestrator.yaml. Validate with: uv run agent-bridge config-check
 #
 # Role != agent != provider != account != model:
 #   accounts  - isolated logins (one auth home each), with a concurrency limit
@@ -10,13 +10,13 @@ version: 1
 accounts:
   codex-work:
     provider: openai
-    home: ~/.codex-accounts/homes/work   # a human runs: codex-bridge account-login codex-work
+    home: ~/.codex-accounts/homes/work   # a human runs: agent-bridge account-login codex-work
   codex-personal:
     provider: openai
     home: ~/.codex-accounts/homes/personal
   claude-main:
     provider: anthropic
-    home: ~/.claude-accounts/main        # a human runs: codex-bridge account-login claude-main
+    home: ~/.claude-accounts/main        # a human runs: agent-bridge account-login claude-main
     max_concurrency: 1
 
 agents:

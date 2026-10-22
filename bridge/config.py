@@ -11,6 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .install import bridge_dir, git_dir
+
 AI_DIR = ".ai"
 CONFIG_FILE = "config.json"
 
@@ -107,11 +109,7 @@ def load_config(root: Path) -> BridgeConfig:
 
 def state_dir(root: Path) -> Path:
     """Keep mutable state in this worktree's sandbox-protected git directory."""
-    out = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
-        capture_output=True, text=True, check=True,
-    )
-    path = Path(out.stdout.strip()) / "codex-bridge"
+    path = bridge_dir(git_dir(root))
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     return path
 

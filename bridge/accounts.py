@@ -183,7 +183,7 @@ def discover(cfg: BridgeConfig, root: Path, profiles: list[Account] | None = Non
             **({"homes_error": homes_error} if homes_error else {}),
             "profiles": [{"name": name, "usable": False, "hint":
                           "not isolated; add it as an account with its own home, then a "
-                          "human runs: codex-bridge account-login <name>"}
+                          "human runs: agent-bridge account-login <name>"}
                          for name in switch["profiles"]],
         },
     }
@@ -199,8 +199,8 @@ class AccountLock:
             seed = f"{acc.provider}:{seed}"
         key = hashlib.sha256(seed.encode()).hexdigest()[:16]
         base = Path(lock_dir or tempfile.gettempdir())
-        self.paths = [base / (f"codex-bridge-acct-{key}.lock" if i == 0 else
-                              f"codex-bridge-acct-{key}-{i}.lock") for i in range(slots)]
+        self.paths = [base / (f"agent-bridge-acct-{key}.lock" if i == 0 else
+                              f"agent-bridge-acct-{key}-{i}.lock") for i in range(slots)]
         self.path = self.paths[0]
         homes = [Path.home() / home for home in GLOBAL_HOME.values()]
         if acc.home is not None:

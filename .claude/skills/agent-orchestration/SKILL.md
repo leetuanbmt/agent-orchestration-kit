@@ -1,6 +1,6 @@
 ---
 name: agent-orchestration
-description: Plan a requirement, hand it to the configured executor agent through the project-local codex-bridge MCP server, monitor, verify, review and report. Use for any implementation, test-writing or fix work in a project that has the codex-bridge server in .mcp.json.
+description: Plan a requirement, hand it to the configured executor agent through the project-local agent-bridge MCP server, monitor, verify, review and report. Use for any implementation, test-writing or fix work in a project that has the agent-bridge server in .mcp.json.
 ---
 
 # Agent orchestration

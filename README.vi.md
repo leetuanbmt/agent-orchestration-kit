@@ -3,7 +3,7 @@
 <p align="center">
   Harness cục bộ theo từng project, không phụ thuộc nhà cung cấp, cho <b>quy trình lập trình nhiều agent</b>.<br>
   Role (planner, executor, reviewer) được gán cho agent; agent chạy trên CLI (Codex, Claude Code) với account tách biệt.<br>
-  Một MCP server nhỏ (<code>codex-bridge</code>) giữ trạng thái task, chạy agent an toàn và tự kiểm chứng lại kết quả.<br>
+  Một MCP server nhỏ (<code>agent-bridge</code>) giữ trạng thái task, chạy agent an toàn và tự kiểm chứng lại kết quả.<br>
   Mọi thứ nằm trong repository, không đụng tới cấu hình global.
 </p>
 
@@ -32,12 +32,12 @@ xong, kể cả khi test chưa chạy hay nó sửa ra ngoài phạm vi được
   account, model tuỳ chọn, quyền đọc/ghi.
 - **Account**: các phiên đăng nhập tách biệt (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`), mỗi account có
   giới hạn chạy song song và quota riêng.
-- **`codex-bridge`**: giữ trạng thái task trong SQLite, định tuyến task tới agent, chạy agent với
+- **`agent-bridge`**: giữ trạng thái task trong SQLite, định tuyến task tới agent, chạy agent với
   quyền hẹp nhất, kiểm tra file nào thay đổi và tự chạy lại lệnh verification. Lời tự báo cáo
   của agent không được tính là bằng chứng.
 
 ```
-user ─▶ MCP client (Claude Code) ──MCP stdio──▶ codex-bridge ──argv, own process group──▶ codex exec --json
+user ─▶ MCP client (Claude Code) ──MCP stdio──▶ agent-bridge ──argv, own process group──▶ codex exec --json
           (plan, review, hoặc chỉ điều phối)     (role → agent → account,                  claude -p --output-format stream-json
                                                   scope check, verification, audit log)    (plan / implement / review)
 ```
@@ -46,7 +46,7 @@ Không có `.ai/orchestrator.yaml` thì kit chạy y như 0.1: phiên Claude Cod
 review, Codex thực thi, account lấy từ `.ai/config.json`.
 
 Mọi thứ đều cục bộ theo project: `.mcp.json`, `.claude/`, `CLAUDE.md`, `.ai/`, và trạng thái
-runtime trong git directory của repository (`.git/codex-bridge/`). Không có gì dưới `~/.claude`,
+runtime trong git directory của repository (`.git/agent-bridge/`). Không có gì dưới `~/.claude`,
 `~/.codex` hay cấu hình MCP global bị sửa.
 
 ---
@@ -60,38 +60,47 @@ runtime trong git directory của repository (`.git/codex-bridge/`). Không có 
   API key.
 
 ```bash
-git clone https://github.com/leetuanbmt/agent-orchestration-kit.git
-cd agent-orchestration-kit
-uv sync                                   # .venv cục bộ của project
-scripts/check.sh --with-health            # chạy test + kiểm tra CLI có kết nối được không
-claude                                    # một lần: trust thư mục → codex-bridge kết nối
-claude mcp list                           # codex-bridge: ✔ Connected
+git clone https://github.com/leetuanbmt/agent-orchestration-kit.git ~/tools/agent-orchestration-kit
+uv tool install --editable ~/tools/agent-orchestration-kit   # đưa lệnh `agent-bridge` lên PATH
+uv tool update-shell                                          # một lần, nếu ~/.local/bin chưa có trong PATH
 ```
 
-`.mcp.json` đăng ký server với đường dẫn `${CLAUDE_PROJECT_DIR:-.}` và `.claude/settings.json`
-bật nó (`enabledMcpjsonServers`). Claude Code bỏ qua các approval của project cho tới khi thư
-mục được trust, nên lần khởi động interactive đầu tiên là bắt buộc.
+Bản cài là editable: tool chạy thẳng từ thư mục clone, nên `git pull` ở đó là cập nhật, và rules
+cùng skill mà `init` copy luôn cùng phiên bản với tool. Đừng di chuyển thư mục clone.
 
-### Dùng cho project khác
+### Cài cho một project
+
+Chạy `init` trong folder muốn dùng bridge; settings nằm luôn trong folder đó.
 
 ```bash
-scripts/setup.sh /path/to/project [--force]     # merge .mcp.json, settings, block CLAUDE.md, rules, skill
-scripts/uninstall.sh /path/to/project [--purge] # gỡ đúng những gì setup đã thêm
+cd /path/to/project
+agent-bridge init            # .mcp.json, .claude/settings.json, rules, skill, block CLAUDE.md, .ai/
+claude                       # một lần: trust thư mục → agent-bridge kết nối
+claude mcp list              # agent-bridge: ✔ Connected
+agent-bridge                 # mở dashboard của project này
 ```
 
+- `.mcp.json` nhận `{"command": "agent-bridge", "args": ["serve"]}`, không có đường dẫn riêng
+  của máy, nên commit được. Claude Code phải tìm thấy `agent-bridge` trong `PATH` của nó.
 - `.mcp.json` và `.claude/settings.json` có sẵn được merge theo từng key (server khác, deny rule
   và setting khác giữ nguyên); `CLAUDE.md` có thêm một block đánh dấu
-  (`<!-- codex-bridge:start/end -->`). Mọi file setup thay đổi đều được copy trước vào
+  (`<!-- agent-bridge:start/end -->`). Mọi file `init` thay đổi đều được copy trước vào
   `.ai/backup-<UTC timestamp>/`.
 - Rules được cài thành `.claude/rules/{orchestration,delegation,security}.md` và skill thành
-  `.claude/skills/agent-orchestration/`. File mà bản cài cũ để lại dưới tên `codex-*` được xoá
-  nếu chưa bị sửa (bị sửa thì giữ lại kèm cảnh báo). Nếu đích đã có file khác, hoặc có server
-  `codex-bridge` khác, setup dừng lại trừ khi dùng `--force`.
-- `.mcp.json` của project đích trỏ tới kit này bằng **đường dẫn tuyệt đối**
-  (`uv run --project <kit>`): nó gắn với máy hiện tại; di chuyển kit thì phải chạy lại setup.
-- Install manifest nằm ở `<git-dir>/codex-bridge/install-manifest.json`, ngoài tầm với của agent.
-  Uninstall chỉ gỡ những gì setup đã thêm và giữ lại file bạn đã sửa (kèm cảnh báo). `--purge`
-  xoá luôn thư mục `.ai/` của project đích, kể cả config.
+  `.claude/skills/agent-orchestration/`. Nếu đích đã có file khác, hoặc có server `agent-bridge`
+  khác, `init` dừng lại trừ khi dùng `--force`.
+- Nâng cấp bản cài của kit cũ: server `codex-bridge`, các entry trong settings, block
+  `CLAUDE.md` và thư mục state được thay bằng bản `agent-bridge`; file rule/skill tên `codex-*`
+  chưa sửa thì bị xoá (đã sửa thì giữ kèm cảnh báo). Permission rule bạn tự viết cho tool
+  `mcp__codex-bridge__*` thì phải tự đổi tên.
+- Install manifest nằm ở `<git-dir>/agent-bridge/install-manifest.json`, ngoài tầm với của agent.
+  `agent-bridge uninstall [--purge]` chỉ gỡ những gì `init` đã thêm và giữ file bạn đã sửa (kèm
+  cảnh báo); `--purge` xoá luôn `.ai/`, kể cả config.
+- Không cài tool: `scripts/setup.sh <dir> [--force]` và `scripts/uninstall.sh <dir> [--purge]`
+  làm việc tương tự từ thư mục clone; khi đó `.mcp.json` chạy `uv run --project <kit>
+  agent-bridge serve`, một đường dẫn tuyệt đối sẽ hỏng nếu kit bị di chuyển.
+
+Phát triển chính kit: `uv sync`, rồi `scripts/check.sh --with-health`.
 
 ---
 
@@ -103,8 +112,8 @@ Copy một file mẫu thành `.ai/orchestrator.yaml` (hoặc không có file nà
 legacy), rồi:
 
 ```bash
-uv run codex-bridge config-check   # kiểm tra schema, lỗi ghi rõ field
-uv run codex-bridge agents         # ai plan, ai thực thi, ai review; ai đang sẵn sàng
+agent-bridge config-check   # kiểm tra schema, lỗi ghi rõ field
+agent-bridge agents         # ai plan, ai thực thi, ai review; ai đang sẵn sàng
 ```
 
 | Mẫu | Planner | Executor | Reviewer |
@@ -126,12 +135,29 @@ agent plan:    bridge_plan → bridge_workflow_status(wait_s) → bridge_run_wor
                  → bridge_workflow_status (DONE / INCOMPLETE / WAITING)
 ```
 
-### 3. Xem trạng thái
+### 3. Theo dõi trên dashboard
+
+Chạy `agent-bridge` trong project. Danh sách task tự làm mới mỗi 3 giây và tiêu đề đếm số task
+đang chờ bạn.
+
+| Phím | Thao tác |
+|---|---|
+| `f` | Chỉ hiện task cần bạn (APPROVED, REVIEW, PAUSED, FAILED, BLOCKED) / tất cả |
+| `p` | Đọc patch mới nhất |
+| `a` | Approve task đang chờ người duyệt (`APPROVED`) |
+| `v` | Tự review task ở `REVIEW`: approve, rework hoặc block, kèm ghi chú |
+| `c` / `m` | Huỷ task / chuyển task sang agent khác (session mới) |
+| `l` / `x` | Ở tab *Agents & accounts*: đăng nhập account đang chọn / đánh dấu account sẵn sàng lại |
+| `e` | Ở tab *Settings*: sửa `.ai/orchestrator.yaml` (hoặc `config.json`) bằng `$EDITOR`, rồi nạp lại |
+| `r` / `q` | Làm mới / thoát |
+
+Dashboard không bao giờ khởi chạy agent: một lần chạy thuộc về process đã khởi chạy nó (MCP
+server), thoát dashboard sẽ làm gián đoạn lần chạy đó. Dữ liệu tương tự có ở dạng JSON:
 
 ```bash
-uv run codex-bridge health        # adapter, quota còn lại theo account, số task
-uv run codex-bridge account-list  # account, trạng thái đăng nhập, home/profile của codex-switch
-uv run codex-bridge list          # task, mới nhất trước
+agent-bridge health        # adapter, quota còn lại theo account, số task
+agent-bridge account-list  # account, trạng thái đăng nhập, home/profile của codex-switch
+agent-bridge list          # task, mới nhất trước
 ```
 
 ---
@@ -199,7 +225,7 @@ Trạng thái: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPRO
 | `APPROVED → DONE` | bridge, hoặc **người** với task rủi ro cao | quality gate được kiểm tra lại |
 
 Task có `risk_level: high`, hoặc thay đổi đụng tới path nhạy cảm (migrations, auth, deploy, CI,
-secrets), dừng ở `APPROVED` cho tới khi một người chạy `codex-bridge approve <id>` trong
+secrets), dừng ở `APPROVED` cho tới khi một người chạy `agent-bridge approve <id>` trong
 terminal.
 
 ---
@@ -225,10 +251,13 @@ terminal.
 | `bridge_workflow_status` | Trạng thái workflow và các task; long-poll `wait_s ≤ 55` |
 | `bridge_run_workflow` | Chạy workflow tới DONE / INCOMPLETE / WAITING |
 
-### CLI (`uv run codex-bridge <cmd>`)
+### CLI (`agent-bridge <cmd>`)
 
 | Lệnh | Mô tả |
 |---|---|
+| *(không có)* / `tui` | Dashboard cho project ở thư mục hiện tại |
+| `init [dir] [--force]` / `uninstall [dir] [--purge]` | Cài vào / gỡ khỏi một project |
+| `serve` | MCP stdio server (lệnh mà `.mcp.json` chạy) |
 | `config-check` | Kiểm tra `.ai/orchestrator.yaml` (hoặc cấu hình legacy) |
 | `agents` | Agent, role và tình trạng sẵn sàng |
 | `health` | Trạng thái bridge và adapter |
@@ -240,7 +269,7 @@ terminal.
 | `account-list` | Account, trạng thái đăng nhập, home/profile codex-switch |
 | `account-clear <name>` | Gỡ cờ "unavailable" của account sau khi user xác nhận |
 
-**Chỉ dành cho người** (cần terminal interactive và gõ xác nhận):
+**Chỉ dành cho người** (cần terminal interactive và gõ xác nhận, hoặc dùng dashboard):
 
 | Lệnh | Mô tả |
 |---|---|
@@ -275,7 +304,7 @@ Xem `.ai/config.example.json`. Key lạ bị từ chối.
 |---|---|---|
 | `.ai/config.json` | có | cấu hình bridge; agent sửa file này là vi phạm scope |
 | `.ai/orchestrator.yaml` | không (home gắn với máy) | role, agent, account, workflow |
-| `$(git rev-parse --absolute-git-dir)/codex-bridge/` | không bao giờ | `bridge.db` (task, attempt, workflow, snapshot quota, audit log), file tạm mỗi lượt chạy, `install-manifest.json` (setup) |
+| `$(git rev-parse --absolute-git-dir)/agent-bridge/` | không bao giờ | `bridge.db` (task, attempt, workflow, snapshot quota, audit log), file tạm mỗi lượt chạy, `install-manifest.json` (setup) |
 
 Trạng thái nằm trong git directory vì sandbox `workspace-write` của Codex ghi được mọi nơi trong
 worktree, kể cả file bị git-ignore, nhưng không ghi được dưới `.git/` (đã kiểm chứng trên
@@ -290,16 +319,16 @@ Account không có `home` dùng login global kế thừa của CLI (`~/.codex`, 
 `CLAUDE_CONFIG_DIR` cho mọi lượt chạy trên nó. Home phải là đường dẫn tuyệt đối, nằm ngoài
 project và ngoài các home global, và không bao giờ dùng chung giữa hai account.
 
-`codex-bridge account-login <name>` (người chạy) đăng nhập mới vào home đó; với Codex, lệnh báo
+`agent-bridge account-login <name>` (người chạy) đăng nhập mới vào home đó; với Codex, lệnh báo
 lỗi rõ ràng nếu `~/.codex/auth.json` global bị thay đổi trong lúc đăng nhập. Home tạo bằng
 `codex-switch home add` dùng được làm account Codex; profile snapshot của `codex-switch` chỉ được
 liệt kê, không bao giờ được dùng, vì dùng nghĩa là phải copy refresh token.
 
 - Task ở yên trên agent và account của nó. Retry và resume dùng cùng home và session. Người dùng
-  chuyển nó bằng `codex-bridge reassign <id> <agent>` (session mới), hoặc bridge tự chuyển khi bật
+  chuyển nó bằng `agent-bridge reassign <id> <agent>` (session mới), hoặc bridge tự chuyển khi bật
   quota fallback (bên dưới).
 - QUOTA hoặc AUTH đánh dấu account là unavailable. Lượt chạy mới trên account đó bị từ chối cho
-  tới khi chạy `codex-bridge account-clear <name>` sau khi user xác nhận.
+  tới khi chạy `agent-bridge account-clear <name>` sau khi user xác nhận.
 - Quota: với Codex là event `rate_limits` mới nhất trong rollout session của home
   (`<home>/sessions/**/rollout-*.jsonl`; không mở gì khác); với Claude là `rate_limit_event` mà
   CLI báo ở lượt chạy gần nhất qua bridge. Còn lại = `100 − max(% đã dùng 5h, % đã dùng 7d)`;
@@ -337,7 +366,7 @@ là sự cho phép của user; block `auto_switch` legacy trong `config.json` đ
    worktree, còn rule theo path thì bị từ chối. **Mức cô lập vẫn yếu hơn Codex**: tool đọc đọc
    được mọi thứ user đọc được, và Bash (`allow_bash: true`) hoàn toàn không bị giới hạn path.
    Nên dùng Codex làm executor; không bao giờ bật `allow_bash` cho việc không đáng tin cậy.
-3. **Chống đệ quy:** mọi process agent có `CODEX_BRIDGE_AGENT=1`; server và CLI từ chối khởi động
+3. **Chống đệ quy:** mọi process agent có `AGENT_BRIDGE_AGENT=1`; server và CLI từ chối khởi động
    khi có biến này.
 4. **Process:** argv list, không shell; process group riêng, SIGTERM rồi SIGKILL khi timeout hoặc
    huỷ; process group agent mồ côi của runner đã chết bị kill ở lần khởi động sau (chỉ khi PID là
@@ -367,7 +396,7 @@ CLAUDE_SMOKE=1 uv run pytest tests/e2e/test_real_claude_smoke.py   # một lư�
 
 Kết quả:
 ```console
-146 passed, 3 skipped
+150 passed, 3 skipped
 ```
 
 `tests/fakes/codex` và `tests/fakes/claude` nói đúng giao thức JSONL / stream-json thật và trả lời
@@ -396,11 +425,11 @@ cô lập account, slot chạy song song, ánh xạ legacy và nâng cấp schem
 
 | Triệu chứng | Nguyên nhân / cách xử lý |
 |---|---|
-| `codex-bridge: ⏸ Pending approval` | mở `claude` trong thư mục một lần và trust nó |
+| `agent-bridge: ⏸ Pending approval` | mở `claude` trong thư mục một lần và trust nó |
 | `config-check` báo lỗi | thông báo ghi rõ field; sửa `.ai/orchestrator.yaml` |
 | `health.ok = false` | thiếu CLI của một adapter, hoặc `codex` chưa đăng nhập: đăng nhập (người làm) |
 | `no eligible executor agent (…)` | mọi executor đều tắt, bận hoặc unavailable; lý do được liệt kê theo từng agent |
-| task PAUSED `QUOTA` / `AUTH` | chờ hoặc đăng nhập lại, rồi `codex-bridge account-clear <name>` và resume; bật quota fallback thì resume một lần pause QUOTA sẽ chuyển task |
+| task PAUSED `QUOTA` / `AUTH` | chờ hoặc đăng nhập lại, rồi `agent-bridge account-clear <name>` và resume; bật quota fallback thì resume một lần pause QUOTA sẽ chuyển task |
 | event `agent_review_failed` | reviewer agent lỗi; task chờ ở REVIEW để `bridge_review_task` |
 | workflow `WAITING` | `detail.waiting` và trạng thái task cho biết cần xử lý gì; xử lý xong chạy lại `bridge_run_workflow` |
 | task PAUSED `INTERRUPTED` | runner đã chết; `bridge_resume_task` chạy tiếp session |
@@ -412,9 +441,9 @@ cô lập account, slot chạy song song, ánh xạ legacy và nâng cấp schem
 
 ## Gỡ cài đặt
 
-Ở project khác: `scripts/uninstall.sh /path/to/project` (thêm `--purge` để xoá `.ai/`). Database
-của bridge trong `.git/codex-bridge/` có thể xoá tay. Với chính kit, xoá thư mục; không có gì
-bên ngoài nó được dùng (ngoài các account home bạn tự tạo).
+Trong project: `agent-bridge uninstall` (thêm `--purge` để xoá `.ai/`). Database của bridge
+trong `.git/agent-bridge/` có thể xoá tay. Gỡ tool: `uv tool uninstall agent-orchestration-kit`,
+rồi xoá thư mục clone; không có gì bên ngoài nó được dùng (ngoài các account home bạn tự tạo).
 
 ## Hạn chế đã biết
 

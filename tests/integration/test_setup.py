@@ -45,7 +45,7 @@ def manifest_path(root):
         ['git', '-C', str(root), 'rev-parse', '--absolute-git-dir'],
         check=True, capture_output=True, text=True,
     ).stdout.strip()
-    return Path(git_dir) / 'codex-bridge/install-manifest.json'
+    return Path(git_dir) / 'agent-bridge/install-manifest.json'
 
 
 # @pt.id KIT-SETUP-001-fresh
@@ -57,15 +57,15 @@ def manifest_path(root):
 # @pt.legacy none (new kit)
 def test_fresh_install(repo):
     result = run('setup.sh', repo)
-    server = json.loads((repo / '.mcp.json').read_text())['mcpServers']['codex-bridge']
-    assert server['args'] == ['run', '--project', str(KIT), 'codex-bridge', 'serve']
+    server = json.loads((repo / '.mcp.json').read_text())['mcpServers']['agent-bridge']
+    assert server['args'] == ['run', '--project', str(KIT), 'agent-bridge', 'serve']
     assert server['env'] == {'BRIDGE_PROJECT_ROOT': '${CLAUDE_PROJECT_DIR:-.}'}
     settings = json.loads((repo / '.claude/settings.json').read_text())
     assert settings == json.loads((KIT / '.claude/settings.json').read_text())
     for name in ['orchestration', 'delegation', 'security']:
         assert (repo / f'.claude/rules/{name}.md').read_bytes() == (KIT / f'.claude/rules/{name}.md').read_bytes()
     assert (repo / '.claude/skills/agent-orchestration/SKILL.md').read_bytes() == (KIT / '.claude/skills/agent-orchestration/SKILL.md').read_bytes()
-    assert '<!-- codex-bridge:start -->' in (repo / 'CLAUDE.md').read_text()
+    assert '<!-- agent-bridge:start -->' in (repo / 'CLAUDE.md').read_text()
     assert (repo / '.ai/.gitignore').read_bytes() == b'*\n!.gitignore\n!config.json\n'
     manifest = manifest_path(repo)
     assert manifest.is_file()
@@ -107,13 +107,13 @@ def test_preserve_existing(repo):
     run('setup.sh', repo)
     assert (repo / 'CLAUDE.md').read_bytes().startswith(originals['CLAUDE.md'].encode())
     mcp = json.loads((repo / '.mcp.json').read_text())
-    del mcp['mcpServers']['codex-bridge']
+    del mcp['mcpServers']['agent-bridge']
     assert mcp == json.loads(originals['.mcp.json'])
     settings = json.loads((repo / '.claude/settings.json').read_text())
     assert settings['extra'] == 42
     assert settings['permissions']['allow'] == ['Read']
     assert settings['permissions']['deny'][0] == 'existing'
-    assert settings['enabledMcpjsonServers'] == ['other', 'codex-bridge']
+    assert settings['enabledMcpjsonServers'] == ['other', 'agent-bridge']
     for name, data in originals.items():
         assert any(p.read_bytes() == data.encode() for p in (repo / '.ai').glob('backup-*/' + name))
     before = snapshot(repo)
@@ -132,7 +132,7 @@ def test_preserve_existing(repo):
 # @pt.target scripts/setup.sh scripts/uninstall.sh
 # @pt.method integration
 # @pt.legacy none (new kit)
-@pytest.mark.parametrize('name,data', [('.mcp.json', '{"mcpServers":{"codex-bridge":{"command":"custom"}}}'), ('.claude/rules/delegation.md', 'custom rule\n')])
+@pytest.mark.parametrize('name,data', [('.mcp.json', '{"mcpServers":{"agent-bridge":{"command":"custom"}}}'), ('.claude/rules/delegation.md', 'custom rule\n')])
 def test_conflicts(repo, name, data):
     write(repo, name, data)
     before = snapshot(repo)
@@ -205,12 +205,12 @@ def test_preexisting_assets(repo):
     rule = '.claude/rules/delegation.md'
     write(repo, rule, (KIT / '.claude/rules/delegation.md').read_text())
     write(repo, '.claude/settings.json', (KIT / '.claude/settings.json').read_text())
-    original = 'before\n<!-- codex-bridge:start -->old<!-- codex-bridge:end -->\nafter\n'
+    original = 'before\n<!-- agent-bridge:start -->old<!-- agent-bridge:end -->\nafter\n'
     write(repo, 'CLAUDE.md', original)
     write(repo, '.ai/.gitignore', 'custom\n')
     run('setup.sh', repo)
-    assert (repo / 'CLAUDE.md').read_text().startswith('before\n<!-- codex-bridge:start -->')
-    assert (repo / 'CLAUDE.md').read_text().endswith('<!-- codex-bridge:end -->\nafter\n')
+    assert (repo / 'CLAUDE.md').read_text().startswith('before\n<!-- agent-bridge:start -->')
+    assert (repo / 'CLAUDE.md').read_text().endswith('<!-- agent-bridge:end -->\nafter\n')
     run('uninstall.sh', repo)
     assert (repo / rule).read_bytes() == (KIT / '.claude/rules/delegation.md').read_bytes()
     assert (repo / '.claude/settings.json').read_bytes() == (KIT / '.claude/settings.json').read_bytes()
@@ -262,3 +262,63 @@ def test_retired_names(repo):
     assert '.claude/skills/codex-delegation/SKILL.md' not in files
     run('uninstall.sh', repo)
     assert (repo / '.claude/rules/codex-review.md').exists()
+
+
+# @pt.id KIT-SETUP-010-old-name
+# @pt.item Upgrading an install made when the server was called codex-bridge
+# @pt.condition .mcp.json, settings, CLAUDE.md block and the git-dir manifest use the old name
+# @pt.expected Setup replaces every old entry with agent-bridge, moves the state directory, and uninstall still restores the original project
+# @pt.target bridge.install.install
+# @pt.method integration
+# @pt.legacy codex-bridge server name (0.1.x)
+def test_old_server_name(repo):
+    import base64
+    run('setup.sh', repo)
+    old_dir = manifest_path(repo).parent.with_name('codex-bridge')
+    manifest_path(repo).parent.rename(old_dir)
+    for name in ['.mcp.json', '.claude/settings.json', 'CLAUDE.md']:
+        write(repo, name, (repo / name).read_text().replace('agent-bridge', 'codex-bridge'))
+    m = json.loads((old_dir / 'install-manifest.json').read_text().replace('agent-bridge', 'codex-bridge'))
+    m['claude']['installed'] = base64.b64encode((repo / 'CLAUDE.md').read_bytes()).decode()
+    (old_dir / 'install-manifest.json').write_text(json.dumps(m))
+    run('setup.sh', repo)
+    assert not old_dir.exists() and manifest_path(repo).is_file()
+    for name in ['.mcp.json', '.claude/settings.json', 'CLAUDE.md']:
+        assert 'codex-bridge' not in (repo / name).read_text(), name
+    assert json.loads((repo / '.mcp.json').read_text())['mcpServers']['agent-bridge']['args'][-2:] == ['agent-bridge', 'serve']
+    settings = json.loads((repo / '.claude/settings.json').read_text())
+    kit_settings = json.loads((KIT / '.claude/settings.json').read_text())
+    assert settings['enabledMcpjsonServers'] == ['agent-bridge']
+    assert sorted(settings['permissions']['deny']) == sorted(kit_settings['permissions']['deny'])
+    run('uninstall.sh', repo)
+    assert not (repo / '.mcp.json').exists()
+    assert not (repo / '.claude/settings.json').exists()
+    assert not (repo / 'CLAUDE.md').exists()
+
+
+# @pt.id KIT-SETUP-011-cli-init
+# @pt.item `agent-bridge init` installs into the given folder and picks the server command
+# @pt.condition init run through the installed agent-bridge executable on PATH, then through python -m bridge; bare agent-bridge without a terminal
+# @pt.expected the tool install registers `agent-bridge serve` with no kit path; other launches use `uv run --project <kit>`; the bare command prints help instead of opening the TUI
+# @pt.target bridge.cli._server_entry
+# @pt.method integration
+# @pt.legacy none (new kit)
+def test_cli_init(repo, tmp_path_factory):
+    import sys
+    exe = str(Path(sys.executable).parent / 'agent-bridge')
+    env = {**os.environ, 'GIT_CEILING_DIRECTORIES': str(repo.parent),
+           'PATH': str(Path(exe).parent) + os.pathsep + os.environ['PATH']}
+    out = subprocess.run([exe, 'init', str(repo)], capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    server = json.loads((repo / '.mcp.json').read_text())['mcpServers']['agent-bridge']
+    assert server['command'] == 'agent-bridge' and server['args'] == ['serve']
+    other = tmp_path_factory.mktemp('other')
+    subprocess.run(['git', 'init', str(other)], check=True, capture_output=True)
+    out = subprocess.run([sys.executable, '-m', 'bridge', 'init', str(other)], cwd=KIT,
+                         capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    server = json.loads((other / '.mcp.json').read_text())['mcpServers']['agent-bridge']
+    assert server['args'] == ['run', '--project', str(KIT), 'agent-bridge', 'serve']
+    bare = subprocess.run([exe], cwd=repo, stdin=subprocess.DEVNULL, capture_output=True,
+                          text=True, env=env)
+    assert bare.returncode == 0 and 'init' in bare.stdout and 'serve' in bare.stdout

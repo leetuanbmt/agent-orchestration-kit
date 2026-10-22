@@ -3,7 +3,7 @@
 <p align="center">
   A project-local, provider-agnostic harness for <b>multi-agent coding workflows</b>.<br>
   Roles (planner, executor, reviewer) map to agents; agents run on CLIs (Codex, Claude Code) with isolated accounts.<br>
-  A small MCP server (<code>codex-bridge</code>) owns task state, runs agents safely and re-verifies their work.<br>
+  A small MCP server (<code>agent-bridge</code>) owns task state, runs agents safely and re-verifies their work.<br>
   Everything lives in the repository; no global configuration is touched.
 </p>
 
@@ -32,12 +32,12 @@ whatever the agent says, even if the tests never ran or it edited files outside 
   account, an optional model, read/write capabilities.
 - **Accounts**: isolated logins (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`), each with its own
   concurrency limit and quota.
-- **`codex-bridge`**: keeps task state in SQLite, routes tasks to agents, runs them with the
+- **`agent-bridge`**: keeps task state in SQLite, routes tasks to agents, runs them with the
   narrowest permissions, checks which files changed and re-runs the verification commands
   itself. An agent's own report is never treated as evidence.
 
 ```
-user ─▶ MCP client (Claude Code) ──MCP stdio──▶ codex-bridge ──argv, own process group──▶ codex exec --json
+user ─▶ MCP client (Claude Code) ──MCP stdio──▶ agent-bridge ──argv, own process group──▶ codex exec --json
           (plan, review, or just drive)          (roles → agents → accounts,              claude -p --output-format stream-json
                                                   scope check, verification, audit log)   (plan / implement / review)
 ```
@@ -46,7 +46,7 @@ Without `.ai/orchestrator.yaml` the kit behaves exactly as 0.1: the Claude Code 
 and reviews, Codex executes, accounts come from `.ai/config.json`.
 
 Everything is project-local: `.mcp.json`, `.claude/`, `CLAUDE.md`, `.ai/`, and runtime state in
-the repository's git directory (`.git/codex-bridge/`). Nothing under `~/.claude`, `~/.codex` or
+the repository's git directory (`.git/agent-bridge/`). Nothing under `~/.claude`, `~/.codex` or
 global MCP config is modified.
 
 ---
@@ -60,37 +60,46 @@ global MCP config is modified.
   needed.
 
 ```bash
-git clone https://github.com/leetuanbmt/agent-orchestration-kit.git
-cd agent-orchestration-kit
-uv sync                                   # project-local .venv
-scripts/check.sh --with-health            # tests + CLI reachability
-claude                                    # once: trust the folder → codex-bridge connects
-claude mcp list                           # codex-bridge: ✔ Connected
+git clone https://github.com/leetuanbmt/agent-orchestration-kit.git ~/tools/agent-orchestration-kit
+uv tool install --editable ~/tools/agent-orchestration-kit   # puts `agent-bridge` on your PATH
+uv tool update-shell                                          # once, if ~/.local/bin is not on PATH
 ```
 
-`.mcp.json` registers the server with `${CLAUDE_PROJECT_DIR:-.}` paths and
-`.claude/settings.json` enables it (`enabledMcpjsonServers`). Claude Code ignores a project's own
-approvals until the folder is trusted, which is why the first interactive start is needed.
+The install is editable: the tool runs from the checkout, so `git pull` there updates it and the
+rules and skill `init` copies always come from the same version. Keep the checkout where it is.
 
-### Use it in another project
+### Set up a project
+
+Run `init` in the folder that should use the bridge; its settings stay in that folder.
 
 ```bash
-scripts/setup.sh /path/to/project [--force]     # merge .mcp.json, settings, CLAUDE.md block, rules, skill
-scripts/uninstall.sh /path/to/project [--purge] # reverse exactly what setup added
+cd /path/to/project
+agent-bridge init            # .mcp.json, .claude/settings.json, rules, skill, CLAUDE.md block, .ai/
+claude                       # once: trust the folder → agent-bridge connects
+claude mcp list              # agent-bridge: ✔ Connected
+agent-bridge                 # the dashboard for this project
 ```
 
+- `.mcp.json` gets `{"command": "agent-bridge", "args": ["serve"]}`, with no machine-specific
+  path, so it can be committed. Claude Code must find `agent-bridge` on its `PATH`.
 - Existing `.mcp.json` and `.claude/settings.json` are merged key by key (other servers, deny
-  rules and settings stay); `CLAUDE.md` gets a marked block (`<!-- codex-bridge:start/end -->`).
-  Every file setup changes is first copied to `.ai/backup-<UTC timestamp>/`.
+  rules and settings stay); `CLAUDE.md` gets a marked block (`<!-- agent-bridge:start/end -->`).
+  Every file `init` changes is first copied to `.ai/backup-<UTC timestamp>/`.
 - Rules are installed as `.claude/rules/{orchestration,delegation,security}.md` and the skill as
-  `.claude/skills/agent-orchestration/`. Files an older install left under the `codex-*` names
-  are removed when unedited (kept with a warning otherwise). A different file already at a
-  destination, or a different `codex-bridge` server, stops setup unless `--force` is given.
-- The target's `.mcp.json` points at this kit by **absolute path** (`uv run --project <kit>`):
-  it is machine-specific; moving the kit means running setup again.
-- The install manifest is kept in `<git-dir>/codex-bridge/install-manifest.json`, out of any
-  agent's reach. Uninstall removes only what setup added and keeps files you edited since (with
-  a warning). `--purge` also deletes the target's `.ai/` directory, including its config.
+  `.claude/skills/agent-orchestration/`. A different file already at a destination, or a
+  different `agent-bridge` server, stops `init` unless `--force` is given.
+- Upgrading an install made by an older kit: its `codex-bridge` server, settings entries,
+  `CLAUDE.md` block and state directory are replaced by the `agent-bridge` ones, and unedited
+  `codex-*` rule and skill files are removed (kept with a warning when edited). Permission rules
+  you wrote yourself for `mcp__codex-bridge__*` tools need renaming by hand.
+- The install manifest is kept in `<git-dir>/agent-bridge/install-manifest.json`, out of any
+  agent's reach. `agent-bridge uninstall [--purge]` removes only what `init` added and keeps
+  files you edited since (with a warning); `--purge` also deletes `.ai/`, including its config.
+- Without the tool, `scripts/setup.sh <dir> [--force]` and `scripts/uninstall.sh <dir> [--purge]`
+  do the same from a checkout; that `.mcp.json` then runs `uv run --project <kit> agent-bridge
+  serve`, an absolute path that breaks if the kit moves.
+
+Working on the kit itself: `uv sync`, then `scripts/check.sh --with-health`.
 
 ---
 
@@ -101,8 +110,8 @@ scripts/uninstall.sh /path/to/project [--purge] # reverse exactly what setup add
 Copy one of the examples to `.ai/orchestrator.yaml` (or keep none for the legacy setup), then:
 
 ```bash
-uv run codex-bridge config-check   # schema check with descriptive errors
-uv run codex-bridge agents         # who plans, executes, reviews; who is available now
+agent-bridge config-check   # schema check with descriptive errors
+agent-bridge agents         # who plans, executes, reviews; who is available now
 ```
 
 | Example | Planner | Executor | Reviewer |
@@ -124,12 +133,29 @@ agent plans:   bridge_plan → bridge_workflow_status(wait_s) → bridge_run_wor
                  → bridge_workflow_status (DONE / INCOMPLETE / WAITING)
 ```
 
-### 3. Check status
+### 3. Follow it in the dashboard
+
+Run `agent-bridge` in the project. The task list refreshes every 3 seconds and the title counts
+the tasks waiting for you.
+
+| Key | Action |
+|---|---|
+| `f` | Show only tasks that need you (APPROVED, REVIEW, PAUSED, FAILED, BLOCKED) / all |
+| `p` | Read the latest patch |
+| `a` | Approve a task waiting for a human (`APPROVED`) |
+| `v` | Review a task in `REVIEW` yourself: approve, rework or block, with notes |
+| `c` / `m` | Cancel a task / move it to another agent (new session) |
+| `l` / `x` | On *Agents & accounts*: log in the selected account / mark it available again |
+| `e` | On *Settings*: edit `.ai/orchestrator.yaml` (or `config.json`) in `$EDITOR`, then reload |
+| `r` / `q` | Refresh / quit |
+
+The dashboard never starts an agent: a run belongs to the process that started it (the MCP
+server), and quitting the dashboard would interrupt it. The same data is available as JSON:
 
 ```bash
-uv run codex-bridge health        # adapters, remaining quota per account, task counts
-uv run codex-bridge account-list  # accounts, login state, codex-switch homes/profiles
-uv run codex-bridge list          # tasks, newest first
+agent-bridge health        # adapters, remaining quota per account, task counts
+agent-bridge account-list  # accounts, login state, codex-switch homes/profiles
+agent-bridge list          # tasks, newest first
 ```
 
 ---
@@ -196,7 +222,7 @@ States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED →
 | `APPROVED → DONE` | bridge, or a **human** for high risk | quality gates re-checked |
 
 A task with `risk_level: high`, or a change under a sensitive path (migrations, auth, deploy, CI,
-secrets), stops at `APPROVED` until a human runs `codex-bridge approve <id>` in a terminal.
+secrets), stops at `APPROVED` until a human runs `agent-bridge approve <id>` in a terminal.
 
 ---
 
@@ -221,10 +247,13 @@ secrets), stops at `APPROVED` until a human runs `codex-bridge approve <id>` in 
 | `bridge_workflow_status` | Workflow state and tasks; `wait_s ≤ 55` long-poll |
 | `bridge_run_workflow` | Drive a workflow until DONE / INCOMPLETE / WAITING |
 
-### CLI (`uv run codex-bridge <cmd>`)
+### CLI (`agent-bridge <cmd>`)
 
 | Command | Description |
 |---|---|
+| *(none)* / `tui` | Dashboard for the project in the current directory |
+| `init [dir] [--force]` / `uninstall [dir] [--purge]` | Install into / remove from a project |
+| `serve` | MCP stdio server (what `.mcp.json` runs) |
 | `config-check` | Validate `.ai/orchestrator.yaml` (or the legacy config) |
 | `agents` | Agents, roles and availability |
 | `health` | Bridge and adapter status |
@@ -236,7 +265,7 @@ secrets), stops at `APPROVED` until a human runs `codex-bridge approve <id>` in 
 | `account-list` | Accounts, login state, codex-switch homes/profiles |
 | `account-clear <name>` | Clear an account's unavailable flag after the user confirms |
 
-**Human-only** (need an interactive terminal and a typed confirmation):
+**Human-only** (need an interactive terminal and a typed confirmation, or the dashboard):
 
 | Command | Description |
 |---|---|
@@ -271,7 +300,7 @@ See `.ai/config.example.json`. Unknown keys are rejected.
 |---|---|---|
 | `.ai/config.json` | yes | bridge config; any change by an agent is a scope violation |
 | `.ai/orchestrator.yaml` | no (machine-specific homes) | roles, agents, accounts, workflow |
-| `$(git rev-parse --absolute-git-dir)/codex-bridge/` | never | `bridge.db` (tasks, attempts, workflows, quota snapshots, audit log), per-run temp files, `install-manifest.json` (setup) |
+| `$(git rev-parse --absolute-git-dir)/agent-bridge/` | never | `bridge.db` (tasks, attempts, workflows, quota snapshots, audit log), per-run temp files, `install-manifest.json` (setup) |
 
 State lives in the git directory because Codex's `workspace-write` sandbox can write anywhere in
 the worktree, including git-ignored files, but not under `.git/` (verified on codex-cli 0.163).
@@ -286,16 +315,16 @@ read-only from the bridge's point of view. An account with `home` is a separate 
 bridge sets `CODEX_HOME` or `CLAUDE_CONFIG_DIR` for every run on it. Homes must be absolute,
 outside the project and outside the global homes, and never shared by two accounts.
 
-`codex-bridge account-login <name>` (human) logs a fresh session into that home; for Codex it
+`agent-bridge account-login <name>` (human) logs a fresh session into that home; for Codex it
 fails loudly if the global `~/.codex/auth.json` changes during login. `codex-switch home add`
 homes work as Codex accounts; `codex-switch` snapshot profiles are listed but never used, because
 using them would mean copying refresh tokens.
 
 - A task stays on its agent and account. Retries and resumes use the same home and session. A
-  human moves it with `codex-bridge reassign <id> <agent>` (new session), or the bridge does when
+  human moves it with `agent-bridge reassign <id> <agent>` (new session), or the bridge does when
   quota fallback is enabled (below).
 - QUOTA or AUTH marks the account unavailable. New runs on it are refused until
-  `codex-bridge account-clear <name>` after the user confirms.
+  `agent-bridge account-clear <name>` after the user confirms.
 - Quota: for Codex, the latest `rate_limits` event in the home's session rollouts
   (`<home>/sessions/**/rollout-*.jsonl`; nothing else is opened); for Claude, the
   `rate_limit_event` the CLI reported on its last run through the bridge. Remaining =
@@ -333,7 +362,7 @@ the user's authorisation; the legacy `auto_switch` block in `config.json` maps o
    them. **This is still weaker isolation than Codex**: read tools can read anything the user
    can, and Bash (`allow_bash: true`) is not path-confined at all. Prefer Codex as executor;
    never combine `allow_bash` with untrusted work.
-3. **Recursion guard:** every agent process gets `CODEX_BRIDGE_AGENT=1`; the server and CLI refuse
+3. **Recursion guard:** every agent process gets `AGENT_BRIDGE_AGENT=1`; the server and CLI refuse
    to start under it.
 4. **Processes:** argv lists, no shell; own process group, SIGTERM then SIGKILL on timeout or
    cancel; orphaned agent groups from a dead runner are killed on the next start (only if the
@@ -361,7 +390,7 @@ CLAUDE_SMOKE=1 uv run pytest tests/e2e/test_real_claude_smoke.py   # one real Cl
 
 Result:
 ```console
-146 passed, 3 skipped
+150 passed, 3 skipped
 ```
 
 `tests/fakes/codex` and `tests/fakes/claude` speak the real JSONL / stream-json protocols and
@@ -390,11 +419,11 @@ validation, account isolation, concurrency slots, legacy mapping and schema upgr
 
 | Symptom | Cause / fix |
 |---|---|
-| `codex-bridge: ⏸ Pending approval` | open `claude` in the folder once and trust it |
+| `agent-bridge: ⏸ Pending approval` | open `claude` in the folder once and trust it |
 | `config-check` error | the message names the field; fix `.ai/orchestrator.yaml` |
 | `health.ok = false` | an adapter CLI missing, or `codex` not logged in: log in (human) |
 | `no eligible executor agent (…)` | every executor is disabled, busy or unavailable; the reasons are listed per agent |
-| task PAUSED `QUOTA` / `AUTH` | wait or re-login, then `codex-bridge account-clear <name>` and resume; with quota fallback on, resuming a QUOTA pause moves it |
+| task PAUSED `QUOTA` / `AUTH` | wait or re-login, then `agent-bridge account-clear <name>` and resume; with quota fallback on, resuming a QUOTA pause moves it |
 | `agent_review_failed` event | the reviewer agent errored; the task waits in REVIEW for `bridge_review_task` |
 | workflow `WAITING` | `detail.waiting` and task states say what needs attention; run `bridge_run_workflow` again after |
 | task PAUSED `INTERRUPTED` | the runner died; `bridge_resume_task` continues the session |
@@ -406,9 +435,9 @@ validation, account isolation, concurrency slots, legacy mapping and schema upgr
 
 ## Uninstall
 
-In another project: `scripts/uninstall.sh /path/to/project` (add `--purge` to drop `.ai/`).
-The bridge database in `.git/codex-bridge/` can be deleted by hand. For the kit itself, delete
-the directory; nothing outside it (and account homes you created yourself) is used.
+In a project: `agent-bridge uninstall` (add `--purge` to drop `.ai/`). The bridge database in
+`.git/agent-bridge/` can be deleted by hand. The tool: `uv tool uninstall agent-orchestration-kit`,
+then delete the checkout; nothing outside it (and account homes you created yourself) is used.
 
 ## Known limitations
 

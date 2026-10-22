@@ -30,7 +30,7 @@ from .security import clean_env, redact
 
 # Set in every agent process; the bridge entry points refuse to start under it, so an agent
 # cannot orchestrate other agents.
-AGENT_ENV = "CODEX_BRIDGE_AGENT"
+AGENT_ENV = "AGENT_BRIDGE_AGENT"
 
 # Final-message contract enforced through each CLI's structured-output flag (strict: all keys
 # required, no extras).

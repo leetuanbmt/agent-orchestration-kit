@@ -86,7 +86,7 @@ def test_full_lifecycle_over_mcp(repo, fake_codex, monkeypatch) -> None:
 
 # @pt.id KIT-E2E-002-human-approval-gate
 # @pt.item High-risk work cannot be closed by Claude or by a non-interactive process
-# @pt.condition risk_level=high task approved by Claude; `codex-bridge approve` run without TTY
+# @pt.condition risk_level=high task approved by Claude; `agent-bridge approve` run without TTY
 # @pt.expected task stays APPROVED with a human-approval hint; CLI approve exits 2 and changes
 #              nothing; the interactive human path (human_approve) closes it as DONE
 # @pt.target bridge.service.Bridge.review_task, bridge.cli._human_confirm
@@ -101,7 +101,7 @@ def test_high_risk_needs_human(make_bridge, repo, monkeypatch) -> None:
     assert out["state"] == State.APPROVED and "Human approval required" in out["next"]
     assert f"BRIDGE_PROJECT_ROOT={repo}" in out["next"]
     assert f"--project {KIT}" in out["next"]
-    assert f"codex-bridge approve {t}" in out["next"]
+    assert f"agent-bridge approve {t}" in out["next"]
     _server(repo)
     cli = subprocess.run([sys.executable, "-m", "bridge", "approve", t], cwd=KIT,
                          env={**os.environ, "BRIDGE_PROJECT_ROOT": str(repo)},

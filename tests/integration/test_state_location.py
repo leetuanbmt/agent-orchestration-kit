@@ -22,7 +22,7 @@ def test_state_location(make_bridge, repo, monkeypatch, fake_codex):
     b = make_bridge()
     git_dir = subprocess.check_output(
         ["git", "-C", str(repo), "rev-parse", "--absolute-git-dir"], text=True).strip()
-    assert str(b.store.path) == git_dir + "/codex-bridge/bridge.db"
+    assert str(b.store.path) == git_dir + "/agent-bridge/bridge.db"
     assert b.state_dir.stat().st_mode & 0o777 == 0o700
     monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n")
     tid = run(b.create_task(spec()))["task_id"]

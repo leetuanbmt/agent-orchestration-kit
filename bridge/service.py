@@ -463,7 +463,7 @@ class Bridge:
             raise ValueError(
                 f"account {account.name} unavailable ({availability['state']}: "
                 f"{availability['last_error']}). Ask the user; once they confirm it is resolved "
-                f"run: codex-bridge account-clear {account.name}"
+                f"run: agent-bridge account-clear {account.name}"
             )
         used = row["attempts"] + 1  # budget counter; environment failures give it back
         seq = len(self.store.attempts(task_id)) + 1  # attempt row number, never reused
@@ -670,10 +670,12 @@ class Bridge:
                 row = self._close(task_id, Actor.BRIDGE)
         out = self._summary(row)
         if row["state"] == State.APPROVED:
-            out["next"] = (f"Human approval required. A person must run, in an interactive "
+            out["next"] = (f"Human approval required. A person approves it in the dashboard "
+                           f"(run `agent-bridge` in {shlex.quote(str(self.root))}, select the task, "
+                           f"press a) or runs, in an interactive "
                            f"terminal: BRIDGE_PROJECT_ROOT={shlex.quote(str(self.root))} "
                            f"uv run --project {shlex.quote(str(Path(__file__).resolve().parents[1]))} "
-                           f"codex-bridge approve {task_id}")
+                           f"agent-bridge approve {task_id}")
         return out
 
     async def review_task(self, task_id: str, decision: str, notes: str) -> dict[str, Any]:
@@ -696,7 +698,7 @@ class Bridge:
         return self.store.transition(task_id, State.DONE, actor, {"gates": "passed"})
 
     def human_approve(self, task_id: str) -> dict[str, Any]:
-        """Only reachable from the interactive CLI (`codex-bridge approve`), never from MCP."""
+        """Only reachable from the interactive CLI (`agent-bridge approve`), never from MCP."""
         row = self.store.get(task_id)
         if row["state"] != State.APPROVED:
             raise TransitionError(f"{task_id} is {row['state']}; human approval needs APPROVED")

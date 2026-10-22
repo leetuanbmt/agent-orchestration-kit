@@ -44,7 +44,7 @@ if not logged_in:
 prompt = sys.stdin.read()
 with (state / "log.jsonl").open("a") as f:
     f.write(json.dumps({"argv": argv, "prompt": prompt, "config_dir": config_dir,
-                        "cwd": os.getcwd(), "agent_env": os.environ.get("CODEX_BRIDGE_AGENT")})
+                        "cwd": os.getcwd(), "agent_env": os.environ.get("AGENT_BRIDGE_AGENT")})
             + "\n")
 
 session = argv[argv.index("--resume") + 1] if "--resume" in argv else str(uuid.uuid4())

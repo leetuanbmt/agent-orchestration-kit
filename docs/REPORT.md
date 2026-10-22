@@ -42,8 +42,8 @@ human CLI ────────────▶ bridge/cli.py ────┴�
 | Threat | Control |
 |---|---|
 | Codex edits outside its task | allowed/excluded/protected path check after every run; `HEAD` must not move; violation → `REWORK` |
-| Codex forges its own task state | state in `<git-dir>/codex-bridge/` (sandbox cannot write `.git/`); `.ai/config.json` tracked so changes show in the diff |
-| Codex approves itself | only Claude (MCP) approves; high-risk / sensitive-path tasks need `codex-bridge approve` from a TTY with the task id typed back |
+| Codex forges its own task state | state in `<git-dir>/agent-bridge/` (sandbox cannot write `.git/`); `.ai/config.json` tracked so changes show in the diff |
+| Codex approves itself | only Claude (MCP) approves; high-risk / sensitive-path tasks need `agent-bridge approve` from a TTY with the task id typed back |
 | Claude bypasses the human gate | `.claude/settings.json` deny rules for approve/reassign/login/switch commands, `sqlite3`, edits under `.ai/` |
 | Credential leakage | credential-shaped env vars scrubbed; output redacted before storage; profiles listed by name only; `Read` denied on `~/.codex/auth.json` and `~/.codex-accounts/**` |
 | Silent account switch | task bound to its account for life; reassign is human-only; global `~/.codex` never written (login fails loudly if its fingerprint changes) |
@@ -74,7 +74,7 @@ human CLI ────────────▶ bridge/cli.py ────┴�
 | Real Codex through the bridge | `CODEX_SMOKE=1 pytest -m real_codex`: 1 passed (temp repo, real Codex, READY→REVIEW→DONE, bridge check passed). Also 8 kit tasks (T0001–T0014; 6 others were cancelled before running) and 1 claude-switcher task were executed by the real Codex through the bridge |
 | Claude Code integration | `claude mcp list` Connected; headless `claude -p` → `bridge_health` |
 | Two real accounts in parallel | `default` (global `~/.codex`) and `ntmt100199` (home from `codex-switch home add`), one throwaway repo each, started together: both REVIEW with the expected one-line change and passing checks, 15.2 s wall vs 28 s summed, distinct sessions, each session file under its own `CODEX_HOME`, global `auth.json` mtime/size unchanged |
-| Install into another project | throwaway repo: `setup.sh` → printed `codex-bridge health` → `ok`, state dir in that repo's `.git/codex-bridge` → `uninstall.sh` → `CLAUDE.md` byte-identical, only `.ai/backup-*` left (removed by `--purge`) |
+| Install into another project | throwaway repo: `setup.sh` → printed `agent-bridge health` → `ok`, state dir in that repo's `.git/agent-bridge` → `uninstall.sh` → `CLAUDE.md` byte-identical, only `.ai/backup-*` left (removed by `--purge`) |
 | claude-switcher `test.sh` | 58 checks pass (re-run at delivery) |
 
 ## 6. Authorship
@@ -92,7 +92,7 @@ rule in `.claude/rules/codex-delegation.md` came out of this.
 
 ## 7. Deviations from the original prompt
 
-- Runtime state lives in `<git-dir>/codex-bridge/`, not `.ai/`: the sandbox can write `.ai/`,
+- Runtime state lives in `<git-dir>/agent-bridge/`, not `.ai/`: the sandbox can write `.ai/`,
   which would let Codex edit its own task record (found by probe, fixed in T0012).
 - `.ai/config.json` is tracked, not ignored, so changes to it are visible in the diff.
 
@@ -120,10 +120,18 @@ Verification of this change:
 
 | Check | Result |
 |---|---|
-| `scripts/check.sh` | 146 passed, 3 skipped (opt-in real smoke tests) |
+| `scripts/check.sh` | 150 passed, 3 skipped (opt-in real smoke tests) |
 | Real Claude CLI, `CLAUDE_SMOKE=1` | 1 passed: fake Codex made the change, real `claude -p` (haiku) reviewed read-only with no MCP servers and approved as actor `agent`; task DONE |
 | Real Codex, `CODEX_SMOKE=1 -m real_codex` | 2 passed: the 0.1 lifecycle (READY→REVIEW→DONE) and a single-agent workflow where real Codex planned with the plan schema, implemented, and approved with the review schema (read-only); workflow DONE |
 | Claude write scoping probe | see *Limitations*: scoped Edit/Write rules refuse writes outside `allowed_paths` |
+| `uv tool install --editable` into a scratch tool dir | `agent-bridge init` in a fresh repo wrote `{"command": "agent-bridge", "args": ["serve"]}`; an MCP client started that entry and listed all 14 `bridge_*` tools |
+
+The CLI and MCP server are named `agent-bridge` (was `codex-bridge`); `bridge/install.py` is
+the one installer behind `agent-bridge init`/`uninstall` and the `setup.sh`/`uninstall.sh`
+wrappers, and migrates an older install. `agent-bridge` alone opens a Textual dashboard
+(`bridge/tui.py`) over the same store: it performs human actions only (approve, review, cancel,
+reassign, account login/clear, config edit) and never starts an agent, since a run belongs to
+the process that started it. Its flows are tested headless with Textual's Pilot.
 
 ## 9. Known limitations / unsupported
 

@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `max_concurrency`), agents (adapter, account, model, capabilities), roles (planner, executor,
   reviewer, custom; ordered or explicit), routing (opt-in quota fallback) and workflow stages
   (`plan`, `execute`, `test`, `review`). Validated with descriptive errors;
-  `codex-bridge config-check` checks it.
+  `agent-bridge config-check` checks it.
 - Claude Code headless adapter (`claude-cli`): read-only by default; writing opt-in with
   `allow_write` and scoped to the task's `allowed_paths` (excluded and protected paths denied);
   Bash opt-in with `allow_bash`; no MCP servers, no user hooks; quota from its
@@ -25,9 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Planner agents: `bridge_plan` creates a workflow of validated tasks; `bridge_run_workflow`
   drives it; `bridge_workflow_status` reports it. `bridge_list_agents` shows the mapping. CLI
   `agents`, `plan`, `run-workflow`, `workflow-status`.
-- Recursion guard: agent processes get `CODEX_BRIDGE_AGENT=1` and the bridge refuses to start
+- Recursion guard: agent processes get `AGENT_BRIDGE_AGENT=1` and the bridge refuses to start
   under it.
 - Example configs in `examples/` and an opt-in real Claude smoke test.
+- Terminal dashboard: `agent-bridge` without a subcommand opens a Textual TUI for the project in
+  the current directory: task list with a "needs you" filter, task detail and patch view,
+  human approval, review, cancel, reassign, account login/clear, and the active settings with
+  an `$EDITOR` shortcut.
+- `agent-bridge init [dir]` and `agent-bridge uninstall [dir]` install into and remove from a
+  project; after `uv tool install --editable <kit>`, `.mcp.json` runs `agent-bridge serve` with
+  no path to the kit.
 
 ### Changed
 - Rules and skill are named after roles: `.claude/rules/orchestration.md`, `delegation.md`
@@ -38,10 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The verification record's `codex_status` is now `agent_status`.
 - Without `orchestrator.yaml` behaviour is unchanged; with it, `accounts` or an enabled
   `auto_switch` in `config.json` is rejected (both moved to the YAML).
-- New dependency: `pyyaml`.
-- Project renamed to `agent-orchestration-kit` (GitHub repository and Python package name). The
-  `bridge` module, the `codex-bridge` CLI and the MCP server name are unchanged, so existing
-  installs keep working; the old GitHub URL redirects.
+- New dependencies: `pyyaml`, `textual`.
+- Project renamed to `agent-orchestration-kit` (GitHub repository and Python package name); the
+  old GitHub URL redirects.
+- **Breaking:** the CLI and the MCP server are now `agent-bridge` (was `codex-bridge`), so MCP
+  tools are `mcp__agent-bridge__bridge_*`. `init` (or `setup.sh`) migrates an older install: the
+  `.mcp.json` server, settings entries, `CLAUDE.md` block and the `codex-bridge` state directory
+  in the git directory. Permission rules written by hand for the old tool names must be renamed.
+- `setup.sh` and `uninstall.sh` are thin wrappers around the same installer (`bridge/install.py`).
 
 ## [0.1.0] - 2026-10-19
 

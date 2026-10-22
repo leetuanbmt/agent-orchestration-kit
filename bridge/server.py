@@ -23,7 +23,7 @@ INSTRUCTIONS = (
     "reading the evidence. Human-only approvals cannot be granted through this server."
 )
 
-mcp = MCPServer("codex-bridge", instructions=INSTRUCTIONS)
+mcp = MCPServer("agent-bridge", instructions=INSTRUCTIONS)
 _bridge: Bridge | None = None
 
 

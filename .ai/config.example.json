@@ -4,6 +4,6 @@
   "max_attempts": 3,
   "default_account": "default",
   "accounts": {
-    "work": {"codex_home": "~/.codex-bridge-homes/work"}
+    "work": {"codex_home": "~/.agent-bridge-homes/work"}
   }
 }

@@ -34,7 +34,7 @@ States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED →
 
 - The bridge, not any agent, decides REVIEW vs REWORK: it re-runs the verification commands.
 - `risk_level: high`, or a change under a sensitive path (migrations, auth, deploy, CI, secrets),
-  stops at APPROVED until a human runs `codex-bridge approve <id>` in a terminal.
+  stops at APPROVED until a human runs `agent-bridge approve <id>` in a terminal.
 - Environment failures (PAUSED) do not consume the attempt budget; code failures do.
 - A runner that dies mid-run is detected on the next bridge start: the task becomes PAUSED
   (`INTERRUPTED`) and keeps its session id, so `bridge_resume_task` continues it.

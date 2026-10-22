@@ -1,6 +1,7 @@
-"""Command-line front for the same bridge service (`uv run codex-bridge ...`).
+"""Command-line front for the same bridge service (`agent-bridge ...`).
 
-`approve` is the human gate: it requires an interactive terminal and a typed confirmation.
+Without a subcommand it opens the TUI for the project in the current directory. `approve` is
+the human gate: it requires an interactive terminal and a typed confirmation.
 """
 
 from __future__ import annotations
@@ -9,12 +10,13 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-from . import orchestrator
+from . import install, orchestrator
 from .accounts import (account_env, codex_overrides, global_auth_fingerprint,
                        global_claude_identity, login_status)
 from .config import find_root, load_config
@@ -31,10 +33,27 @@ def _human_confirm(task_id: str) -> bool:
     return typed == task_id
 
 
+def _server_entry() -> dict[str, Any]:
+    """Call the installed tool by name when this process is it; otherwise go through uv."""
+    on_path = shutil.which(install.NAME)
+    if on_path and Path(on_path).resolve() == Path(sys.argv[0]).resolve():
+        return install.tool_server()
+    return install.uv_server()
+
+
 async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "serve":
         from .server import _serve
         await _serve()
+        return None
+    if args.cmd == "init":
+        changed = install.install(Path(args.dir), args.force, _server_entry())
+        print("\n".join(f"updated {c}" for c in changed) or "already up to date")
+        print("Open claude in the project once to trust the folder; run agent-bridge there "
+              "for the TUI.")
+        return None
+    if args.cmd == "uninstall":
+        install.uninstall(Path(args.dir), args.purge)
         return None
     if args.cmd == "config-check":
         root = find_root()
@@ -114,8 +133,15 @@ async def _run(args: argparse.Namespace) -> Any:
 
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(prog="codex-bridge")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p = argparse.ArgumentParser(prog="agent-bridge")
+    sub = p.add_subparsers(dest="cmd")
+    i = sub.add_parser("init", help="install the kit into a project (default: this directory)")
+    i.add_argument("dir", nargs="?", default=".")
+    i.add_argument("--force", action="store_true", help="overwrite conflicting kit files")
+    u = sub.add_parser("uninstall", help="remove the kit from a project, keeping user edits")
+    u.add_argument("dir", nargs="?", default=".")
+    u.add_argument("--purge", action="store_true", help="also delete .ai/ (task history)")
+    sub.add_parser("tui", help="interactive dashboard (the default without a subcommand)")
     sub.add_parser("serve", help="run the MCP stdio server")
     sub.add_parser("health")
     sub.add_parser("config-check", help="validate .ai/orchestrator.yaml (or the legacy config)")
@@ -158,6 +184,13 @@ def main(argv: list[str] | None = None) -> None:
     if os.environ.get(AGENT_ENV):
         print("refused: the bridge cannot run inside an agent it started", file=sys.stderr)
         raise SystemExit(2)
+    if args.cmd in (None, "tui"):
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            p.print_help()
+            raise SystemExit(0 if args.cmd is None else 2)
+        from .tui import run_tui
+        run_tui()
+        return
     try:
         out = asyncio.run(_run(args))
     except (ValueError, KeyError, RuntimeError) as e:

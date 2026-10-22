@@ -1,6 +1,6 @@
 # Agent orchestration kit
 
-A project-local MCP server, `codex-bridge` (`.mcp.json`), runs a configurable multi-agent
+A project-local MCP server, `agent-bridge` (`.mcp.json`), runs a configurable multi-agent
 workflow and owns task state (in the git directory, never the worktree). Roles are not agents:
 `.ai/orchestrator.yaml` maps **planner**, **executor** and **reviewer** to agents, each agent to
 an adapter (Codex CLI, Claude CLI, or `client` = you, the MCP caller) and each agent to one
@@ -19,7 +19,7 @@ approvals and anything irreversible.
    `bridge_review_task(approve)` without reading `bridge_task_result`: the patch, the bridge's own
    verification output and scope violations. An agent's self-report is not evidence. A reviewer
    agent's decision is recorded as such; you may override it only after reading the evidence.
-3. **Human-only actions.** Claude never runs `codex-bridge approve`, `reassign` or
+3. **Human-only actions.** Claude never runs `agent-bridge approve`, `reassign` or
    `account-login`, never edits `.ai/`, never runs `codex login`/`logout`, `claude auth
    login`/`logout` or `codex-switch` commands that change accounts. An LLM statement is not
    human approval.
@@ -40,8 +40,8 @@ Details: `.claude/rules/` (loaded automatically). Workflow: the `agent-orchestra
 ```bash
 uv sync                           # install (Python 3.12, project-local .venv)
 scripts/check.sh                  # tests; --with-health also checks the agent CLIs
-uv run codex-bridge config-check  # validate .ai/orchestrator.yaml (or the legacy config)
-uv run codex-bridge agents        # agents, roles and availability
-uv run codex-bridge health        # adapters, quota per account, task counts
-uv run codex-bridge account-list  # accounts, login state, codex-switch homes/profiles
+uv run agent-bridge config-check  # validate .ai/orchestrator.yaml (or the legacy config)
+uv run agent-bridge agents        # agents, roles and availability
+uv run agent-bridge health        # adapters, quota per account, task counts
+uv run agent-bridge account-list  # accounts, login state, codex-switch homes/profiles
 ```
