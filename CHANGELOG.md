@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- Planning the same objective twice no longer hands the second workflow the first one's task,
+  which it never listed or drove; planned tasks dedup only inside their own workflow.
 - Orphan cleanup after a dead runner kills an agent's process group only when the pid's start
   time matches the one recorded at launch; it used to match any command line containing
   `claude`, `codex`, `opencode` or `agy`, so a reused pid could take down the user's own session.

@@ -202,6 +202,24 @@ def test_rule_unsafe_paths(make_orch, fake_codex, fake_claude, monkeypatch):
     assert not log(fake_claude)
 
 
+# @pt.id KIT-PLAN-003-dedup-per-workflow
+# @pt.item Planned tasks never reuse another workflow's task
+# @pt.condition the same objective is planned twice while the first workflow's task is still open
+# @pt.expected the second workflow gets its own task (not a duplicate of W0001's) and lists it
+# @pt.target Bridge._insert, Bridge._plan
+# @pt.method integration
+# @pt.legacy store.create dedup by spec hash across workflows
+def test_plan_dedup_per_workflow(make_orch, fake_codex, fake_claude):
+    b = make_orch(CONFIG_A)
+    first = run(b.plan("Set x to 2", wait=True))
+    second = run(b.plan("Set x to 2", wait=True))
+    assert first["state"] == second["state"] == "READY"
+    one, = (t["task_id"] for t in first["tasks"])
+    two, = (t["task_id"] for t in second["tasks"])
+    assert one != two and b.store.get(two)["workflow_id"] == second["workflow_id"]
+    assert second["detail"]["tasks"] == [two]
+
+
 # @pt.id KIT-FLOW-C-two-executors
 # @pt.item Config C: two Codex executor accounts
 # @pt.condition The first executor's account is busy with another task

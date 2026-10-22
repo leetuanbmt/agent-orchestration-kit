@@ -434,7 +434,9 @@ class Bridge:
 
     def _insert(self, s: TaskSpec, agent: str | None, account: str | None,
                 workflow_id: str | None = None) -> tuple[dict[str, Any], bool]:
-        h = hashlib.sha256(s.model_dump_json().encode()).hexdigest()
+        # A planned task dedups only inside its own workflow; matching another workflow's live task
+        # would hand back a row this workflow never lists or drives.
+        h = hashlib.sha256((s.model_dump_json() + (workflow_id or "")).encode()).hexdigest()
         return self.store.create(s, h, agent=agent, workflow_id=workflow_id, account=account)
 
     async def create_task(self, spec: dict[str, Any]) -> dict[str, Any]:
