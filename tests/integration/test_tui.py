@@ -50,6 +50,12 @@ def test_tui_human_actions(make_bridge, monkeypatch) -> None:
             assert app.query_one("#tasks", DataTable).row_count == 2
             assert app.query_one("#needs").border_title == "Needs you (2)"
             assert app.title == f"{b.root.name} · 2 need you"
+            # Opens on Needs you, so the arrows move at once without clicking or Tab.
+            assert app.focused is app.query_one("#needs")
+            await pilot.press("down")
+            assert app.query_one("#needs", DataTable).cursor_row == 1
+            await pilot.press("slash", "down")
+            assert app.focused is app.query_one("#tasks")
 
             _select(app, review)
             await _settle(pilot)
