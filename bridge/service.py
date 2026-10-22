@@ -21,15 +21,14 @@ from .accounts import HOME_ENV, Account, AccountLock, binary, discover, load_reg
     resolve, resolve_profile
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
 from .executor import ADAPTERS, PLAN_SCHEMA, REVIEW_SCHEMA, Adapter, RunRequest, RunResult, \
-    build_plan_prompt, build_prompt, build_review_prompt, build_rework_prompt, kill_stale, \
-    process_started
+    build_plan_prompt, build_prompt, build_review_prompt, build_rework_prompt, kill_stale
 from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError
 from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .review import diff, parse_command, run_verification, scope_violations, snapshot, \
     touches_sensitive
-from .security import PathError, redact, rule_unsafe, validate_pattern
+from .security import PathError, process_started, redact, rule_unsafe, validate_pattern
 from .state import ConflictError, Store
 
 # Outcomes that mean "the environment, not the code": park the task, never auto-retry.
@@ -185,11 +184,21 @@ class Bridge:
             return f"account {account.name} busy"
         return None
 
-    def _pick(self, role: str, need: str) -> str:
-        """First eligible agent of `role` in configured order."""
+    def _unscopable(self, agent: AgentConfig, spec: dict[str, Any]) -> list[str]:
+        """Paths a claude-cli writer cannot turn into permission rules for this task."""
+        if (agent.adapter != "claude-cli" or not agent.writes
+                or (spec.get("sandbox") or self.cfg.sandbox) != "workspace-write"):
+            return []
+        return rule_unsafe([*spec["allowed_paths"], *spec.get("excluded_paths", []),
+                            *self.cfg.protected_paths])
+
+    def _pick(self, role: str, need: str, spec: dict[str, Any] | None = None) -> str:
+        """First eligible agent of `role` in configured order (able to scope `spec`'s paths)."""
         reasons = []
         for name in self.orch.role(role).agents:
             reason = self._unavailable(name, need)
+            if reason is None and spec and (bad := self._unscopable(self.orch.agents[name], spec)):
+                reason = f"cannot scope writes to {bad}"
             if reason is None:
                 return name
             reasons.append(f"{name}: {reason}")
@@ -341,7 +350,7 @@ class Bridge:
         row = self.store.get(task_id)
         if self._agent_of(row) is not None:
             return
-        name = self._pick("executor", "write")
+        name = self._pick("executor", "write", row["spec"])
         account = self.orch.agents[name].account
         self.store.update(task_id, agent=name, account=account)
         self.store.log(task_id, Actor.BRIDGE, "agent_routed",
@@ -495,16 +504,11 @@ class Bridge:
                 f"{availability['last_error']}). Ask the user; once they confirm it is resolved "
                 f"run: agent-bridge account-clear {account.name}"
             )
-        spec = row["spec"]
-        if (agent.adapter == "claude-cli" and agent.writes
-                and (spec.get("sandbox") or self.cfg.sandbox) == "workspace-write"):
-            paths = [*spec["allowed_paths"], *spec.get("excluded_paths", []),
-                     *self.cfg.protected_paths]
-            if bad := rule_unsafe(paths):
-                raise ValueError(
-                    f"claude-cli cannot scope writes to {bad}: Claude permission rules cannot hold "
-                    "',', '(', ')', quotes or whitespace. Rename the paths, or ask the user to "
-                    f"run: agent-bridge reassign {task_id} <codex agent>")
+        if bad := self._unscopable(agent, row["spec"]):
+            raise ValueError(
+                f"claude-cli cannot scope writes to {bad}: Claude permission rules cannot hold "
+                "',', '(', ')', quotes or whitespace. Rename the paths, or ask the user to "
+                f"run: agent-bridge reassign {task_id} <codex agent>")
         used = row["attempts"] + 1  # budget counter; environment failures give it back
         seq = len(self.store.attempts(task_id)) + 1  # attempt row number, never reused
         slots = self._slots(account.name)
@@ -923,8 +927,10 @@ class Bridge:
                                   failure="INTERRUPTED: runner process exited during execution")
             recovered.append(row["id"])
         for wf in self.store.workflows_in("PLANNING", "RUNNING"):
-            if wf["runner_pid"] != os.getpid() and _alive(wf["runner_pid"]):
-                continue
+            owner = wf["runner_pid"]
+            if (owner != os.getpid() and _alive(owner)
+                    and wf["runner_started"] in (None, process_started(owner))):
+                continue  # its owner is alive (a reused pid has another start time)
             planning = wf["state"] == "PLANNING"
             self.store.set_workflow(wf["id"], "FAILED" if planning else "WAITING", {
                 "error": f"interrupted: the process {'planning' if planning else 'driving'} "

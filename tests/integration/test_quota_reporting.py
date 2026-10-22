@@ -71,3 +71,4 @@ def test_quota_display_after_reset(make_bridge):
     quota, = (a["quota"] for a in bridge.list_accounts()["accounts"] if a["name"] == "default")
     assert remaining_pct(quota) == quota["remaining_pct"] == 70.0
     assert quota_text(quota) == "5h 100% left · week 70% left"
+    assert quota_text({"primary": {"used_percent": "42"}}) == "UNKNOWN"  # bad data, no crash

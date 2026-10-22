@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import ACTIVE, TERMINAL, Actor, State, TaskSpec, TransitionError, check_transition
-from .security import redact
+from .security import process_started, redact
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -109,8 +109,11 @@ class Store:
         for column in ("account", "agent", "workflow_id", "codex_started"):  # databases from older versions
             if column not in columns:
                 self.db.execute(f"ALTER TABLE tasks ADD COLUMN {column} TEXT")
-        if "runner_pid" not in {r["name"] for r in self.db.execute("PRAGMA table_info(workflows)")}:
-            self.db.execute("ALTER TABLE workflows ADD COLUMN runner_pid INTEGER")
+        columns = {r["name"] for r in self.db.execute("PRAGMA table_info(workflows)")}
+        for column, kind in (("runner_pid", "INTEGER"), ("runner_started", "TEXT")):
+            if column not in columns:
+                self.db.execute(f"ALTER TABLE workflows ADD COLUMN {column} {kind}")
+        self._started = process_started(os.getpid())
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
@@ -179,9 +182,9 @@ class Store:
         with self.tx() as c:
             n = c.execute("SELECT COUNT(*) FROM workflows").fetchone()[0] + 1
             wid, now = f"W{n:04d}", time.time()
-            c.execute("INSERT INTO workflows(id, objective, state, planner, runner_pid, created_at,"
-                      " updated_at) VALUES (?,?,?,?,?,?,?)",
-                      (wid, objective, state, planner, os.getpid(), now, now))
+            c.execute("INSERT INTO workflows(id, objective, state, planner, runner_pid,"
+                      " runner_started, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                      (wid, objective, state, planner, os.getpid(), self._started, now, now))
             self._event(c, None, Actor.CLIENT, "workflow_created", None, state,
                         {"workflow_id": wid, "planner": planner})
         return self.workflow(wid)
@@ -196,9 +199,12 @@ class Store:
         with self.tx() as c:
             prev = c.execute("SELECT state FROM workflows WHERE id=?", (wid,)).fetchone()
             # The process planning or driving a workflow owns it until it leaves those states.
-            c.execute("UPDATE workflows SET state=?, detail=?, runner_pid=?, updated_at=? WHERE id=?",
+            owned = state in {"PLANNING", "RUNNING"}
+            c.execute("UPDATE workflows SET state=?, detail=?, runner_pid=?, runner_started=?,"
+                      " updated_at=? WHERE id=?",
                       (state, json.dumps(detail, default=str) if detail is not None else None,
-                       os.getpid() if state in {"PLANNING", "RUNNING"} else None, time.time(), wid))
+                       os.getpid() if owned else None, self._started if owned else None,
+                       time.time(), wid))
             if prev and prev["state"] != state:
                 self._event(c, None, Actor.BRIDGE, "workflow_state", prev["state"], state,
                             {"workflow_id": wid, "detail": detail})

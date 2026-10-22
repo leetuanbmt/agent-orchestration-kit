@@ -74,8 +74,8 @@ def snapshot(root: Path, protected: list[str]) -> dict[str, Any]:
         if "**" in pat:
             continue
         files.update(str(p.relative_to(root)) for p in root.glob(pat) if p.is_file())
-    # .ai/ holds the bridge's own config (orchestrator.yaml is git-ignored, so _dirty misses it).
-    files.update(str(p.relative_to(root)) for p in root.glob(".ai/*") if p.is_file())
+    # The bridge's own config; orchestrator.yaml is git-ignored, so _dirty misses it.
+    files.update(f for f in (".ai/config.json", ".ai/orchestrator.yaml") if (root / f).is_file())
     return {
         "head": _git(root, "rev-parse", "HEAD").strip() or None,
         "tree": _worktree_tree(root),

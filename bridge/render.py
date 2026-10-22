@@ -35,7 +35,8 @@ def quota_text(quota: Any, short: bool = False) -> str:
         if isinstance(window, dict) and window.get("used_percent") is not None:
             # Same rule as routing: a window whose reset time has passed is full again.
             pct = _remaining({key: window}, time.time())
-            parts.append(f"{label} {pct:.0f}%{left}")
+            if pct is not None:
+                parts.append(f"{label} {pct:.0f}%{left}")
     return " · ".join(parts) or "UNKNOWN"
 
 

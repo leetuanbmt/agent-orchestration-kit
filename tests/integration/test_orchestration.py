@@ -185,7 +185,7 @@ def test_claude_ignores_project_settings(make_orch, fake_codex, fake_claude, mon
 # @pt.id KIT-SEC-CLAUDE-002-rule-unsafe-paths
 # @pt.item Paths Claude rules cannot hold only block Claude write runs
 # @pt.condition allowed_paths ["src/(auth)/**"]: a Codex executor, then a Claude executor with allow_write
-# @pt.expected Codex runs the task through verification; the Claude run is refused before RUNNING with a reassign hint and the task stays READY with its budget untouched
+# @pt.expected Codex runs the task through verification; a task pinned to Claude is refused before RUNNING with a reassign hint and stays READY with its budget untouched; an unpinned task routes past the Claude writer to Codex
 # @pt.target Bridge._start, bridge.security.rule_unsafe
 # @pt.method integration
 # @pt.legacy validate_pattern rejected these paths at creation for every adapter
@@ -201,6 +201,11 @@ def test_rule_unsafe_paths(make_orch, fake_codex, fake_claude, monkeypatch):
         run(claude.execute_task(tid, wait=True))
     row = claude.store.get(tid)
     assert row["state"] == State.READY and row["attempts"] == 0
+    assert not log(fake_claude)
+    both = make_orch(CONFIG_B.replace("executor: claude", "executor: {agents: [claude, codex]}"))
+    tid = run(both.create_task({**task, "objective": "Unpinned"}))["task_id"]
+    run(both.execute_task(tid, wait=True))
+    assert both.store.get(tid)["agent"] == "codex"  # routing skips the Claude writer
     assert not log(fake_claude)
 
 
@@ -224,7 +229,7 @@ def test_plan_dedup_per_workflow(make_orch, fake_codex, fake_claude):
 
 # @pt.id KIT-PLAN-004-orphaned-workflows
 # @pt.item Workflows left behind by a dead process are recovered on the next start
-# @pt.condition one PLANNING and one RUNNING workflow owned by a dead pid, and one RUNNING workflow owned by a live other process
+# @pt.condition one PLANNING and one RUNNING workflow owned by a dead pid, one RUNNING workflow owned by a live other process, and one whose live pid has another start time (reused)
 # @pt.expected recover() fails the orphaned plan and parks the orphaned run as WAITING (runnable again); the live owner's workflow is left alone
 # @pt.target Bridge.recover, Store.set_workflow, Store.workflows_in
 # @pt.method integration
@@ -237,11 +242,16 @@ def test_orphaned_workflows(make_orch, fake_codex, fake_claude):
     live = subprocess.Popen(["sleep", "30"])
     try:
         ids = {}
-        for name, state, pid in (("plan", "PLANNING", dead.pid), ("run", "RUNNING", dead.pid),
-                                 ("live", "RUNNING", live.pid)):
-            ids[name] = b.store.create_workflow(name, "claude", state)["id"]
-            b.store.db.execute("UPDATE workflows SET runner_pid=? WHERE id=?", (pid, ids[name]))
-        assert set(b.recover()) == {ids["plan"], ids["run"]}
+        from bridge.security import process_started
+        owners = {"plan": (dead.pid, None), "run": (dead.pid, None),
+                  "live": (live.pid, process_started(live.pid)),
+                  "reused": (live.pid, "Thu Jan  1 00:00:00 1970")}
+        for name, (pid, started) in owners.items():
+            ids[name] = b.store.create_workflow(name, "claude",
+                                                "PLANNING" if name == "plan" else "RUNNING")["id"]
+            b.store.db.execute("UPDATE workflows SET runner_pid=?, runner_started=? WHERE id=?",
+                               (pid, started, ids[name]))
+        assert set(b.recover()) == {ids["plan"], ids["run"], ids["reused"]}
         assert b.store.workflow(ids["plan"])["state"] == "FAILED"
         assert b.store.workflow(ids["run"])["state"] == "WAITING"
         assert b.store.workflow(ids["live"])["state"] == "RUNNING"

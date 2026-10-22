@@ -26,7 +26,7 @@ from typing import Any
 
 from .accounts import Account, account_env, codex_overrides
 from .config import BridgeConfig, state_dir
-from .security import PathError, clean_env, redact, rule_unsafe
+from .security import PathError, clean_env, process_started, redact, rule_unsafe
 
 # Set in every agent process; the bridge entry points refuse to start under it, so an agent
 # cannot orchestrate other agents.
@@ -552,7 +552,6 @@ class AgyAdapter(ReadOnlyAdapter):
 
 ADAPTERS: dict[str, type[Adapter]] = {"codex-cli": CodexAdapter, "claude-cli": ClaudeAdapter,
                                       "opencode-cli": OpenCodeAdapter, "agy-cli": AgyAdapter}
-# Process names `kill_stale` may signal: only something this bridge could have started.
 
 
 async def kill_group(proc: asyncio.subprocess.Process) -> None:
@@ -565,13 +564,6 @@ async def kill_group(proc: asyncio.subprocess.Process) -> None:
             return
         except TimeoutError:
             continue
-
-
-def process_started(pid: int) -> str | None:
-    """The process's start time as ps prints it; with the pid it identifies one process."""
-    ps = subprocess.run(["ps", "-o", "lstart=", "-p", str(int(pid))],
-                        capture_output=True, text=True, check=False)
-    return ps.stdout.strip() or None
 
 
 def kill_stale(pid: int | None, started: str | None) -> bool:
