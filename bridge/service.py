@@ -158,11 +158,10 @@ class Bridge:
     def _record_account(self, name: str, res: RunResult) -> None:
         if res.rate_limits:
             self.store.save_quota(name, res.rate_limits)
-        if res.outcome in {"quota", "auth", "ok"}:
-            self.store.set_account_state(
-                name, "available" if res.outcome == "ok" else res.outcome,
-                res.error if res.outcome != "ok" else None, actor=Actor.BRIDGE,
-            )
+        # Runs only start on an available account, so a mark seen after a successful run came from
+        # another run meanwhile; only account-clear (the user) lifts it.
+        if res.outcome in {"quota", "auth"}:
+            self.store.set_account_state(name, res.outcome, res.error, actor=Actor.BRIDGE)
 
     def _unavailable(self, name: str, need: str) -> str | None:
         """Why agent `name` cannot take work needing `need` right now; None when it can."""

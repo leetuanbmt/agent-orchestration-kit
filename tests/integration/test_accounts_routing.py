@@ -116,3 +116,22 @@ def test_availability(make_bridge, accounts, fake_codex, monkeypatch, failure):
     assert run(b.resume_task(task, wait=True))["state"] == "REVIEW"
     assert calls(fake_codex)[-1]["codex_home"] == accounts["a"]["codex_home"]
     assert b.store.account_state("a")["state"] == "available"
+
+
+# @pt.id KIT-ACCT-011-ok-keeps-marks
+# @pt.item A successful run never lifts another run's QUOTA or AUTH mark
+# @pt.condition two runs share an account (max_concurrency 2 or a reviewer on it); one marks it auth, then the other finishes ok
+# @pt.expected the account stays auth with its error until account-clear; a quota result still marks it
+# @pt.target Bridge._record_account
+# @pt.method integration
+# @pt.legacy an ok run reset the account to available
+def test_ok_run_keeps_account_marks(make_bridge):
+    from bridge.executor import RunResult
+    b = make_bridge()
+    b._record_account("default", RunResult("auth", error="401 Unauthorized"))
+    b._record_account("default", RunResult("ok"))
+    state = b.store.account_state("default")
+    assert state["state"] == "auth" and "401" in state["last_error"]
+    b.clear_account("default")
+    b._record_account("default", RunResult("quota", error="usage limit"))
+    assert b.store.account_state("default")["state"] == "quota"
