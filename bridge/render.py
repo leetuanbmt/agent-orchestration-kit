@@ -71,8 +71,11 @@ def account_rows(listing: dict[str, Any],
     so `profiles=False` leaves them out."""
     rows: list[tuple[str, tuple[Any, ...]]] = []
     for acc in listing["accounts"]:
+        # The stored state only changes after a failed run; a failed login probe outranks it.
+        state = (Text("logged out", style="red") if acc.get("logged_in") is False
+                 else acc.get("state", "-"))
         rows.append((acc["name"], (acc["name"], acc.get("provider", "openai"), acc["source"],
-                                   "yes" if acc.get("logged_in") else "no", acc.get("state", "-"),
+                                   "yes" if acc.get("logged_in") else "no", state,
                                    quota_text(acc.get("quota")),
                                    acc.get("home") or "(global login)")))
     for home in listing["codex_switch"]["homes"]:
@@ -118,11 +121,14 @@ def accounts_view(listing: dict[str, Any], width: int = NARROW,
              for h in listing["codex_switch"]["homes"] if not h["configured"]]
     hints += [cli["hint"] for cli in listing.get("unconfigured", [])]
     hidden = len(rows) - len(shown)
-    note = Text(f"\n{hidden} more not usable here (switch profiles, homes not added, CLIs "
+    steps = _steps(hints, "To add an account:")
+    gap = "" if steps else "\n"  # the hints already end with a newline
+    note = Text(f"{gap}{hidden} more not usable here (switch profiles, homes not added, CLIs "
                 "without an account): --all to list them." if hidden else
-                "\nswitch profiles hold copied tokens: listed only, never used.", style="dim")
+                f"{gap}switch profiles hold copied tokens: listed only, never used.",
+                style="dim")
     note.append(" --json for the full data.")
-    return Group(table, *_steps(hints, "To add an account:"), note)
+    return Group(table, *steps, note)
 
 
 def health_view(h: dict[str, Any]) -> Group:

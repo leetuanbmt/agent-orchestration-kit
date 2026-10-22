@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `agents`, `bridge_list_agents` and the dashboard no longer show an agent as available when
   its account is logged out ("account <name> logged out"). Routing is unchanged.
+- `account-list` shows "logged out" as the State of an account whose login check failed,
+  instead of a stored "available"; the extra blank line before its footer is gone.
 - opencode accounts can be added: `account-add <name> --provider opencode` (and the dashboard's
   add dialog) registers one machine-wide account on opencode's global login; `account-login`
   runs `opencode auth login` to pick the integration and method (API key, token).
