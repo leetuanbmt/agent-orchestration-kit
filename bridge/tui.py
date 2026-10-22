@@ -296,6 +296,7 @@ class BridgeApp(App[None]):
         self.bridge = bridge
         self.selected: str | None = None
         self.query_text = ""
+        self.opened = False
         # Latest listings, kept for the account Detail view without re-probing logins.
         self.accounts_listing: dict[str, Any] = {"accounts": [], "codex_switch": {
             "homes": [], "profiles": []}}
@@ -361,7 +362,10 @@ class BridgeApp(App[None]):
         self.query_one("#tasks").border_title = f"Tasks ({len(tasks)})"
         name = self.bridge.root.name
         self.title = f"{name} · {len(needs)} need you" if needs else f"{name} · agent-bridge"
-        if self.focused is None:
+        # Start on Needs you (or Tasks), not on the first focusable widget: the search box,
+        # where the arrows do nothing.
+        if self.focused is None or not self.opened:
+            self.opened = True
             self.query_one("#needs" if needs else "#tasks").focus()
 
     def _fill_tasks(self, name: str, tasks: list[dict[str, Any]]) -> None:
@@ -496,6 +500,12 @@ class BridgeApp(App[None]):
     @on(Input.Submitted, "#search")
     def search_done(self) -> None:
         self.query_one("#tasks").focus()
+
+    def on_key(self, event: Any) -> None:
+        # ↓ or Esc leaves the search box for the task list, like Enter.
+        if event.key in ("down", "escape") and getattr(self.focused, "id", None) == "search":
+            event.stop()
+            self.query_one("#tasks").focus()
 
     def action_help(self) -> None:
         if self.screen.query("HelpPanel"):
