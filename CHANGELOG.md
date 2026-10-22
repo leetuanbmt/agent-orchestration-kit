@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- The dashboard's account commands (`n`, `l`, `d`, `u`) ran the project's own `bridge/` package
+  instead of agent-bridge when the project had one (for example the kit's old checkout), so
+  `account-add` failed with "invalid choice". They now run the installed CLI.
 - `agents`, `bridge_list_agents` and the dashboard no longer show an agent as available when
   its account is logged out ("account <name> logged out"). Routing is unchanged.
 - `account-list` shows "logged out" as the State of an account whose login check failed,

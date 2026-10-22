@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import subprocess
+
 from textual.widgets import DataTable, Input, OptionList, ProgressBar, Select, Static
 
 from bridge.models import State
-from bridge.tui import CURSOR, ActionMenu, BridgeApp, PatchView, account_rows
+from bridge.tui import CURSOR, ActionMenu, BridgeApp, PatchView, account_rows, cli_argv
 from tests.conftest import run, spec
 
 
@@ -185,6 +187,23 @@ roles: {executor: codex, reviewer: agy}
             assert any("account-use gm" in str(n.message) for n in app._notifications)
 
     run(drive())
+
+
+# @pt.id KIT-TUI-005-cli-shadowing
+# @pt.item The dashboard's human-only commands run this install's CLI
+# @pt.condition the project directory has its own `bridge/` package (like the kit's old checkout)
+# @pt.expected the command the dashboard starts from that directory is still agent-bridge, not the project's package
+# @pt.target bridge.tui.cli_argv, bridge.tui.BridgeApp._human_cmd
+# @pt.method integration
+# @pt.legacy codex-bridge checkout on main shadowed account-add
+def test_cli_not_shadowed(tmp_path) -> None:
+    decoy = tmp_path / "bridge"
+    decoy.mkdir()
+    (decoy / "__init__.py").write_text("")
+    (decoy / "__main__.py").write_text("print('DECOY')\n")
+    out = subprocess.run(cli_argv("account-add", "--help"), cwd=tmp_path, capture_output=True,
+                         text=True, check=False)
+    assert "DECOY" not in out.stdout and "--provider" in out.stdout
 
 
 # @pt.id KIT-TUI-004-panels
