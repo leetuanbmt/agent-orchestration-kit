@@ -21,7 +21,8 @@ from .accounts import HOME_ENV, Account, AccountLock, binary, discover, load_reg
     resolve, resolve_profile
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
 from .executor import ADAPTERS, PLAN_SCHEMA, REVIEW_SCHEMA, Adapter, RunRequest, RunResult, \
-    build_plan_prompt, build_prompt, build_review_prompt, build_rework_prompt, kill_stale
+    build_plan_prompt, build_prompt, build_review_prompt, build_rework_prompt, kill_stale, \
+    process_started
 from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError
 from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig
 from .orchestrator import load as load_orchestrator
@@ -563,13 +564,14 @@ class Bridge:
                            write_paths=spec["allowed_paths"],
                            deny_paths=[*spec.get("excluded_paths", []),
                                        *self.cfg.protected_paths]),
-                on_start=lambda pid: self.store.update(task_id, codex_pid=pid),
+                on_start=lambda pid: self.store.update(task_id, codex_pid=pid,
+                                                        codex_started=process_started(pid)),
                 on_session=lambda sid: self.store.update(task_id, session_id=sid),
                 should_cancel=cancelled,
             )
             if res.session_id:
                 session = res.session_id
-                self.store.update(task_id, session_id=session, codex_pid=None)
+                self.store.update(task_id, session_id=session, codex_pid=None, codex_started=None)
             if res.outcome == "network" and retries < self.cfg.network_retries:
                 retries += 1
                 self.store.log(task_id, Actor.BRIDGE, "retry", {"error": res.error, "n": retries})
@@ -747,7 +749,7 @@ class Bridge:
         row = self.store.transition(task_id, State.CANCELLED, Actor.CLIENT, {"reason": reason},
                                     failure=f"CANCELLED: {reason}"[:500])
         if row["runner_pid"] != os.getpid() and not _alive(row["runner_pid"]):
-            kill_stale(row["codex_pid"])  # orphan from a dead runner
+            kill_stale(row["codex_pid"], row["codex_started"])  # orphan from a dead runner
         task = self._runs.get(task_id)
         if task:  # the runner polls the state and kills the process group within ~1s
             with contextlib.suppress(TimeoutError):
@@ -909,7 +911,7 @@ class Bridge:
                 continue
             if row["runner_pid"] != os.getpid() and _alive(row["runner_pid"]):
                 continue  # another live process (e.g. the CLI) owns this run
-            killed = kill_stale(row["codex_pid"])
+            killed = kill_stale(row["codex_pid"], row["codex_started"])
             for a in self.store.attempts(row["id"]):
                 if a["ended_at"] is None:
                     self.store.finish_attempt(row["id"], a["n"], outcome="interrupted")

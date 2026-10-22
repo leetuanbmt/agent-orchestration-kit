@@ -105,7 +105,7 @@ class Store:
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(SCHEMA)
         columns = {r["name"] for r in self.db.execute("PRAGMA table_info(tasks)")}
-        for column in ("account", "agent", "workflow_id"):  # databases from older versions
+        for column in ("account", "agent", "workflow_id", "codex_started"):  # databases from older versions
             if column not in columns:
                 self.db.execute(f"ALTER TABLE tasks ADD COLUMN {column} TEXT")
 

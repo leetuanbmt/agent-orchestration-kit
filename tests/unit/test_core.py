@@ -244,3 +244,32 @@ def test_build_prompt() -> None:
     for frag in ("T0001", "obj", "- src", "- .env", "crit", "`pytest`", "Do not create commits",
                  "output schema"):
         assert frag in p
+
+
+# @pt.id KIT-UNIT-020-kill-stale-identity
+# @pt.item Orphan cleanup only kills the process it launched
+# @pt.condition a live process group leader whose recorded start time differs (pid reused), then the matching start time, then no recorded time
+# @pt.expected a mismatched or missing start time leaves the process alone; the matching one kills its group
+# @pt.target bridge.executor.kill_stale, bridge.executor.process_started
+# @pt.method unit
+# @pt.legacy kill_stale matched any command line containing claude/codex/opencode/agy
+def test_kill_stale_needs_matching_start_time() -> None:
+    import subprocess
+    import time
+    from bridge.executor import kill_stale, process_started
+    proc = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    try:
+        started = process_started(proc.pid)
+        assert started
+        assert not kill_stale(proc.pid, "Thu Jan  1 00:00:00 1970")
+        assert not kill_stale(proc.pid, None)
+        assert proc.poll() is None
+        assert kill_stale(proc.pid, started)
+        for _ in range(50):
+            if proc.poll() is not None:
+                break
+            time.sleep(0.1)
+        assert proc.poll() is not None
+    finally:
+        proc.kill()
+        proc.wait()

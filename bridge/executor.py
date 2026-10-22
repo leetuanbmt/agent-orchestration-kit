@@ -553,7 +553,6 @@ class AgyAdapter(ReadOnlyAdapter):
 ADAPTERS: dict[str, type[Adapter]] = {"codex-cli": CodexAdapter, "claude-cli": ClaudeAdapter,
                                       "opencode-cli": OpenCodeAdapter, "agy-cli": AgyAdapter}
 # Process names `kill_stale` may signal: only something this bridge could have started.
-AGENT_BINARIES = ("codex", "claude", "opencode", "agy")
 
 
 async def kill_group(proc: asyncio.subprocess.Process) -> None:
@@ -568,17 +567,17 @@ async def kill_group(proc: asyncio.subprocess.Process) -> None:
             continue
 
 
-def kill_stale(pid: int | None) -> bool:
-    """Kill a leftover agent process group from a dead runner, only if it really is an agent."""
-    if not pid:
-        return False
-    try:
-        os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError):
-        return False
-    ps = subprocess.run(["ps", "-o", "command=", "-p", str(int(pid))],
+def process_started(pid: int) -> str | None:
+    """The process's start time as ps prints it; with the pid it identifies one process."""
+    ps = subprocess.run(["ps", "-o", "lstart=", "-p", str(int(pid))],
                         capture_output=True, text=True, check=False)
-    if not any(name in ps.stdout for name in AGENT_BINARIES):
+    return ps.stdout.strip() or None
+
+
+def kill_stale(pid: int | None, started: str | None) -> bool:
+    """Kill a leftover agent process group from a dead runner. The start time recorded at launch
+    must match, so a pid the OS has since reused for another process is never touched."""
+    if not pid or not started or process_started(pid) != started:
         return False
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(pid, signal.SIGTERM)

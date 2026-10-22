@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- Orphan cleanup after a dead runner kills an agent's process group only when the pid's start
+  time matches the one recorded at launch; it used to match any command line containing
+  `claude`, `codex`, `opencode` or `agy`, so a reused pid could take down the user's own session.
 - Paths with `,`, `(`, `)`, quotes or whitespace (a Next.js `app/(auth)/**`) are accepted again;
   only a Claude write run refuses them, before it starts, since Claude permission rules cannot
   hold them.
