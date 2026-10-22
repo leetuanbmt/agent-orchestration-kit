@@ -19,6 +19,11 @@ import sys
 from pathlib import Path
 
 KIT = Path(__file__).resolve().parent.parent
+# A checkout (editable install) keeps the kit files at its root; a wheel carries them in
+# bridge/kit/ with the same layout (pyproject force-include) and has no checkout to run from.
+CHECKOUT = (KIT / ".claude/rules/orchestration.md").is_file()
+if not CHECKOUT:
+    KIT = Path(__file__).resolve().parent / "kit"
 NAME = "agent-bridge"
 OLD_NAME = "codex-bridge"
 START, END = b"<!-- agent-bridge:start -->", b"<!-- agent-bridge:end -->"

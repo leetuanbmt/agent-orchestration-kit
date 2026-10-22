@@ -37,8 +37,9 @@ def _human_confirm(task_id: str) -> bool:
 def _server_entry() -> dict[str, Any]:
     """Call the installed tool by name when this process is it; otherwise go through uv."""
     on_path = shutil.which(install.NAME)
-    if on_path and Path(on_path).resolve() == Path(sys.argv[0]).resolve():
-        return install.tool_server()
+    if not install.CHECKOUT or (on_path and
+                                Path(on_path).resolve() == Path(sys.argv[0]).resolve()):
+        return install.tool_server()  # a wheel install has no checkout for `uv run --project`
     return install.uv_server()
 
 
