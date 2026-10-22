@@ -273,7 +273,7 @@ terminal.
 | `review` / `resume` / `cancel` | Review, chạy tiếp hoặc huỷ task |
 | `plan "<objective>"` / `run-workflow <W…>` / `workflow-status <W…>` | Workflow do planner agent lập |
 | `list` | Liệt kê task |
-| `account-list` | Account, trạng thái đăng nhập, codex-switch / claude-switch, CLI đã cài chưa có account |
+| `account-list [--json]` | Bảng mọi account: account của project và toàn máy, codex-switch / claude-switch, CLI đã cài chưa có account, kèm lệnh để thêm từng cái (ra JSON khi có `--json` hoặc khi pipe) |
 | `account-use <name> [--shell]` | In dòng `export`/function cho `eval "$(…)"`, hoặc mở subshell, để CLI interactive của bạn dùng account đó |
 | `account-clear <name>` | Gỡ cờ "unavailable" của account sau khi user xác nhận |
 

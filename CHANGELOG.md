@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `account-list` and the dashboard show every account on the machine: registry and project
   accounts, codex-switch homes and profiles, claude-switch profiles (listed, never used) and
   installed agent CLIs without an account. Dashboard keys `n` / `d` / `u`.
+- `account-list` prints a table with the command to add each missing account in a terminal;
+  `--json` (or a pipe) gives the data.
 - Terminal dashboard: `agent-bridge` without a subcommand opens a Textual TUI for the project in
   the current directory: task list with a "needs you" filter, task detail and patch view,
   human approval, review, cancel, reassign, account login/clear, and the active settings with

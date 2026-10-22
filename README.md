@@ -269,7 +269,7 @@ secrets), stops at `APPROVED` until a human runs `agent-bridge approve <id>` in 
 | `review` / `resume` / `cancel` | Review, continue or cancel a task |
 | `plan "<objective>"` / `run-workflow <W…>` / `workflow-status <W…>` | Planner-agent workflows |
 | `list` | List tasks |
-| `account-list` | Accounts, login state, codex-switch / claude-switch, installed CLIs without an account |
+| `account-list [--json]` | Table of every account: project and machine-wide accounts, codex-switch / claude-switch, installed CLIs without an account, with the command to add each (JSON with `--json` or when piped) |
 | `account-use <name> [--shell]` | Print `export`/function lines for `eval "$(…)"`, or open a subshell, so your interactive CLI uses that account |
 | `account-clear <name>` | Clear an account's unavailable flag after the user confirms |
 

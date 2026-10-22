@@ -74,6 +74,28 @@ def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
     return login_status(cfg, acc)
 
 
+def _print_accounts(listing: dict[str, Any]) -> None:
+    """account-list for a person: the dashboard's table plus the command for each next step."""
+    from rich.console import Console
+    from rich.table import Table
+
+    from .tui import account_rows
+    table = Table("Account", "Provider", "Source", "Logged in", "State", "Quota", "Home")
+    for _, cells in account_rows(listing):
+        table.add_row(*cells)
+    hints = [f"agent-bridge account-add {h['name']} --provider openai --home {h['codex_home']}"
+             for h in listing["codex_switch"]["homes"] if not h["configured"]]
+    hints += [cli["hint"] for cli in listing.get("unconfigured", [])]
+    console = Console()
+    console.print(table)
+    if hints:
+        console.print("\nTo add an account:", style="bold")
+        for hint in hints:
+            console.print(f"  {hint}", markup=False, highlight=False)
+    console.print("\nswitch profiles hold copied tokens: listed only, never used. "
+                  "--json for the full data.", style="dim")
+
+
 async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "serve":
         from .server import _serve
@@ -121,7 +143,11 @@ async def _run(args: argparse.Namespace) -> Any:
         if root is not None:
             cfg = load_config(root)
             if args.cmd == "account-list":
-                return Bridge(root, cfg).list_accounts()
+                listing = Bridge(root, cfg).list_accounts()
+                if args.json or not sys.stdout.isatty():
+                    return listing  # scripts get JSON
+                _print_accounts(listing)
+                return None
             acc = resolve_account(orchestrator.load(root, cfg), cfg, root, args.name)
         if args.cmd == "account-use":
             if args.shell:
@@ -196,7 +222,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("health")
     sub.add_parser("config-check", help="validate .ai/orchestrator.yaml (or the legacy config)")
     sub.add_parser("agents", help="list agents, roles and availability")
-    sub.add_parser("account-list")
+    sub.add_parser("account-list", help="every account on this machine (a table; --json for "
+                                        "the data)").add_argument("--json", action="store_true")
     sub.add_parser("account-clear").add_argument("name")
     login = sub.add_parser("account-login", help="HUMAN ONLY: log in an isolated account")
     login.add_argument("name")

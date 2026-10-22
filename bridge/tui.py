@@ -53,7 +53,7 @@ def quota_text(quota: Any) -> str:
 def account_rows(listing: dict[str, Any]) -> list[tuple[str, tuple[Any, ...]]]:
     """Every account the machine knows about; only rows keyed by a bare name are usable here.
 
-    codex-switch homes can be added (`n`); claude-switch profiles hold copied tokens and are
+    codex-switch homes can be added; claude-switch profiles hold copied tokens and are
     shown so the user knows they exist, never used."""
     rows: list[tuple[str, tuple[Any, ...]]] = []
     for acc in listing["accounts"]:
@@ -64,19 +64,19 @@ def account_rows(listing: dict[str, Any]) -> list[tuple[str, tuple[Any, ...]]]:
     for home in listing["codex_switch"]["homes"]:
         if not home["configured"]:
             rows.append((f"codex-switch:{home['name']}", (
-                home["name"], "openai", "codex-switch", "yes" if home["logged_in"] else "no",
-                Text("press n to add", style="yellow"), "-", home["codex_home"])))
+                home["name"], "openai", "codex-switch home", "yes" if home["logged_in"] else "no",
+                Text("not added", style="yellow"), "-", home["codex_home"])))
     for profile in listing["codex_switch"]["profiles"]:
         rows.append((f"codex-profile:{profile['name']}", (
-            profile["name"], "openai", "codex-switch", "-",
+            profile["name"], "openai", "codex-switch profile", "-",
             Text("not usable: copied tokens", style="dim"), "-", "-")))
     for profile in listing.get("claude_switch", {}).get("profiles", []):
         rows.append((f"claude-switch:{profile['name']}", (
-            profile["name"], "anthropic", "claude-switch", "-",
+            profile["name"], "anthropic", "claude-switch profile", "-",
             Text("not usable: copied tokens", style="dim"), "-", profile.get("email") or "-")))
     for cli in listing.get("unconfigured", []):
         rows.append((f"installed:{cli['provider']}", (
-            "-", cli["provider"], "installed", "-", Text("no account: press n", style="yellow"),
+            "-", cli["provider"], "installed", "-", Text("no account", style="yellow"),
             "-", cli["binary"])))
     return rows
 
