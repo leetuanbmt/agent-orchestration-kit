@@ -442,7 +442,8 @@ class Bridge:
         row, dup = self._insert(*self._prepare(spec))
         return {**self._summary(row), "duplicate": dup}
 
-    async def execute_task(self, task_id: str, wait: bool = False) -> dict[str, Any]:
+    async def execute_task(self, task_id: str, wait: bool = False,
+                           actor: Actor = Actor.CLIENT) -> dict[str, Any]:
         row = self.store.get(task_id)
         if row["state"] == State.BACKLOG:
             raise TransitionError(f"{task_id} has unfinished dependencies: "
@@ -451,10 +452,10 @@ class Bridge:
         self._route(task_id)
         row = self.store.get(task_id)
         prompt = build_prompt(task_id, row["spec"], self.cfg.protected_paths)
-        return await self._start(task_id, "execute", prompt, None, {State.READY}, wait)
+        return await self._start(task_id, "execute", prompt, None, {State.READY}, wait, actor)
 
-    async def resume_task(self, task_id: str, feedback: str = "",
-                          wait: bool = False) -> dict[str, Any]:
+    async def resume_task(self, task_id: str, feedback: str = "", wait: bool = False,
+                          actor: Actor = Actor.CLIENT) -> dict[str, Any]:
         row = self.store.get(task_id)
         expect = {State.REWORK, State.FAILED, State.PAUSED}
         if row["state"] not in expect:
@@ -474,10 +475,11 @@ class Bridge:
             prompt = build_prompt(task_id, row["spec"], self.cfg.protected_paths)
             if feedback:
                 prompt += f"\n\n## Feedback from the previous attempt\n{feedback}"
-        return await self._start(task_id, "resume", prompt, row["session_id"], expect, wait)
+        return await self._start(task_id, "resume", prompt, row["session_id"], expect, wait,
+                                 actor)
 
     async def _start(self, task_id: str, kind: str, prompt: str, session: str | None,
-                     expect: set[State], wait: bool) -> dict[str, Any]:
+                     expect: set[State], wait: bool, actor: Actor) -> dict[str, Any]:
         row = self.store.get(task_id)
         if row["attempts"] >= self._max_attempts(row):
             row = self.store.transition(task_id, State.BLOCKED, Actor.BRIDGE,
@@ -509,7 +511,7 @@ class Bridge:
         lock = AccountLock(account, self.cfg.lock_dir, slots)
         lock.acquire()
         try:
-            row = self.store.transition(task_id, State.RUNNING, Actor.CLIENT, {"attempt": seq},
+            row = self.store.transition(task_id, State.RUNNING, actor, {"attempt": seq},
                                         expect, account_limit=slots, attempts=used,
                                         runner_pid=os.getpid(), failure=None)
             self.store.start_attempt(task_id, seq, kind)
@@ -884,9 +886,9 @@ class Bridge:
                     break
                 try:
                     if step["state"] == State.READY:
-                        await self.execute_task(step["id"], wait=True)
+                        await self.execute_task(step["id"], wait=True, actor=Actor.BRIDGE)
                     else:
-                        await self.resume_task(step["id"], wait=True)
+                        await self.resume_task(step["id"], wait=True, actor=Actor.BRIDGE)
                 except (ValueError, ConflictError) as e:
                     waiting[step["id"]] = redact(str(e), 500)
             states = {t["id"]: t["state"] for t in self.store.workflow_tasks(wid)}

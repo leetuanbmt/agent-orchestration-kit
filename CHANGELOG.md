@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- Tasks the workflow driver starts or resumes are recorded with actor `bridge` instead of
+  `client`, so the audit trail tells automatic retries from explicit calls.
 - The dashboard quota bar and `account-list` ignored a window's reset time, so a reset 5h
   window still showed as nearly used up; they now use the same calculation as routing.
 - A successful run no longer resets its account to available: with two runs on one account

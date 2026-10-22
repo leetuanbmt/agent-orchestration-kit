@@ -90,7 +90,7 @@ def plan_task(**over):
 # @pt.id KIT-FLOW-A-claude-codex-claude
 # @pt.item Config A: Claude planner, Codex executor, Claude reviewer
 # @pt.condition A planned objective with two dependent tasks is driven to completion
-# @pt.expected Claude plans read-only without MCP; Codex executes in order; Claude approves as AGENT
+# @pt.expected Claude plans read-only without MCP; Codex executes in order, started by the bridge; Claude approves as AGENT
 # @pt.target Bridge.plan, Bridge.run_workflow, Bridge._review_stage, ClaudeAdapter
 # @pt.method integration
 # @pt.legacy none
@@ -114,6 +114,8 @@ def test_config_a(make_orch, fake_codex, fake_claude, monkeypatch):
     assert [c["codex_home"].rsplit("/", 1)[1] for c in calls(fake_codex)] == ["cx1", "cx1"]
     review, = events(b, first, "review")
     assert review["actor"] == Actor.AGENT and review["detail"]["reviewer"] == "claude"
+    started = [e for e in events(b, first, "transition") if e["to_state"] == State.RUNNING]
+    assert [e["actor"] for e in started] == [Actor.BRIDGE]  # the workflow driver started it
     assert sum("REVIEWER" in c["prompt"] for c in log(fake_claude)) == 2
     assert b._account_quota("cl")["remaining_pct"] == 80.0
 
