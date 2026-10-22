@@ -219,7 +219,7 @@ workflow:
 |---|---|
 | `accounts.<id>` | `provider` (`openai` \| `anthropic` \| `google` \| `opencode`; opencode không có `home`), `home` (auth home tách biệt; bỏ trống để dùng login global kế thừa, chỉ đọc), `max_concurrency` (1–8) |
 | `agents.<id>` | `adapter` (`codex-cli` \| `claude-cli` \| `client` \| `opencode-cli` \| `agy-cli`; hai cái cuối chỉ đọc), `account`, `model`, `capabilities` (tập con của `[read, write]`), `allow_write` (claude-cli chỉ ghi khi bật), `allow_bash` (claude-cli), `timeout_s`, `enabled` |
-| `roles.<name>` | một agent id, hoặc `{agents: [...], strategy: ordered \| explicit, requires: read \| write}`. Bắt buộc có `executor` và phải ghi được; `planner`/`reviewer` cần đọc |
+| `roles.<name>` | một agent id, hoặc `{agents: [...], default: <agent>, strategy: ordered \| explicit, requires: read \| write}`; `default` được thử trước, các agent còn lại là dự phòng theo thứ tự trong list. Bắt buộc có `executor` và phải ghi được; `planner`/`reviewer` cần đọc |
 | `routing.quota_fallback` | `enabled`, `min_remaining_pct`, `agents` (ứng viên theo thứ tự; mặc định: role executor) |
 | `workflow` | `stages` (tập con có thứ tự của `plan, execute, test, review`; cần `execute` và ít nhất một gate), `max_rework` (0–4) |
 
@@ -228,7 +228,7 @@ mà không agent nào trong danh sách đảm nhận được đều bị từ c
 field.
 
 - **Định tuyến.** Task được ghim bằng `agent` (hoặc `account`) sẽ chạy ở đó. Nếu không, khi bắt
-  đầu lần đầu, bridge chọn executor đủ điều kiện đầu tiên theo thứ tự trong role (đang bật, CLI đã
+  đầu lần đầu, bridge thử `default` của role trước, rồi tới executor đủ điều kiện đầu tiên theo thứ tự trong role (đang bật, CLI đã
   cài, ghi được, account sẵn sàng và chưa vượt `max_concurrency`), ghi event `agent_routed`; từ
   đó task giữ agent và session ấy. `strategy: explicit` bắt buộc mỗi task phải chỉ định agent.
 - **Stage review.** Reviewer `client` là chính MCP client. Reviewer là agent thì chạy read-only
@@ -471,7 +471,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Kết quả:
 ```console
-172 passed, 5 skipped
+174 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` và `agy` nói đúng giao thức JSONL / stream-json thật và trả lời

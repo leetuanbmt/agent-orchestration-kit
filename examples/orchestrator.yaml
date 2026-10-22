@@ -36,7 +36,8 @@ agents:
 roles:
   planner: claude-headless
   executor:
-    agents: [codex-a, codex-b]   # first eligible wins; codex-b takes over when codex-a is busy
+    agents: [codex-a, codex-b]
+    default: codex-a             # tried first; codex-b takes over when codex-a is busy
     strategy: ordered
   reviewer: claude-headless      # or `claude`: review yourself through bridge_review_task
 

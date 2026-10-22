@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs `opencode auth login` to pick the integration and method (API key, token).
 
 ### Added
+- A role can name its `default` agent (`executor: {agents: [a, b], default: b}`): unpinned tasks
+  try it first and fall back to the other agents in list order, so the default no longer has to
+  be first in the list. Not allowed with `strategy: explicit`.
 - Configurable orchestration in `.ai/orchestrator.yaml`: accounts (provider, isolated home,
   `max_concurrency`), agents (adapter, account, model, capabilities), roles (planner, executor,
   reviewer, custom; ordered or explicit), routing (opt-in quota fallback) and workflow stages

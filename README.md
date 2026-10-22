@@ -217,15 +217,15 @@ workflow:
 |---|---|
 | `accounts.<id>` | `provider` (`openai` \| `anthropic` \| `google` \| `opencode`; opencode has no `home`), `home` (isolated auth home; omit for the inherited global login, used read-only), `max_concurrency` (1–8) |
 | `agents.<id>` | `adapter` (`codex-cli` \| `claude-cli` \| `client` \| `opencode-cli` \| `agy-cli`; the last two are read-only), `account`, `model`, `capabilities` (`[read, write]` subset), `allow_write` (claude-cli only writes when true), `allow_bash` (claude-cli), `timeout_s`, `enabled` |
-| `roles.<name>` | an agent id, or `{agents: [...], strategy: ordered \| explicit, requires: read \| write}`. `executor` is required and must be able to write; `planner`/`reviewer` need read |
+| `roles.<name>` | an agent id, or `{agents: [...], default: <agent>, strategy: ordered \| explicit, requires: read \| write}`; `default` is tried first, the other agents are its fallbacks in list order. `executor` is required and must be able to write; `planner`/`reviewer` need read |
 | `routing.quota_fallback` | `enabled`, `min_remaining_pct`, `agents` (candidates in order; default: the executor role) |
 | `workflow` | `stages` (ordered subset of `plan, execute, test, review`; needs `execute` and at least one gate), `max_rework` (0–4) |
 
 Unknown keys, unknown ids, a provider/adapter mismatch, two accounts sharing one home, or a role
 no listed agent can play are rejected with the field path in the message.
 
-- **Routing.** A task pinned by `agent` (or `account`) runs there. Otherwise the first eligible
-  executor in role order is chosen when it first starts (enabled, CLI installed, can write,
+- **Routing.** A task pinned by `agent` (or `account`) runs there. Otherwise the role's `default`, then the
+  first eligible executor in role order, is chosen when it first starts (enabled, CLI installed, can write,
   account available and under `max_concurrency`), logged as `agent_routed`; the task then keeps
   that agent and session. `strategy: explicit` requires every task to name its agent.
 - **Review stage.** A `client` reviewer is the MCP caller. A reviewer agent runs read-only after
@@ -465,7 +465,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Result:
 ```console
-172 passed, 5 skipped
+174 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` and `agy` speak the real JSONL / stream-json protocols and
