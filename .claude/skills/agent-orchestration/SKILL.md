@@ -16,6 +16,9 @@ If two readings produce different work, ask the user before planning.
 ## 2. Check the bridge
 `bridge_health` once per session: `ok: false` → stop and tell the user (a CLI missing or not
 logged in). `bridge_list_agents` once: note who plans, executes and reviews, and the stages.
+An agent the work needs that shows `account <name> logged out` → tell the user the login
+command a human runs (`agent-bridge account-login <name>`); never log in or pick another agent
+yourself.
 `bridge_list_accounts` only when the user asked about accounts or quota.
 
 ## 3. Plan and decompose
