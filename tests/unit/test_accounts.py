@@ -225,15 +225,17 @@ def test_list_surfaces(tmp_path, monkeypatch, capsys):
     for account in expected["accounts"]:
         account.update(state="available", last_error=None, max_concurrency=1, source="project")
     expected["unconfigured"] = []
-    listing = cli.argparse.Namespace(cmd="account-list", json=False)
-    assert asyncio.run(cli._run(listing)) == expected  # not a terminal
-    assert asyncio.run(cli._run(cli.argparse.Namespace(cmd="account-list", json=True))) == expected
+    assert asyncio.run(cli._run(cli.argparse.Namespace(cmd="account-list"))) == expected
     assert asyncio.run(server.bridge_list_accounts()) == expected
+    capsys.readouterr()
+    cli.main(["account-list"])  # not a terminal: JSON
+    assert json.loads(capsys.readouterr().out) == expected
     monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    cli.main(["account-list", "--json"])
+    assert json.loads(capsys.readouterr().out) == expected
     monkeypatch.setattr("bridge.service.shutil.which",
                         lambda name: "/bin/agy" if name == "agy" else None)
-    capsys.readouterr()
-    assert asyncio.run(cli._run(listing)) is None
+    cli.main(["account-list"])
     out = capsys.readouterr().out
     assert "default" in out and "project" in out and "{" not in out
     assert "agent-bridge account-add <name> --provider google" in out

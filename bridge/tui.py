@@ -29,57 +29,8 @@ from textual.widgets import (Button, DataTable, Footer, Header, Input, Label, Se
 
 from . import install
 from .config import AI_DIR, find_root
+from .render import ATTENTION, STYLE, account_rows
 from .service import Bridge
-
-# What a human may have to do, by state; drives the "needs you" filter and the row colours.
-ATTENTION = {"APPROVED": "approve", "REVIEW": "review", "PAUSED": "resume or fix account",
-             "BLOCKED": "decide", "FAILED": "retry or cancel"}
-STYLE = {"DONE": "green", "APPROVED": "bold yellow", "REVIEW": "yellow", "PAUSED": "magenta",
-         "BLOCKED": "bold red", "FAILED": "red", "CANCELLED": "dim", "RUNNING": "cyan",
-         "VERIFYING": "cyan"}
-
-
-def quota_text(quota: Any) -> str:
-    if not isinstance(quota, dict):
-        return str(quota)
-    parts = []
-    for key, label in (("primary", "5h"), ("secondary", "week")):
-        window = quota.get(key)
-        if isinstance(window, dict) and window.get("used_percent") is not None:
-            parts.append(f"{label} {100 - float(window['used_percent']):.0f}% left")
-    return " · ".join(parts) or "UNKNOWN"
-
-
-def account_rows(listing: dict[str, Any]) -> list[tuple[str, tuple[Any, ...]]]:
-    """Every account the machine knows about; only rows keyed by a bare name are usable here.
-
-    codex-switch homes can be added; claude-switch profiles hold copied tokens and are
-    shown so the user knows they exist, never used."""
-    rows: list[tuple[str, tuple[Any, ...]]] = []
-    for acc in listing["accounts"]:
-        rows.append((acc["name"], (acc["name"], acc.get("provider", "openai"), acc["source"],
-                                   "yes" if acc.get("logged_in") else "no", acc.get("state", "-"),
-                                   quota_text(acc.get("quota")),
-                                   acc.get("home") or "(global login)")))
-    for home in listing["codex_switch"]["homes"]:
-        if not home["configured"]:
-            rows.append((f"codex-switch:{home['name']}", (
-                home["name"], "openai", "codex-switch home", "yes" if home["logged_in"] else "no",
-                Text("not added", style="yellow"), "-", home["codex_home"])))
-    for profile in listing["codex_switch"]["profiles"]:
-        rows.append((f"codex-profile:{profile['name']}", (
-            profile["name"], "openai", "codex-switch profile", "-",
-            Text("not usable: copied tokens", style="dim"), "-", "-")))
-    for profile in listing.get("claude_switch", {}).get("profiles", []):
-        rows.append((f"claude-switch:{profile['name']}", (
-            profile["name"], "anthropic", "claude-switch profile", "-",
-            Text("not usable: copied tokens", style="dim"), "-", profile.get("email") or "-")))
-    for cli in listing.get("unconfigured", []):
-        rows.append((f"installed:{cli['provider']}", (
-            "-", cli["provider"], "installed", "-", Text("no account", style="yellow"),
-            "-", cli["binary"])))
-    return rows
-
 
 def detail_text(result: dict[str, Any], tries: int) -> Text:
     """`result` is `task_result`, whose `attempts` is the attempt list; `tries` is the budget used."""

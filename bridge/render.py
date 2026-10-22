@@ -1,0 +1,178 @@
+"""Human views of the bridge's data, shared by the CLI (in a terminal) and the dashboard.
+
+Each `*_view` turns the exact dict/list the MCP tools return into rich renderables and ends
+with the commands for the next step, so the JSON stays the machine contract.
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Any
+
+from rich.console import Group, RenderableType
+from rich.table import Table
+from rich.text import Text
+
+# What a human may have to do, by state; drives the "needs you" filter and the row colours.
+ATTENTION = {"APPROVED": "approve", "REVIEW": "review", "PAUSED": "resume or fix account",
+             "BLOCKED": "decide", "FAILED": "retry or cancel"}
+STYLE = {"DONE": "green", "APPROVED": "bold yellow", "REVIEW": "yellow", "PAUSED": "magenta",
+         "BLOCKED": "bold red", "FAILED": "red", "CANCELLED": "dim", "RUNNING": "cyan",
+         "VERIFYING": "cyan"}
+
+
+def quota_text(quota: Any) -> str:
+    if not isinstance(quota, dict):
+        return f"{quota:.0f}% left" if isinstance(quota, (int, float)) else str(quota)
+    parts = []
+    for key, label in (("primary", "5h"), ("secondary", "week")):
+        window = quota.get(key)
+        if isinstance(window, dict) and window.get("used_percent") is not None:
+            parts.append(f"{label} {100 - float(window['used_percent']):.0f}% left")
+    return " · ".join(parts) or "UNKNOWN"
+
+
+def ago(ts: float | None, now: float | None = None) -> str:
+    if not ts:
+        return "-"
+    s = max(0, int((now or time.time()) - ts))
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if s >= size:
+            return f"{s // size}{unit} ago"
+    return f"{s}s ago"
+
+
+def _steps(hints: list[str], title: str = "Next:") -> list[RenderableType]:
+    if not hints:
+        return []
+    out = Text(f"\n{title}\n", style="bold")
+    for hint in hints:
+        out.append(f"  {hint}\n", style="")
+    return [out]
+
+
+def account_rows(listing: dict[str, Any]) -> list[tuple[str, tuple[Any, ...]]]:
+    """Every account the machine knows about; only rows keyed by a bare name are usable here.
+
+    codex-switch homes can be added; claude-switch profiles hold copied tokens and are
+    shown so the user knows they exist, never used."""
+    rows: list[tuple[str, tuple[Any, ...]]] = []
+    for acc in listing["accounts"]:
+        rows.append((acc["name"], (acc["name"], acc.get("provider", "openai"), acc["source"],
+                                   "yes" if acc.get("logged_in") else "no", acc.get("state", "-"),
+                                   quota_text(acc.get("quota")),
+                                   acc.get("home") or "(global login)")))
+    for home in listing["codex_switch"]["homes"]:
+        if not home["configured"]:
+            rows.append((f"codex-switch:{home['name']}", (
+                home["name"], "openai", "codex-switch home", "yes" if home["logged_in"] else "no",
+                Text("not added", style="yellow"), "-", home["codex_home"])))
+    for profile in listing["codex_switch"]["profiles"]:
+        rows.append((f"codex-profile:{profile['name']}", (
+            profile["name"], "openai", "codex-switch profile", "-",
+            Text("not usable: copied tokens", style="dim"), "-", "-")))
+    for profile in listing.get("claude_switch", {}).get("profiles", []):
+        rows.append((f"claude-switch:{profile['name']}", (
+            profile["name"], "anthropic", "claude-switch profile", "-",
+            Text("not usable: copied tokens", style="dim"), "-", profile.get("email") or "-")))
+    for cli in listing.get("unconfigured", []):
+        rows.append((f"installed:{cli['provider']}", (
+            "-", cli["provider"], "installed", "-", Text("no account", style="yellow"),
+            "-", cli["binary"])))
+    return rows
+
+
+def accounts_view(listing: dict[str, Any]) -> Group:
+    table = Table("Account", "Provider", "Source", "Logged in", "State", "Quota", "Home")
+    for _, cells in account_rows(listing):
+        table.add_row(*cells)
+    hints = [f"agent-bridge account-add {h['name']} --provider openai --home {h['codex_home']}"
+             for h in listing["codex_switch"]["homes"] if not h["configured"]]
+    hints += [cli["hint"] for cli in listing.get("unconfigured", [])]
+    note = Text("\nswitch profiles hold copied tokens: listed only, never used. "
+                "--json for the full data.", style="dim")
+    return Group(table, *_steps(hints, "To add an account:"), note)
+
+
+def health_view(h: dict[str, Any]) -> Group:
+    head = Text()
+    head.append(" OK " if h["ok"] else " NOT OK ",
+                style="bold black on green" if h["ok"] else "bold white on red")
+    head.append(f"  {h['project_root']}\n", style="bold")
+    orch = h["orchestrator"]
+    head.append(f"config {orch['source']} · stages {' → '.join(orch['stages'])}"
+                f" · sandbox {h['sandbox']}", style="dim")
+    adapters = Table("Adapter", "Path", "Version", title="Adapters", title_justify="left")
+    hints = []
+    for name, info in h["adapters"].items():
+        missing = not info["path"]
+        adapters.add_row(name, Text("not installed", style="red") if missing else info["path"],
+                         info["version"] or "-")
+        if missing:
+            hints.append(f"install the {name.removesuffix('-cli')} CLI (or set its *_bin in "
+                         ".ai/config.json)")
+    codex = h["codex"]
+    if "codex-cli" in h["adapters"] and codex.get("path") and not codex.get("logged_in"):
+        hints.append("codex is not logged in: run `codex login` yourself, or "
+                     "`agent-bridge account-add <name> --provider openai`")
+    quota = Table("Account", "Quota", title="Quota", title_justify="left")
+    for name, value in h["quota"].items():
+        quota.add_row(name, quota_text(value))
+    counts = Text("Tasks  ")
+    for state, n in sorted(h["task_counts"].items()):
+        counts.append(f"{state} {n}", style=STYLE.get(state, ""))
+        counts.append("  ")
+    if not h["task_counts"]:
+        counts.append("none", style="dim")
+    if h["active_tasks"]:
+        counts.append(f"\nActive  {', '.join(h['active_tasks'])}", style="cyan")
+    return Group(head, Text(""), adapters, quota, counts, *_steps(hints, "To fix:"))
+
+
+def agents_view(a: dict[str, Any]) -> Group:
+    head = Text(f"config {a['source']} · stages {' → '.join(a['stages'])}\n", style="dim")
+    for role, spec in a["roles"].items():
+        head.append(f"{role:<9}", style="bold")
+        head.append(f"{', '.join(spec['agents']) or '-'}\n")
+    fallback = a["quota_fallback"]
+    head.append(f"quota fallback {'on' if fallback['enabled'] else 'off'}", style="dim")
+    table = Table("Agent", "Adapter", "Account", "Model", "Roles", "Can", "Status")
+    for ag in a["agents"]:
+        can = "/".join(c for c in ("read", "write") if ag[c]) + (" +bash" if ag["allow_bash"]
+                                                                  else "")
+        status = (Text("available", style="green") if ag["available"]
+                  else Text(ag["unavailable_reason"] or "unavailable", style="red"))
+        table.add_row(ag["agent"], ag["adapter"], ag["account"] or "-", ag["model"] or "-",
+                      ", ".join(ag["roles"]) or "-", can or "-", status)
+    hints = [f"`agent-bridge account-list` to see why {ag['agent']} is unavailable"
+             for ag in a["agents"] if not ag["available"] and ag["account"]][:1]
+    return Group(head, table, *_steps(hints))
+
+
+def _next_for(task: dict[str, Any]) -> str | None:
+    tid = task["task_id"]
+    match task["state"]:
+        case "APPROVED" if task["needs_human_approval"]:
+            return f"agent-bridge approve {tid}"
+        case "REVIEW" if not task["review_pending"]:
+            return f"agent-bridge result {tid}   then: agent-bridge review {tid} --decision …"
+        case "PAUSED":
+            return f"agent-bridge resume {tid}   (after fixing: {task['failure'] or 'see result'})"
+        case "FAILED" | "BLOCKED":
+            return f"agent-bridge result {tid}   (resume or cancel)"
+    return None
+
+
+def tasks_view(tasks: list[dict[str, Any]], now: float | None = None) -> Group | Text:
+    if not tasks:
+        return Text("No tasks yet. Ask Claude Code for a change; it creates them through the "
+                    "bridge.", style="dim")
+    table = Table("", "Task", "State", "Agent", "Tries", "Updated", expand=True)
+    table.add_column("Objective", ratio=1, no_wrap=True, overflow="ellipsis")
+    for t in tasks:
+        mark = Text("●", style="bold yellow") if t["state"] in ATTENTION else ""
+        table.add_row(mark, t["task_id"], Text(t["state"], style=STYLE.get(t["state"], "")),
+                      t["agent"] or "-", f"{t['attempts']}/{t['max_attempts']}",
+                      ago(t["updated_at"], now), (t["objective"].splitlines() or [""])[0])
+    hints = [hint for t in tasks if (hint := _next_for(t))]
+    return Group(table, *_steps(hints, "● needs you:"))

@@ -42,6 +42,9 @@ def _server_entry() -> dict[str, Any]:
     return install.uv_server()
 
 
+# Commands a person reads: a table in a terminal, JSON with --json or through a pipe.
+VIEWS = {"account-list": "accounts_view", "health": "health_view", "agents": "agents_view",
+         "list": "tasks_view"}
 HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove"}
 
 
@@ -72,28 +75,6 @@ def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
             print("ERROR: global auth was modified", file=sys.stderr)
             raise SystemExit(3)
     return login_status(cfg, acc)
-
-
-def _print_accounts(listing: dict[str, Any]) -> None:
-    """account-list for a person: the dashboard's table plus the command for each next step."""
-    from rich.console import Console
-    from rich.table import Table
-
-    from .tui import account_rows
-    table = Table("Account", "Provider", "Source", "Logged in", "State", "Quota", "Home")
-    for _, cells in account_rows(listing):
-        table.add_row(*cells)
-    hints = [f"agent-bridge account-add {h['name']} --provider openai --home {h['codex_home']}"
-             for h in listing["codex_switch"]["homes"] if not h["configured"]]
-    hints += [cli["hint"] for cli in listing.get("unconfigured", [])]
-    console = Console()
-    console.print(table)
-    if hints:
-        console.print("\nTo add an account:", style="bold")
-        for hint in hints:
-            console.print(f"  {hint}", markup=False, highlight=False)
-    console.print("\nswitch profiles hold copied tokens: listed only, never used. "
-                  "--json for the full data.", style="dim")
 
 
 async def _run(args: argparse.Namespace) -> Any:
@@ -143,11 +124,7 @@ async def _run(args: argparse.Namespace) -> Any:
         if root is not None:
             cfg = load_config(root)
             if args.cmd == "account-list":
-                listing = Bridge(root, cfg).list_accounts()
-                if args.json or not sys.stdout.isatty():
-                    return listing  # scripts get JSON
-                _print_accounts(listing)
-                return None
+                return Bridge(root, cfg).list_accounts()
             acc = resolve_account(orchestrator.load(root, cfg), cfg, root, args.name)
         if args.cmd == "account-use":
             if args.shell:
@@ -219,11 +196,11 @@ def main(argv: list[str] | None = None) -> None:
     u.add_argument("--purge", action="store_true", help="also delete .ai/ (task history)")
     sub.add_parser("tui", help="interactive dashboard (the default without a subcommand)")
     sub.add_parser("serve", help="run the MCP stdio server")
-    sub.add_parser("health")
+    sub.add_parser("health", help="adapters, logins, quota and task counts; exit 1 when "
+                              "not OK")
     sub.add_parser("config-check", help="validate .ai/orchestrator.yaml (or the legacy config)")
     sub.add_parser("agents", help="list agents, roles and availability")
-    sub.add_parser("account-list", help="every account on this machine (a table; --json for "
-                                        "the data)").add_argument("--json", action="store_true")
+    sub.add_parser("account-list", help="every account on this machine")
     sub.add_parser("account-clear").add_argument("name")
     login = sub.add_parser("account-login", help="HUMAN ONLY: log in an isolated account")
     login.add_argument("name")
@@ -270,6 +247,9 @@ def main(argv: list[str] | None = None) -> None:
     reass = sub.add_parser("reassign", help="HUMAN ONLY: move a task to another agent or account")
     reass.add_argument("task_id")
     reass.add_argument("agent")
+    for name in VIEWS:
+        sub.choices[name].add_argument("--json", action="store_true",
+                                       help="print the data as JSON")
     args = p.parse_args(argv)
     if os.environ.get(AGENT_ENV):
         print("refused: the bridge cannot run inside an agent it started", file=sys.stderr)
@@ -287,7 +267,16 @@ def main(argv: list[str] | None = None) -> None:
         print(f"error: {e}", file=sys.stderr)
         raise SystemExit(1) from e
     if out is not None:
-        print(dumps(out))
+        view = VIEWS.get(args.cmd)
+        if view and not getattr(args, "json", False) and sys.stdout.isatty():
+            from rich.console import Console
+
+            from . import render
+            Console().print(getattr(render, view)(out))
+        else:
+            print(dumps(out))
+    if args.cmd == "health" and not out["ok"]:
+        raise SystemExit(1)  # scripts and CI can gate on `agent-bridge health`
 
 
 if __name__ == "__main__":

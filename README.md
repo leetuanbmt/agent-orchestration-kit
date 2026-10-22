@@ -262,14 +262,17 @@ secrets), stops at `APPROVED` until a human runs `agent-bridge approve <id>` in 
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Install into / remove from a project |
 | `serve` | MCP stdio server (what `.mcp.json` runs) |
 | `config-check` | Validate `.ai/orchestrator.yaml` (or the legacy config) |
-| `agents` | Agents, roles and availability |
-| `health` | Bridge and adapter status |
+| `agents [--json]` | Roles → agents, then a table of agents with capabilities and availability |
+| `health [--json]` | OK / NOT OK, adapters, quota, task counts and what to fix; exits 1 when not OK |
 | `create <spec.json>` | Create a task from a spec file |
 | `execute` / `status` / `result` | Run a task, read its state, read its result |
 | `review` / `resume` / `cancel` | Review, continue or cancel a task |
 | `plan "<objective>"` / `run-workflow <W…>` / `workflow-status <W…>` | Planner-agent workflows |
-| `list` | List tasks |
-| `account-list [--json]` | Table of every account: project and machine-wide accounts, codex-switch / claude-switch, installed CLIs without an account, with the command to add each (JSON with `--json` or when piped) |
+| `list [--json]` | Tasks with state, tries and age; tasks that need you are marked `●` with the next command |
+| `account-list [--json]` | Every account: project and machine-wide accounts, codex-switch / claude-switch, installed CLIs without an account, with the command to add each |
+
+In a terminal these four print tables; with `--json`, or when the output is piped, they print
+the same JSON the MCP tools return.
 | `account-use <name> [--shell]` | Print `export`/function lines for `eval "$(…)"`, or open a subshell, so your interactive CLI uses that account |
 | `account-clear <name>` | Clear an account's unavailable flag after the user confirms |
 
@@ -426,7 +429,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Result:
 ```console
-161 passed, 5 skipped
+164 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` and `agy` speak the real JSONL / stream-json protocols and
