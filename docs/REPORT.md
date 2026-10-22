@@ -11,7 +11,7 @@ through the bridge, including two accounts in parallel.
 | Codex sandbox (macOS) | 0.163.0 | `workspace-write` can write git-ignored files in the worktree (incl. `.ai/`) but **not** `.git/`; `$TMPDIR` and `/tmp` unwritable when excluded; `ps`/`kill` forbidden |
 | MCP Python SDK | 2.3.0 | `MCPServer` (formerly FastMCP); non-`ToolError` exceptions are hidden from the client |
 | Claude Code | 2.1.303 | `.mcp.json` with `${CLAUDE_PROJECT_DIR:-.}`; `enabledMcpjsonServers` honoured only after the folder is trusted; `.claude/rules/*.md` auto-loaded; `claude -p` called `bridge_health`; `claude mcp list` → Connected |
-| Claude Code headless | 2.1.306 | `claude -p --output-format stream-json --verbose`, prompt on stdin; events `system/init` (session_id; `mcp_servers: []` under `--strict-mcp-config`), `rate_limit_event` (`unifiedWindows.five_hour/seven_day.utilization` 0–1, `resetsAt`), `result` (`is_error`, `subtype`, `structured_output` with `--json-schema`, `session_id`, `api_error_status`); `--permission-mode dontAsk` + `--allowedTools`; `--setting-sources project`; `--resume`; `auth status` JSON `loggedIn`; `--bare` disables OAuth, so it is not used |
+| Claude Code headless | 2.1.306 | `claude -p --output-format stream-json --verbose`, prompt on stdin; events `system/init` (session_id; `mcp_servers: []` under `--strict-mcp-config`), `rate_limit_event` (`unifiedWindows.five_hour/seven_day.utilization` 0–1, `resetsAt`), `result` (`is_error`, `subtype`, `structured_output` with `--json-schema`, `session_id`, `api_error_status`); `--permission-mode dontAsk` + `--allowedTools`; `--setting-sources ""` (probed on 2.1.308: allow rules from any loaded settings source extend `--allowedTools`; the empty list loads none); `--resume`; `auth status` JSON `loggedIn`; `--bare` disables OAuth, so it is not used |
 | codex-switch | local repo `claude-switcher/agents-switch` | profiles are full auth snapshots incl. refresh tokens, `switch` overwrites the global `auth.json` → not used for execution; new `home` subcommands used instead (below) |
 
 ## 2. Architecture
@@ -120,7 +120,7 @@ Verification of this change:
 
 | Check | Result |
 |---|---|
-| `scripts/check.sh` | 175 passed, 5 skipped (opt-in real smoke tests) |
+| `scripts/check.sh` | 185 passed, 5 skipped (opt-in real smoke tests) |
 | Real Claude CLI, `CLAUDE_SMOKE=1` | 1 passed: fake Codex made the change, real `claude -p` (haiku) reviewed read-only with no MCP servers and approved as actor `agent`; task DONE |
 | Real Codex, `CODEX_SMOKE=1 -m real_codex` | 2 passed: the 0.1 lifecycle (READY→REVIEW→DONE) and a single-agent workflow where real Codex planned with the plan schema, implemented, and approved with the review schema (read-only); workflow DONE |
 | Claude write scoping probe | see *Limitations*: scoped Edit/Write rules refuse writes outside `allowed_paths` |

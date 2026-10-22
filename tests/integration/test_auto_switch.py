@@ -177,10 +177,10 @@ def test_resume(make_bridge, accounts, fake_codex, monkeypatch):
     assert bridge.store.get(task)["session_id"]
     original_start = bridge._start
 
-    async def check_start(task_id, kind, prompt, session, expect, wait):
+    async def check_start(task_id, kind, prompt, session, expect, wait, actor):
         assert session is None
         assert bridge.store.get(task_id)["session_id"] is None
-        return await original_start(task_id, kind, prompt, session, expect, wait)
+        return await original_start(task_id, kind, prompt, session, expect, wait, actor)
 
     monkeypatch.setattr(bridge, "_start", check_start)
     assert run(bridge.resume_task(task, "Keep the objective", wait=True))["state"] == "REVIEW"

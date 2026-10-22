@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import fnmatch
 import functools
+import os
 import re
+import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
 
@@ -14,6 +16,12 @@ RULE_CHARS = set(",()\"'")
 
 class PathError(ValueError):
     pass
+
+
+def rule_unsafe(patterns: Iterable[str]) -> list[str]:
+    """Patterns that cannot become Claude permission rules like Edit(./src/**): these characters
+    would let a pattern close the rule and smuggle in another one (e.g. "x),Bash(*")."""
+    return [p for p in patterns if RULE_CHARS & set(p) or any(c.isspace() for c in p)]
 
 
 @functools.lru_cache(maxsize=512)
@@ -45,12 +53,9 @@ def matches(path: str, patterns: Iterable[str]) -> bool:
 def validate_pattern(pattern: str, root: Path, protected: Iterable[str]) -> str:
     """Accept a project-relative path/glob that stays inside root and is not protected."""
     p = pattern.strip()
-    if not p or "\x00" in p or "\\" in p:
+    # Control characters (newlines) would let a path forge sections of the agent prompt.
+    if not p or "\\" in p or any(ord(c) < 32 or ord(c) == 127 for c in p):
         raise PathError(f"invalid path: {pattern!r}")
-    # Paths become Claude permission rules like Edit(./src/**); these characters would let a
-    # pattern close the rule and smuggle in another one (e.g. "x),Bash(*").
-    if RULE_CHARS & set(p) or any(c.isspace() for c in p):
-        raise PathError(f"path may not contain ',', '(', ')', quotes or whitespace: {pattern!r}")
     pure = PurePosixPath(p)
     if pure.is_absolute() or p.startswith("~"):
         raise PathError(f"path must be project-relative: {pattern!r}")
@@ -112,3 +117,15 @@ def clean_env(env: Mapping[str, str], deny: Iterable[str], allow: Iterable[str])
         k: v for k, v in env.items()
         if k in allow or not any(fnmatch.fnmatchcase(k.upper(), d.upper()) for d in deny)
     }
+
+
+def process_started(pid: int) -> str | None:
+    """The process's start time as ps prints it; with the pid it identifies one process.
+    Fixed locale and zone, so the CLI, the TUI and the MCP server print the same string."""
+    try:
+        ps = subprocess.run(["ps", "-o", "lstart=", "-p", str(int(pid))],
+                            capture_output=True, text=True, check=False,
+                            env={**os.environ, "LC_ALL": "C", "TZ": "UTC"})
+    except OSError:
+        return None  # no ps: orphans are left alone rather than guessed at
+    return ps.stdout.strip() or None

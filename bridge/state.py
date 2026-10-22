@@ -6,6 +6,7 @@ WAL + BEGIN IMMEDIATE so the MCP server and the CLI can share one database safel
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from collections.abc import Iterator
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import ACTIVE, TERMINAL, Actor, State, TaskSpec, TransitionError, check_transition
-from .security import redact
+from .security import process_started, redact
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -105,9 +106,14 @@ class Store:
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(SCHEMA)
         columns = {r["name"] for r in self.db.execute("PRAGMA table_info(tasks)")}
-        for column in ("account", "agent", "workflow_id"):  # databases from older versions
+        for column in ("account", "agent", "workflow_id", "codex_started"):  # databases from older versions
             if column not in columns:
                 self.db.execute(f"ALTER TABLE tasks ADD COLUMN {column} TEXT")
+        columns = {r["name"] for r in self.db.execute("PRAGMA table_info(workflows)")}
+        for column, kind in (("runner_pid", "INTEGER"), ("runner_started", "TEXT")):
+            if column not in columns:
+                self.db.execute(f"ALTER TABLE workflows ADD COLUMN {column} {kind}")
+        self._started = process_started(os.getpid())
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
@@ -176,8 +182,9 @@ class Store:
         with self.tx() as c:
             n = c.execute("SELECT COUNT(*) FROM workflows").fetchone()[0] + 1
             wid, now = f"W{n:04d}", time.time()
-            c.execute("INSERT INTO workflows(id, objective, state, planner, created_at, "
-                      "updated_at) VALUES (?,?,?,?,?,?)", (wid, objective, state, planner, now, now))
+            c.execute("INSERT INTO workflows(id, objective, state, planner, runner_pid,"
+                      " runner_started, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                      (wid, objective, state, planner, os.getpid(), self._started, now, now))
             self._event(c, None, Actor.CLIENT, "workflow_created", None, state,
                         {"workflow_id": wid, "planner": planner})
         return self.workflow(wid)
@@ -191,12 +198,21 @@ class Store:
     def set_workflow(self, wid: str, state: str, detail: Any = None) -> None:
         with self.tx() as c:
             prev = c.execute("SELECT state FROM workflows WHERE id=?", (wid,)).fetchone()
-            c.execute("UPDATE workflows SET state=?, detail=?, updated_at=? WHERE id=?",
+            # The process planning or driving a workflow owns it until it leaves those states.
+            owned = state in {"PLANNING", "RUNNING"}
+            c.execute("UPDATE workflows SET state=?, detail=?, runner_pid=?, runner_started=?,"
+                      " updated_at=? WHERE id=?",
                       (state, json.dumps(detail, default=str) if detail is not None else None,
+                       os.getpid() if owned else None, self._started if owned else None,
                        time.time(), wid))
             if prev and prev["state"] != state:
                 self._event(c, None, Actor.BRIDGE, "workflow_state", prev["state"], state,
                             {"workflow_id": wid, "detail": detail})
+
+    def workflows_in(self, *states: str) -> list[dict[str, Any]]:
+        rows = self.db.execute(f"SELECT * FROM workflows WHERE state IN "
+                               f"({','.join('?' * len(states))})", states)
+        return [r for r in map(_row, rows.fetchall()) if r]
 
     def workflow_tasks(self, wid: str) -> list[dict[str, Any]]:
         rows = self.db.execute("SELECT * FROM tasks WHERE workflow_id=? ORDER BY id", (wid,))

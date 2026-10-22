@@ -28,7 +28,7 @@ from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .review import diff, parse_command, run_verification, scope_violations, snapshot, \
     touches_sensitive
-from .security import PathError, redact, validate_pattern
+from .security import PathError, process_started, redact, rule_unsafe, validate_pattern
 from .state import ConflictError, Store
 
 # Outcomes that mean "the environment, not the code": park the task, never auto-retry.
@@ -157,11 +157,10 @@ class Bridge:
     def _record_account(self, name: str, res: RunResult) -> None:
         if res.rate_limits:
             self.store.save_quota(name, res.rate_limits)
-        if res.outcome in {"quota", "auth", "ok"}:
-            self.store.set_account_state(
-                name, "available" if res.outcome == "ok" else res.outcome,
-                res.error if res.outcome != "ok" else None, actor=Actor.BRIDGE,
-            )
+        # Runs only start on an available account, so a mark seen after a successful run came from
+        # another run meanwhile; only account-clear (the user) lifts it.
+        if res.outcome in {"quota", "auth"}:
+            self.store.set_account_state(name, res.outcome, res.error, actor=Actor.BRIDGE)
 
     def _unavailable(self, name: str, need: str) -> str | None:
         """Why agent `name` cannot take work needing `need` right now; None when it can."""
@@ -185,11 +184,21 @@ class Bridge:
             return f"account {account.name} busy"
         return None
 
-    def _pick(self, role: str, need: str) -> str:
-        """First eligible agent of `role` in configured order."""
+    def _unscopable(self, agent: AgentConfig, spec: dict[str, Any]) -> list[str]:
+        """Paths a claude-cli writer cannot turn into permission rules for this task."""
+        if (agent.adapter != "claude-cli" or not agent.writes
+                or (spec.get("sandbox") or self.cfg.sandbox) != "workspace-write"):
+            return []
+        return rule_unsafe([*spec["allowed_paths"], *spec.get("excluded_paths", []),
+                            *self.cfg.protected_paths])
+
+    def _pick(self, role: str, need: str, spec: dict[str, Any] | None = None) -> str:
+        """First eligible agent of `role` in configured order (able to scope `spec`'s paths)."""
         reasons = []
         for name in self.orch.role(role).agents:
             reason = self._unavailable(name, need)
+            if reason is None and spec and (bad := self._unscopable(self.orch.agents[name], spec)):
+                reason = f"cannot scope writes to {bad}"
             if reason is None:
                 return name
             reasons.append(f"{name}: {reason}")
@@ -341,7 +350,7 @@ class Bridge:
         row = self.store.get(task_id)
         if self._agent_of(row) is not None:
             return
-        name = self._pick("executor", "write")
+        name = self._pick("executor", "write", row["spec"])
         account = self.orch.agents[name].account
         self.store.update(task_id, agent=name, account=account)
         self.store.log(task_id, Actor.BRIDGE, "agent_routed",
@@ -433,14 +442,17 @@ class Bridge:
 
     def _insert(self, s: TaskSpec, agent: str | None, account: str | None,
                 workflow_id: str | None = None) -> tuple[dict[str, Any], bool]:
-        h = hashlib.sha256(s.model_dump_json().encode()).hexdigest()
+        # A planned task dedups only inside its own workflow; matching another workflow's live task
+        # would hand back a row this workflow never lists or drives.
+        h = hashlib.sha256((s.model_dump_json() + (workflow_id or "")).encode()).hexdigest()
         return self.store.create(s, h, agent=agent, workflow_id=workflow_id, account=account)
 
     async def create_task(self, spec: dict[str, Any]) -> dict[str, Any]:
         row, dup = self._insert(*self._prepare(spec))
         return {**self._summary(row), "duplicate": dup}
 
-    async def execute_task(self, task_id: str, wait: bool = False) -> dict[str, Any]:
+    async def execute_task(self, task_id: str, wait: bool = False,
+                           actor: Actor = Actor.CLIENT) -> dict[str, Any]:
         row = self.store.get(task_id)
         if row["state"] == State.BACKLOG:
             raise TransitionError(f"{task_id} has unfinished dependencies: "
@@ -449,10 +461,10 @@ class Bridge:
         self._route(task_id)
         row = self.store.get(task_id)
         prompt = build_prompt(task_id, row["spec"], self.cfg.protected_paths)
-        return await self._start(task_id, "execute", prompt, None, {State.READY}, wait)
+        return await self._start(task_id, "execute", prompt, None, {State.READY}, wait, actor)
 
-    async def resume_task(self, task_id: str, feedback: str = "",
-                          wait: bool = False) -> dict[str, Any]:
+    async def resume_task(self, task_id: str, feedback: str = "", wait: bool = False,
+                          actor: Actor = Actor.CLIENT) -> dict[str, Any]:
         row = self.store.get(task_id)
         expect = {State.REWORK, State.FAILED, State.PAUSED}
         if row["state"] not in expect:
@@ -472,10 +484,11 @@ class Bridge:
             prompt = build_prompt(task_id, row["spec"], self.cfg.protected_paths)
             if feedback:
                 prompt += f"\n\n## Feedback from the previous attempt\n{feedback}"
-        return await self._start(task_id, "resume", prompt, row["session_id"], expect, wait)
+        return await self._start(task_id, "resume", prompt, row["session_id"], expect, wait,
+                                 actor)
 
     async def _start(self, task_id: str, kind: str, prompt: str, session: str | None,
-                     expect: set[State], wait: bool) -> dict[str, Any]:
+                     expect: set[State], wait: bool, actor: Actor) -> dict[str, Any]:
         row = self.store.get(task_id)
         if row["attempts"] >= self._max_attempts(row):
             row = self.store.transition(task_id, State.BLOCKED, Actor.BRIDGE,
@@ -491,13 +504,18 @@ class Bridge:
                 f"{availability['last_error']}). Ask the user; once they confirm it is resolved "
                 f"run: agent-bridge account-clear {account.name}"
             )
+        if bad := self._unscopable(agent, row["spec"]):
+            raise ValueError(
+                f"claude-cli cannot scope writes to {bad}: Claude permission rules cannot hold "
+                "',', '(', ')', quotes or whitespace. Rename the paths, or ask the user to "
+                f"run: agent-bridge reassign {task_id} <codex agent>")
         used = row["attempts"] + 1  # budget counter; environment failures give it back
         seq = len(self.store.attempts(task_id)) + 1  # attempt row number, never reused
         slots = self._slots(account.name)
         lock = AccountLock(account, self.cfg.lock_dir, slots)
         lock.acquire()
         try:
-            row = self.store.transition(task_id, State.RUNNING, Actor.CLIENT, {"attempt": seq},
+            row = self.store.transition(task_id, State.RUNNING, actor, {"attempt": seq},
                                         expect, account_limit=slots, attempts=used,
                                         runner_pid=os.getpid(), failure=None)
             self.store.start_attempt(task_id, seq, kind)
@@ -553,13 +571,14 @@ class Bridge:
                            write_paths=spec["allowed_paths"],
                            deny_paths=[*spec.get("excluded_paths", []),
                                        *self.cfg.protected_paths]),
-                on_start=lambda pid: self.store.update(task_id, codex_pid=pid),
+                on_start=lambda pid: self.store.update(task_id, codex_pid=pid,
+                                                        codex_started=process_started(pid)),
                 on_session=lambda sid: self.store.update(task_id, session_id=sid),
                 should_cancel=cancelled,
             )
             if res.session_id:
                 session = res.session_id
-                self.store.update(task_id, session_id=session, codex_pid=None)
+                self.store.update(task_id, session_id=session, codex_pid=None, codex_started=None)
             if res.outcome == "network" and retries < self.cfg.network_retries:
                 retries += 1
                 self.store.log(task_id, Actor.BRIDGE, "retry", {"error": res.error, "n": retries})
@@ -737,7 +756,7 @@ class Bridge:
         row = self.store.transition(task_id, State.CANCELLED, Actor.CLIENT, {"reason": reason},
                                     failure=f"CANCELLED: {reason}"[:500])
         if row["runner_pid"] != os.getpid() and not _alive(row["runner_pid"]):
-            kill_stale(row["codex_pid"])  # orphan from a dead runner
+            kill_stale(row["codex_pid"], row["codex_started"])  # orphan from a dead runner
         task = self._runs.get(task_id)
         if task:  # the runner polls the state and kills the process group within ~1s
             with contextlib.suppress(TimeoutError):
@@ -871,9 +890,9 @@ class Bridge:
                     break
                 try:
                     if step["state"] == State.READY:
-                        await self.execute_task(step["id"], wait=True)
+                        await self.execute_task(step["id"], wait=True, actor=Actor.BRIDGE)
                     else:
-                        await self.resume_task(step["id"], wait=True)
+                        await self.resume_task(step["id"], wait=True, actor=Actor.BRIDGE)
                 except (ValueError, ConflictError) as e:
                     waiting[step["id"]] = redact(str(e), 500)
             states = {t["id"]: t["state"] for t in self.store.workflow_tasks(wid)}
@@ -892,14 +911,14 @@ class Bridge:
     # ---- lifecycle -------------------------------------------------------------------------
 
     def recover(self) -> list[str]:
-        """Park tasks whose runner process died mid-run (crash, kill, closed session)."""
+        """Park tasks and workflows whose process died mid-run (crash, kill, closed session)."""
         recovered = []
         for row in self.store.list(limit=10_000):
             if row["state"] not in ACTIVE:
                 continue
             if row["runner_pid"] != os.getpid() and _alive(row["runner_pid"]):
                 continue  # another live process (e.g. the CLI) owns this run
-            killed = kill_stale(row["codex_pid"])
+            killed = kill_stale(row["codex_pid"], row["codex_started"])
             for a in self.store.attempts(row["id"]):
                 if a["ended_at"] is None:
                     self.store.finish_attempt(row["id"], a["n"], outcome="interrupted")
@@ -907,6 +926,16 @@ class Bridge:
                                   {"reason": "runner died", "killed_orphan": killed},
                                   failure="INTERRUPTED: runner process exited during execution")
             recovered.append(row["id"])
+        for wf in self.store.workflows_in("PLANNING", "RUNNING"):
+            owner = wf["runner_pid"]
+            if (owner != os.getpid() and _alive(owner)
+                    and wf["runner_started"] in (None, process_started(owner))):
+                continue  # its owner is alive (a reused pid has another start time)
+            planning = wf["state"] == "PLANNING"
+            self.store.set_workflow(wf["id"], "FAILED" if planning else "WAITING", {
+                "error": f"interrupted: the process {'planning' if planning else 'driving'} "
+                         "it exited; " + ("plan again" if planning else "run it again")})
+            recovered.append(wf["id"])
         return recovered
 
     async def shutdown(self) -> None:

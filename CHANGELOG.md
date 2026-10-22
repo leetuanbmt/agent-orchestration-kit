@@ -24,6 +24,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- Tasks the workflow driver starts or resumes are recorded with actor `bridge` instead of
+  `client`, so the audit trail tells automatic retries from explicit calls.
+- The dashboard quota bar and `account-list` ignored a window's reset time, so a reset 5h
+  window still showed as nearly used up; they now use the same calculation as routing.
+- A successful run no longer resets its account to available: with two runs on one account
+  (`max_concurrency` 2, or a reviewer sharing it) it could lift the other run's AUTH or QUOTA
+  mark; only `account-clear` lifts it now.
+- A workflow whose planning or driving process died no longer stays PLANNING or RUNNING forever:
+  workflows record their owner pid, and the next bridge start fails an orphaned plan and parks
+  an orphaned run as WAITING, leaving workflows of a live process alone.
+- Planning the same objective twice no longer hands the second workflow the first one's task,
+  which it never listed or drove; planned tasks dedup only inside their own workflow.
+- Orphan cleanup after a dead runner kills an agent's process group only when the pid's start
+  time matches the one recorded at launch; it used to match any command line containing
+  `claude`, `codex`, `opencode` or `agy`, so a reused pid could take down the user's own session.
+- Paths with `,`, `(`, `)`, quotes or whitespace (a Next.js `app/(auth)/**`) are accepted again;
+  routing skips a Claude writer for them and a task pinned to one is refused before it starts,
+  since Claude permission rules cannot hold them. Control characters (newlines) are refused for
+  every task: they would forge lines in the agent prompt.
+- An agent that wrote the git-ignored `.ai/orchestrator.yaml` (dropping the review stage, say)
+  passed the scope check; `.ai/config.json` and `.ai/orchestrator.yaml` are now hashed before
+  and after every run.
+- Claude agents start with `--setting-sources ""`: with `project`, the target repo's
+  `.claude/settings.json` allow rules widened the tool allowlist and its hooks ran. The kit's
+  credential `Read(...)` denies now go in `--disallowedTools` on every run, read-only included.
 - The dashboard's Accounts panel cut the state down to one letter on a normal terminal. It
   now shows the account and its state (Provider moved to Detail; a name shared across
   providers shows its id, such as `work@google`), and the side and task columns keep a

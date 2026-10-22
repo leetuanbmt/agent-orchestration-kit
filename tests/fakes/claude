@@ -11,6 +11,7 @@ FAKE_CLAUDE_DECISION: "decision:notes" for reviewer runs (default "approve:looks
 FAKE_CLAUDE_PLAN:     JSON list of tasks for planner runs (default: one task).
 FAKE_CLAUDE_UTIL:     five-hour utilization 0-1 reported in rate_limit_event (default 0.2).
 FAKE_CLAUDE_DIR:      scratch dir for the call counter and argv/prompt log.
+Allow rules in the project's .claude/settings.json count when --setting-sources loads project.
 An isolated CLAUDE_CONFIG_DIR is logged in when it holds `.credentials.json`.
 """
 
@@ -50,6 +51,12 @@ with (state / "log.jsonl").open("a") as f:
 session = argv[argv.index("--resume") + 1] if "--resume" in argv else str(uuid.uuid4())
 tools = argv[argv.index("--allowedTools") + 1].split(",") if "--allowedTools" in argv else []
 denied = argv[argv.index("--disallowedTools") + 1].split(",") if "--disallowedTools" in argv else []
+# Like the real CLI, allow rules from every loaded settings source extend --allowedTools.
+sources = (argv[argv.index("--setting-sources") + 1].split(",") if "--setting-sources" in argv
+           else ["user", "project", "local"])
+project_settings = Path(os.getcwd()) / ".claude" / "settings.json"
+if "project" in sources and project_settings.exists():
+    tools += json.loads(project_settings.read_text()).get("permissions", {}).get("allow", [])
 
 
 def scoped(rules, path):

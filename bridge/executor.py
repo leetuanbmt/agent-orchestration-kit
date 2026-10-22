@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import os
 import re
@@ -26,7 +27,7 @@ from typing import Any
 
 from .accounts import Account, account_env, codex_overrides
 from .config import BridgeConfig, state_dir
-from .security import clean_env, redact
+from .security import PathError, clean_env, process_started, redact, rule_unsafe
 
 # Set in every agent process; the bridge entry points refuse to start under it, so an agent
 # cannot orchestrate other agents.
@@ -97,6 +98,15 @@ _CLAUDE_READ_TOOLS = ["Read", "Glob", "Grep"]
 # Path-scoped rules: under dontAsk, Edit/Write outside these patterns are refused (verified by
 # probe on claude 2.1.306; unscoped Write reached files outside the working directory).
 _CLAUDE_WRITE_TOOLS = ("Edit", "Write")
+
+
+@functools.cache
+def _claude_credential_denies() -> list[str]:
+    """The kit settings' Read denies (credential paths). Claude agents load no settings files,
+    so they get these on every run through --disallowedTools (verified to block on 2.1.308)."""
+    from .install import KIT
+    deny = json.loads((KIT / ".claude" / "settings.json").read_text())["permissions"]["deny"]
+    return [rule for rule in deny if rule.startswith("Read(")]
 
 
 def classify(text: str) -> str:
@@ -356,18 +366,21 @@ class ClaudeAdapter(Adapter):
 
     def build(self, req: RunRequest, tmp: Path) -> list[str]:
         tools = list(_CLAUDE_READ_TOOLS)
-        denied: list[str] = []
+        denied = list(_claude_credential_denies())
         if req.sandbox == "workspace-write":
+            if bad := rule_unsafe([*req.write_paths, *req.deny_paths]):
+                raise PathError(f"not expressible as Claude permission rules: {bad}")
             tools += [f"{t}(./{p})" for p in req.write_paths for t in _CLAUDE_WRITE_TOOLS]
-            denied = [f"{t}(./{p})" for p in req.deny_paths for t in _CLAUDE_WRITE_TOOLS]
+            denied += [f"{t}(./{p})" for p in req.deny_paths for t in _CLAUDE_WRITE_TOOLS]
         if req.allow_bash:
             tools.append("Bash")
+        # No settings files at all: their permissions.allow rules extend --allowedTools and their
+        # hooks run shell commands, so the target project could widen a read-only agent.
         a = [self.binary, "-p", "--output-format", "stream-json", "--verbose",
-             "--strict-mcp-config", "--setting-sources", "project",
+             "--strict-mcp-config", "--setting-sources", "",
              "--permission-mode", "dontAsk", "--allowedTools", ",".join(tools),
              "--json-schema", json.dumps(req.schema)]
-        if denied:
-            a += ["--disallowedTools", ",".join(denied)]
+        a += ["--disallowedTools", ",".join(denied)]
         if req.model:
             a += ["--model", req.model]
         if req.session_id:
@@ -548,8 +561,6 @@ class AgyAdapter(ReadOnlyAdapter):
 
 ADAPTERS: dict[str, type[Adapter]] = {"codex-cli": CodexAdapter, "claude-cli": ClaudeAdapter,
                                       "opencode-cli": OpenCodeAdapter, "agy-cli": AgyAdapter}
-# Process names `kill_stale` may signal: only something this bridge could have started.
-AGENT_BINARIES = ("codex", "claude", "opencode", "agy")
 
 
 async def kill_group(proc: asyncio.subprocess.Process) -> None:
@@ -564,17 +575,10 @@ async def kill_group(proc: asyncio.subprocess.Process) -> None:
             continue
 
 
-def kill_stale(pid: int | None) -> bool:
-    """Kill a leftover agent process group from a dead runner, only if it really is an agent."""
-    if not pid:
-        return False
-    try:
-        os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError):
-        return False
-    ps = subprocess.run(["ps", "-o", "command=", "-p", str(int(pid))],
-                        capture_output=True, text=True, check=False)
-    if not any(name in ps.stdout for name in AGENT_BINARIES):
+def kill_stale(pid: int | None, started: str | None) -> bool:
+    """Kill a leftover agent process group from a dead runner. The start time recorded at launch
+    must match, so a pid the OS has since reused for another process is never touched."""
+    if not pid or not started or process_started(pid) != started:
         return False
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(pid, signal.SIGTERM)

@@ -15,6 +15,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .accounts import display_name
+from .quota import remaining_pct as _remaining
 
 # What a human may have to do, by state; drives the "needs you" filter and the row colours.
 ATTENTION = {"APPROVED": "approve", "REVIEW": "review", "PAUSED": "resume or fix account",
@@ -32,7 +33,10 @@ def quota_text(quota: Any, short: bool = False) -> str:
     for key, label in (("primary", "5h"), ("secondary", "wk" if short else "week")):
         window = quota.get(key)
         if isinstance(window, dict) and window.get("used_percent") is not None:
-            parts.append(f"{label} {100 - float(window['used_percent']):.0f}%{left}")
+            # Same rule as routing: a window whose reset time has passed is full again.
+            pct = _remaining({key: window}, time.time())
+            if pct is not None:
+                parts.append(f"{label} {pct:.0f}%{left}")
     return " · ".join(parts) or "UNKNOWN"
 
 
@@ -40,11 +44,7 @@ def remaining_pct(quota: Any) -> float | None:
     """The tighter of the 5h / week windows, as % left; None when no CLI has reported it."""
     if isinstance(quota, (int, float)):
         return float(quota)
-    if not isinstance(quota, dict):
-        return None
-    used = [float(w["used_percent"]) for k in ("primary", "secondary")
-            if isinstance(w := quota.get(k), dict) and w.get("used_percent") is not None]
-    return 100 - max(used) if used else None
+    return _remaining(quota, time.time()) if isinstance(quota, dict) else None
 
 
 def ago(ts: float | None, now: float | None = None) -> str:

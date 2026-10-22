@@ -90,7 +90,7 @@ def plan_task(**over):
 # @pt.id KIT-FLOW-A-claude-codex-claude
 # @pt.item Config A: Claude planner, Codex executor, Claude reviewer
 # @pt.condition A planned objective with two dependent tasks is driven to completion
-# @pt.expected Claude plans read-only without MCP; Codex executes in order; Claude approves as AGENT
+# @pt.expected Claude plans read-only without MCP; Codex executes in order, started by the bridge; Claude approves as AGENT
 # @pt.target Bridge.plan, Bridge.run_workflow, Bridge._review_stage, ClaudeAdapter
 # @pt.method integration
 # @pt.legacy none
@@ -107,6 +107,8 @@ def test_config_a(make_orch, fake_codex, fake_claude, monkeypatch):
     assert "PLANNER" in planner["prompt"] and planner["agent_env"] == "1"
     assert tools(planner) == ["Read", "Glob", "Grep"]
     assert "--strict-mcp-config" in planner["argv"]
+    planner_denied = planner["argv"][planner["argv"].index("--disallowedTools") + 1].split(",")
+    assert "Read(~/.codex/auth.json)" in planner_denied  # read-only runs keep credential denies
     assert planner["config_dir"].endswith("/cl")
     wf = run(b.run_workflow(wf["workflow_id"], wait=True))
     assert wf["state"] == "DONE" and all(t["state"] == "DONE" for t in wf["tasks"])
@@ -114,6 +116,8 @@ def test_config_a(make_orch, fake_codex, fake_claude, monkeypatch):
     assert [c["codex_home"].rsplit("/", 1)[1] for c in calls(fake_codex)] == ["cx1", "cx1"]
     review, = events(b, first, "review")
     assert review["actor"] == Actor.AGENT and review["detail"]["reviewer"] == "claude"
+    started = [e for e in events(b, first, "transition") if e["to_state"] == State.RUNNING]
+    assert [e["actor"] for e in started] == [Actor.BRIDGE]  # the workflow driver started it
     assert sum("REVIEWER" in c["prompt"] for c in log(fake_claude)) == 2
     assert b._account_quota("cl")["remaining_pct"] == 80.0
 
@@ -153,6 +157,112 @@ def test_config_b(make_orch, fake_codex, fake_claude, monkeypatch, tmp_path, rep
     argv = ClaudeAdapter(b.cfg, b.root).build(
         RunRequest("p", acc, "workspace-write", 60, allow_bash=True), tmp_path)
     assert "Bash" in argv[argv.index("--allowedTools") + 1].split(",")
+
+
+# @pt.id KIT-SEC-CLAUDE-001-no-settings-files
+# @pt.item Claude agents ignore the target project's settings files
+# @pt.condition The repo's committed .claude/settings.json allows Write(./**) and Bash; a Claude executor scoped to src/** tries a stray write
+# @pt.expected Claude starts with --setting-sources "" so the project's allow rules never reach it, and gets the kit's credential Read denies through --disallowedTools; the stray write is refused and the task still finishes
+# @pt.target ClaudeAdapter.build
+# @pt.method integration
+# @pt.legacy --setting-sources project (loaded project allow rules and hooks)
+def test_claude_ignores_project_settings(make_orch, fake_codex, fake_claude, monkeypatch, repo):
+    import subprocess
+    settings = repo / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps({"permissions": {"allow": ["Write(./**)", "Bash"]}}))
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "settings"], check=True)
+    monkeypatch.setenv("FAKE_CLAUDE_WRITE", WRITE + ";notes.txt=stray")
+    monkeypatch.setenv("FAKE_CODEX_PLAN", json.dumps([plan_task()]))
+    b = make_orch(CONFIG_B)
+    wf = run(b.run_workflow(run(b.plan("Set x to 2", wait=True))["workflow_id"], wait=True))
+    assert wf["state"] == "DONE"
+    executor, = log(fake_claude)
+    assert executor["argv"][executor["argv"].index("--setting-sources") + 1] == ""
+    denied = executor["argv"][executor["argv"].index("--disallowedTools") + 1].split(",")
+    assert {"Read(~/.codex/auth.json)", "Read(~/.agent-bridge/homes/**)"} <= set(denied)
+    assert "Bash" not in tools(executor)
+    assert not (repo / "notes.txt").exists()
+
+
+# @pt.id KIT-SEC-CLAUDE-002-rule-unsafe-paths
+# @pt.item Paths Claude rules cannot hold only block Claude write runs
+# @pt.condition allowed_paths ["src/(auth)/**"]: a Codex executor, then a Claude executor with allow_write
+# @pt.expected Codex runs the task through verification; a task pinned to Claude is refused before RUNNING with a reassign hint and stays READY with its budget untouched; an unpinned task routes past the Claude writer to Codex
+# @pt.target Bridge._start, bridge.security.rule_unsafe
+# @pt.method integration
+# @pt.legacy validate_pattern rejected these paths at creation for every adapter
+def test_rule_unsafe_paths(make_orch, fake_codex, fake_claude, monkeypatch):
+    monkeypatch.setenv("FAKE_CODEX_WRITE", "src/(auth)/page.py=x = 1\n")
+    task = spec(allowed_paths=["src/(auth)/**"], verification_commands=[])
+    codex = make_orch(CONFIG_D)
+    tid = run(codex.create_task(task))["task_id"]
+    assert run(codex.execute_task(tid, wait=True))["state"] in {State.REVIEW, State.DONE}
+    claude = make_orch(CONFIG_B)
+    tid = run(claude.create_task({**task, "agent": "claude", "objective": "Again"}))["task_id"]
+    with pytest.raises(ValueError, match="reassign"):
+        run(claude.execute_task(tid, wait=True))
+    row = claude.store.get(tid)
+    assert row["state"] == State.READY and row["attempts"] == 0
+    assert not log(fake_claude)
+    both = make_orch(CONFIG_B.replace("executor: claude", "executor: {agents: [claude, codex]}"))
+    tid = run(both.create_task({**task, "objective": "Unpinned"}))["task_id"]
+    run(both.execute_task(tid, wait=True))
+    assert both.store.get(tid)["agent"] == "codex"  # routing skips the Claude writer
+    assert not log(fake_claude)
+
+
+# @pt.id KIT-PLAN-003-dedup-per-workflow
+# @pt.item Planned tasks never reuse another workflow's task
+# @pt.condition the same objective is planned twice while the first workflow's task is still open
+# @pt.expected the second workflow gets its own task (not a duplicate of W0001's) and lists it
+# @pt.target Bridge._insert, Bridge._plan
+# @pt.method integration
+# @pt.legacy store.create dedup by spec hash across workflows
+def test_plan_dedup_per_workflow(make_orch, fake_codex, fake_claude):
+    b = make_orch(CONFIG_A)
+    first = run(b.plan("Set x to 2", wait=True))
+    second = run(b.plan("Set x to 2", wait=True))
+    assert first["state"] == second["state"] == "READY"
+    one, = (t["task_id"] for t in first["tasks"])
+    two, = (t["task_id"] for t in second["tasks"])
+    assert one != two and b.store.get(two)["workflow_id"] == second["workflow_id"]
+    assert second["detail"]["tasks"] == [two]
+
+
+# @pt.id KIT-PLAN-004-orphaned-workflows
+# @pt.item Workflows left behind by a dead process are recovered on the next start
+# @pt.condition one PLANNING and one RUNNING workflow owned by a dead pid, one RUNNING workflow owned by a live other process, and one whose live pid has another start time (reused)
+# @pt.expected recover() fails the orphaned plan and parks the orphaned run as WAITING (runnable again); the live owner's workflow is left alone
+# @pt.target Bridge.recover, Store.set_workflow, Store.workflows_in
+# @pt.method integration
+# @pt.legacy none: such workflows stayed PLANNING/RUNNING forever
+def test_orphaned_workflows(make_orch, fake_codex, fake_claude):
+    import subprocess
+    b = make_orch(CONFIG_A)
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    live = subprocess.Popen(["sleep", "30"])
+    try:
+        ids = {}
+        from bridge.security import process_started
+        owners = {"plan": (dead.pid, None), "run": (dead.pid, None),
+                  "live": (live.pid, process_started(live.pid)),
+                  "reused": (live.pid, "Thu Jan  1 00:00:00 1970")}
+        for name, (pid, started) in owners.items():
+            ids[name] = b.store.create_workflow(name, "claude",
+                                                "PLANNING" if name == "plan" else "RUNNING")["id"]
+            b.store.db.execute("UPDATE workflows SET runner_pid=?, runner_started=? WHERE id=?",
+                               (pid, started, ids[name]))
+        assert set(b.recover()) == {ids["plan"], ids["run"], ids["reused"]}
+        assert b.store.workflow(ids["plan"])["state"] == "FAILED"
+        assert b.store.workflow(ids["run"])["state"] == "WAITING"
+        assert b.store.workflow(ids["live"])["state"] == "RUNNING"
+        assert run(b.run_workflow(ids["run"], wait=True))["state"] != "RUNNING"  # runnable again
+    finally:
+        live.kill()
+        live.wait()
 
 
 # @pt.id KIT-FLOW-C-two-executors
