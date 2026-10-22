@@ -11,18 +11,20 @@ through the bridge, including two accounts in parallel.
 | Codex sandbox (macOS) | 0.163.0 | `workspace-write` can write git-ignored files in the worktree (incl. `.ai/`) but **not** `.git/`; `$TMPDIR` and `/tmp` unwritable when excluded; `ps`/`kill` forbidden |
 | MCP Python SDK | 2.3.0 | `MCPServer` (formerly FastMCP); non-`ToolError` exceptions are hidden from the client |
 | Claude Code | 2.1.303 | `.mcp.json` with `${CLAUDE_PROJECT_DIR:-.}`; `enabledMcpjsonServers` honoured only after the folder is trusted; `.claude/rules/*.md` auto-loaded; `claude -p` called `bridge_health`; `claude mcp list` → Connected |
+| Claude Code headless | 2.1.306 | `claude -p --output-format stream-json --verbose`, prompt on stdin; events `system/init` (session_id; `mcp_servers: []` under `--strict-mcp-config`), `rate_limit_event` (`unifiedWindows.five_hour/seven_day.utilization` 0–1, `resetsAt`), `result` (`is_error`, `subtype`, `structured_output` with `--json-schema`, `session_id`, `api_error_status`); `--permission-mode dontAsk` + `--allowedTools`; `--setting-sources project`; `--resume`; `auth status` JSON `loggedIn`; `--bare` disables OAuth, so it is not used |
 | codex-switch | local repo `claude-switcher/agents-switch` | profiles are full auth snapshots incl. refresh tokens, `switch` overwrites the global `auth.json` → not used for execution; new `home` subcommands used instead (below) |
 
 ## 2. Architecture
 
 ```
-Claude Code ─MCP stdio─▶ bridge/server.py ─┐
-human CLI ─────────────▶ bridge/cli.py ────┴▶ bridge/service.py (Bridge)
-                                               ├ state.py     SQLite WAL, BEGIN IMMEDIATE, events
-                                               ├ executor.py  codex exec / resume, process group
-                                               ├ review.py    snapshot, diff, scope, verification
-                                               ├ accounts.py  CODEX_HOME per account, flock locks
-                                               └ security.py  path rules, env scrub, redaction
+MCP client ─MCP stdio─▶ bridge/server.py ─┐
+human CLI ────────────▶ bridge/cli.py ────┴▶ bridge/service.py (Bridge: routing, review, workflows)
+                                               ├ orchestrator.py roles → agents → accounts, workflow stages (YAML)
+                                               ├ state.py        SQLite WAL, tasks, workflows, quota, events
+                                               ├ executor.py     Adapter base; CodexAdapter, ClaudeAdapter; process group
+                                               ├ review.py       snapshot, diff, scope, verification
+                                               ├ accounts.py     CODEX_HOME / CLAUDE_CONFIG_DIR per account, flock slots
+                                               └ security.py     path rules, env scrub, redaction
 ```
 
 - One service layer behind MCP and CLI, so both enforce the same gates.
@@ -40,8 +42,8 @@ human CLI ─────────────▶ bridge/cli.py ────�
 | Threat | Control |
 |---|---|
 | Codex edits outside its task | allowed/excluded/protected path check after every run; `HEAD` must not move; violation → `REWORK` |
-| Codex forges its own task state | state in `<git-dir>/codex-bridge/` (sandbox cannot write `.git/`); `.ai/config.json` tracked so changes show in the diff |
-| Codex approves itself | only Claude (MCP) approves; high-risk / sensitive-path tasks need `codex-bridge approve` from a TTY with the task id typed back |
+| Codex forges its own task state | state in `<git-dir>/agent-bridge/` (sandbox cannot write `.git/`); `.ai/config.json` tracked so changes show in the diff |
+| Codex approves itself | only Claude (MCP) approves; high-risk / sensitive-path tasks need `agent-bridge approve` from a TTY with the task id typed back |
 | Claude bypasses the human gate | `.claude/settings.json` deny rules for approve/reassign/login/switch commands, `sqlite3`, edits under `.ai/` |
 | Credential leakage | credential-shaped env vars scrubbed; output redacted before storage; profiles listed by name only; `Read` denied on `~/.codex/auth.json` and `~/.codex-accounts/**` |
 | Silent account switch | task bound to its account for life; reassign is human-only; global `~/.codex` never written (login fails loudly if its fingerprint changes) |
@@ -72,7 +74,7 @@ human CLI ─────────────▶ bridge/cli.py ────�
 | Real Codex through the bridge | `CODEX_SMOKE=1 pytest -m real_codex`: 1 passed (temp repo, real Codex, READY→REVIEW→DONE, bridge check passed). Also 8 kit tasks (T0001–T0014; 6 others were cancelled before running) and 1 claude-switcher task were executed by the real Codex through the bridge |
 | Claude Code integration | `claude mcp list` Connected; headless `claude -p` → `bridge_health` |
 | Two real accounts in parallel | `default` (global `~/.codex`) and `ntmt100199` (home from `codex-switch home add`), one throwaway repo each, started together: both REVIEW with the expected one-line change and passing checks, 15.2 s wall vs 28 s summed, distinct sessions, each session file under its own `CODEX_HOME`, global `auth.json` mtime/size unchanged |
-| Install into another project | throwaway repo: `setup.sh` → printed `codex-bridge health` → `ok`, state dir in that repo's `.git/codex-bridge` → `uninstall.sh` → `CLAUDE.md` byte-identical, only `.ai/backup-*` left (removed by `--purge`) |
+| Install into another project | throwaway repo: `setup.sh` → printed `agent-bridge health` → `ok`, state dir in that repo's `.git/agent-bridge` → `uninstall.sh` → `CLAUDE.md` byte-identical, only `.ai/backup-*` left (removed by `--purge`) |
 | claude-switcher `test.sh` | 58 checks pass (re-run at delivery) |
 
 ## 6. Authorship
@@ -90,11 +92,59 @@ rule in `.claude/rules/codex-delegation.md` came out of this.
 
 ## 7. Deviations from the original prompt
 
-- Runtime state lives in `<git-dir>/codex-bridge/`, not `.ai/`: the sandbox can write `.ai/`,
+- Runtime state lives in `<git-dir>/agent-bridge/`, not `.ai/`: the sandbox can write `.ai/`,
   which would let Codex edit its own task record (found by probe, fixed in T0012).
 - `.ai/config.json` is tracked, not ignored, so changes to it are visible in the diff.
 
-## 8. Known limitations / unsupported
+## 8. Configurable orchestration (unreleased)
+
+Role ≠ agent ≠ provider ≠ account ≠ model. `.ai/orchestrator.yaml` (pydantic schema, unknown
+keys rejected, errors carry the field path) declares accounts, agents, roles, routing and
+workflow stages; without it `orchestrator.legacy()` rebuilds the 0.1 setup from `config.json`
+(agents named after accounts, the client plans and reviews, `auto_switch` → quota fallback).
+
+| Piece | Implementation |
+|---|---|
+| Agent registry | `agents.<id>`: adapter, account, model, capabilities, `allow_write`, `allow_bash`, timeout, enabled |
+| Provider adapters | `Adapter` base (process group, stdin prompt, watchdog, recursion marker) with `CodexAdapter` and `ClaudeAdapter`; `client` marks the MCP caller |
+| Role registry | built-in planner / executor / reviewer (+ custom names); `requires` read/write; executor must write and cannot be the client |
+| Routing | pin by agent or account; else first eligible agent in role order (`agent_routed`); `explicit` strategy; affinity after the first run; `max_concurrency` per account (flock slots + state check); opt-in quota fallback across agents; human `reassign` by agent or account |
+| Workflow | stages `plan → execute → test → review`; reviewer agent read-only with a review schema, applied as actor `agent`; no review stage → bridge approves verified work; planner agent → validated tasks → sequential driver ending DONE / INCOMPLETE / WAITING |
+| State | new columns `agent`, `workflow_id`; tables `workflows`, `account_quota` (Claude `rate_limit_event` snapshots); migration adds them to old databases |
+
+Configurations covered by tests (fakes): A Claude planner → Codex executor → Claude reviewer;
+B Codex planner → Claude executor → Codex reviewer; C Claude planner → two Codex executor accounts
+(busy routing, quota fallback on/off); D one Codex agent in every role; E gates only.
+
+Verification of this change:
+
+| Check | Result |
+|---|---|
+| `scripts/check.sh` | 150 passed, 3 skipped (opt-in real smoke tests) |
+| Real Claude CLI, `CLAUDE_SMOKE=1` | 1 passed: fake Codex made the change, real `claude -p` (haiku) reviewed read-only with no MCP servers and approved as actor `agent`; task DONE |
+| Real Codex, `CODEX_SMOKE=1 -m real_codex` | 2 passed: the 0.1 lifecycle (READY→REVIEW→DONE) and a single-agent workflow where real Codex planned with the plan schema, implemented, and approved with the review schema (read-only); workflow DONE |
+| Claude write scoping probe | see *Limitations*: scoped Edit/Write rules refuse writes outside `allowed_paths` |
+| `uv tool install --editable` into a scratch tool dir | `agent-bridge init` in a fresh repo wrote `{"command": "agent-bridge", "args": ["serve"]}`; an MCP client started that entry and listed all 14 `bridge_*` tools |
+
+The CLI and MCP server are named `agent-bridge` (was `codex-bridge`); `bridge/install.py` is
+the one installer behind `agent-bridge init`/`uninstall` and the `setup.sh`/`uninstall.sh`
+wrappers, and migrates an older install. `agent-bridge` alone opens a Textual dashboard
+(`bridge/tui.py`) over the same store: it performs human actions only (approve, review, cancel,
+reassign, account login/clear, config edit) and never starts an agent, since a run belongs to
+the process that started it. Its flows are tested headless with Textual's Pilot.
+
+## 9. Known limitations / unsupported
+
+- A Claude executor (`allow_write`) has no OS sandbox. Probe on 2.1.306 (haiku, `dontAsk`):
+  an unscoped `Write` created a file outside the working directory; with `Edit(./src/**)` and
+  `Write(./src/**)` the same run wrote `src/inside.txt` and was refused for a file outside the
+  worktree and for `other.txt` in it. The adapter therefore scopes Edit/Write to the task's
+  `allowed_paths` and denies excluded and protected paths. Read tools still read anything the
+  user can, and `allow_bash` is not path-confined.
+- Claude quota is known only after the account's first run through the bridge. Where an
+  isolated `CLAUDE_CONFIG_DIR` login is stored on macOS was not verified; `account-login`
+  compares the global `claude auth status` identity before and after and exits 3 if it changed.
+- The workflow driver runs tasks one at a time; parallel writers need separate worktrees.
 
 - Quota is a snapshot from the newest session rollout, not a live query: it is as fresh as the
   account's last Codex turn and `UNKNOWN` for an account that has never run.

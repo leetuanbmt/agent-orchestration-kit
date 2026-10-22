@@ -222,7 +222,7 @@ def test_list_surfaces(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "bridge", lambda: b)
     expected = discover(cfg, tmp_path)
     for account in expected["accounts"]:
-        account.update(state="available", last_error=None)
+        account.update(state="available", last_error=None, max_concurrency=1)
     assert asyncio.run(cli._run(cli.argparse.Namespace(cmd="account-list"))) == expected
     assert asyncio.run(server.bridge_list_accounts()) == expected
     monkeypatch.setattr(b, "list_accounts", Mock(side_effect=ValueError("bad account")))

@@ -37,19 +37,23 @@ def test_task_spec_rejects_invalid() -> None:
 
 # @pt.id KIT-UNIT-002-transition-ownership
 # @pt.item State machine legality and ownership
-# @pt.condition Codex/bridge tries to approve; claude approves; illegal jump; terminal exit
+# @pt.condition client, reviewer agent and bridge (no review stage) approve; human approve; illegal jump; terminal exit
 # @pt.expected only listed (from,to,actor) triples pass; terminal states have no exits
 # @pt.target bridge.models.check_transition
 # @pt.method unit
 # @pt.legacy none (new kit)
 def test_transitions_enforce_actor_and_legality() -> None:
-    check_transition(State.REVIEW, State.APPROVED, Actor.CLAUDE)
+    check_transition(State.REVIEW, State.APPROVED, Actor.CLIENT)
+    check_transition(State.REVIEW, State.APPROVED, Actor.AGENT)  # reviewer agent
+    check_transition(State.REVIEW, State.APPROVED, Actor.BRIDGE)  # workflow without review stage
     with pytest.raises(TransitionError):
-        check_transition(State.REVIEW, State.APPROVED, Actor.BRIDGE)  # executor side can't approve
+        check_transition(State.REVIEW, State.APPROVED, Actor.HUMAN)
     with pytest.raises(TransitionError):
-        check_transition(State.READY, State.DONE, Actor.CLAUDE)
+        check_transition(State.VERIFYING, State.APPROVED, Actor.AGENT)  # gates come first
     with pytest.raises(TransitionError):
-        check_transition(State.APPROVED, State.DONE, Actor.CLAUDE)  # closes via gates/human only
+        check_transition(State.READY, State.DONE, Actor.CLIENT)
+    with pytest.raises(TransitionError):
+        check_transition(State.APPROVED, State.DONE, Actor.CLIENT)  # closes via gates/human only
     for t in TERMINAL:
         for dst in State:
             for actor in Actor:
@@ -87,6 +91,20 @@ def test_path_validation(tmp_path: Path) -> None:
     assert validate_pattern("./src/", root, PROTECTED) == "src"
     for bad in ("/etc/passwd", "../x", "src/../../x", "~/x", "escape/x", ".env", ".git",
                 ".git/config", "**", "*", ".ai/bridge.db", "", "a\\b", "deep/key.pem"):
+        with pytest.raises(PathError):
+            validate_pattern(bad, root, PROTECTED)
+
+
+# @pt.id KIT-UNIT-004b-rule-smuggling
+# @pt.item Path patterns cannot inject Claude CLI permission rules
+# @pt.condition a pattern containing ',', '(', ')', a quote or whitespace
+# @pt.expected PathError, so no extra rule such as Bash(*) reaches --allowedTools
+# @pt.target bridge.security.validate_pattern
+# @pt.method unit
+# @pt.legacy none (new kit)
+def test_path_validation_rejects_rule_syntax(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    for bad in ("src/x),Bash(*", "src/**,Bash", "src/(x)", "src/a b", "src/\tx", "src/\"x"):
         with pytest.raises(PathError):
             validate_pattern(bad, root, PROTECTED)
 

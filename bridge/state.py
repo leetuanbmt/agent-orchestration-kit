@@ -33,6 +33,16 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS accounts (name TEXT PRIMARY KEY, state TEXT NOT NULL, last_error TEXT, updated_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS account_quota (name TEXT PRIMARY KEY, rate_limits TEXT NOT NULL, observed_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS workflows (
+    id TEXT PRIMARY KEY,
+    objective TEXT NOT NULL,
+    state TEXT NOT NULL,
+    planner TEXT,
+    detail TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS attempts (
     task_id TEXT NOT NULL REFERENCES tasks(id),
     n INTEGER NOT NULL,
@@ -94,8 +104,10 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(SCHEMA)
-        if "account" not in {r["name"] for r in self.db.execute("PRAGMA table_info(tasks)")}:
-            self.db.execute("ALTER TABLE tasks ADD COLUMN account TEXT")
+        columns = {r["name"] for r in self.db.execute("PRAGMA table_info(tasks)")}
+        for column in ("account", "agent", "workflow_id"):  # databases from older versions
+            if column not in columns:
+                self.db.execute(f"ALTER TABLE tasks ADD COLUMN {column} TEXT")
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
@@ -140,9 +152,60 @@ class Store:
         row = self.db.execute("SELECT * FROM accounts WHERE name=?", (name,)).fetchone()
         return dict(row) if row else {"name": name, "state": "available", "last_error": None}
 
+    def save_quota(self, name: str, rate_limits: dict[str, Any]) -> None:
+        with self.tx() as c:
+            c.execute("INSERT INTO account_quota(name, rate_limits, observed_at) VALUES (?,?,?)"
+                      " ON CONFLICT(name) DO UPDATE SET rate_limits=excluded.rate_limits,"
+                      " observed_at=excluded.observed_at",
+                      (name, json.dumps(rate_limits), time.time()))
+
+    def quota(self, name: str) -> dict[str, Any] | None:
+        row = self.db.execute("SELECT * FROM account_quota WHERE name=?", (name,)).fetchone()
+        if row is None:
+            return None
+        return {"rate_limits": json.loads(row["rate_limits"]), "observed_at": row["observed_at"]}
+
+    def active_on_account(self, name: str) -> int:
+        q = (f"SELECT COUNT(*) FROM tasks WHERE COALESCE(account, 'default')=? "
+             f"AND state IN ({','.join('?' * len(ACTIVE))})")
+        return int(self.db.execute(q, (name, *ACTIVE)).fetchone()[0])
+
+    # ---- workflows -------------------------------------------------------------------------
+
+    def create_workflow(self, objective: str, planner: str | None, state: str) -> dict[str, Any]:
+        with self.tx() as c:
+            n = c.execute("SELECT COUNT(*) FROM workflows").fetchone()[0] + 1
+            wid, now = f"W{n:04d}", time.time()
+            c.execute("INSERT INTO workflows(id, objective, state, planner, created_at, "
+                      "updated_at) VALUES (?,?,?,?,?,?)", (wid, objective, state, planner, now, now))
+            self._event(c, None, Actor.CLIENT, "workflow_created", None, state,
+                        {"workflow_id": wid, "planner": planner})
+        return self.workflow(wid)
+
+    def workflow(self, wid: str) -> dict[str, Any]:
+        r = _row(self.db.execute("SELECT * FROM workflows WHERE id=?", (wid,)).fetchone())
+        if r is None:
+            raise NotFound(f"unknown workflow: {wid}")
+        return r
+
+    def set_workflow(self, wid: str, state: str, detail: Any = None) -> None:
+        with self.tx() as c:
+            prev = c.execute("SELECT state FROM workflows WHERE id=?", (wid,)).fetchone()
+            c.execute("UPDATE workflows SET state=?, detail=?, updated_at=? WHERE id=?",
+                      (state, json.dumps(detail, default=str) if detail is not None else None,
+                       time.time(), wid))
+            if prev and prev["state"] != state:
+                self._event(c, None, Actor.BRIDGE, "workflow_state", prev["state"], state,
+                            {"workflow_id": wid, "detail": detail})
+
+    def workflow_tasks(self, wid: str) -> list[dict[str, Any]]:
+        rows = self.db.execute("SELECT * FROM tasks WHERE workflow_id=? ORDER BY id", (wid,))
+        return [r for r in map(_row, rows.fetchall()) if r]
+
     # ---- tasks -----------------------------------------------------------------------------
 
-    def create(self, spec: TaskSpec, spec_hash: str) -> tuple[dict[str, Any], bool]:
+    def create(self, spec: TaskSpec, spec_hash: str, agent: str | None = None,
+               workflow_id: str | None = None, account: str | None = None) -> tuple[dict[str, Any], bool]:
         """Insert a task, or return the live task with the same spec (duplicate submission)."""
         with self.tx() as c:
             dup = c.execute(
@@ -159,12 +222,12 @@ class Store:
             state = State.READY if self._deps_done(c, spec.depends_on) else State.BACKLOG
             now = time.time()
             c.execute(
-                "INSERT INTO tasks(id, spec, spec_hash, state, needs_human, created_at, updated_at, account)"
-                " VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO tasks(id, spec, spec_hash, state, needs_human, created_at,"
+                " updated_at, account, agent, workflow_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (tid, spec.model_dump_json(), spec_hash, state, int(spec.risk_level == "high"),
-                 now, now, spec.account),
+                 now, now, account or spec.account, agent, workflow_id),
             )
-            self._event(c, tid, Actor.CLAUDE, "created", None, state, spec.model_dump())
+            self._event(c, tid, Actor.CLIENT, "created", None, state, spec.model_dump())
             return _row(c.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()) or {}, False
 
     @staticmethod
@@ -188,7 +251,8 @@ class Store:
         return [r for r in map(_row, rows) if r]
 
     def transition(self, tid: str, dst: State, actor: Actor, detail: Any = None,
-                   expect: set[State] | None = None, **fields: Any) -> dict[str, Any]:
+                   expect: set[State] | None = None, account_limit: int = 1,
+                   **fields: Any) -> dict[str, Any]:
         """Validated state change + audit event in one transaction."""
         with self.tx() as c:
             row = c.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()
@@ -204,9 +268,11 @@ class Store:
                     f"AND state IN ({','.join('?' * len(ACTIVE))})",
                     (tid, *ACTIVE),
                 ).fetchall()
+                account = row["account"] or "default"
+                if sum((b["account"] or "default") == account for b in active) >= account_limit:
+                    raise ConflictError(f"account {account} is already running "
+                                        f"{account_limit} task(s)")
                 for busy in active:
-                    if (busy["account"] or "default") == (row["account"] or "default"):
-                        raise ConflictError(f"account {row['account'] or 'default'} is already running")
                     if ((json.loads(row["spec"]).get("sandbox") or "workspace-write")
                             == "workspace-write" and
                             (json.loads(busy["spec"]).get("sandbox") or "workspace-write")

@@ -9,6 +9,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
 
 GLOB_CHARS = set("*?[")
+RULE_CHARS = set(",()\"'")
 
 
 class PathError(ValueError):
@@ -46,6 +47,10 @@ def validate_pattern(pattern: str, root: Path, protected: Iterable[str]) -> str:
     p = pattern.strip()
     if not p or "\x00" in p or "\\" in p:
         raise PathError(f"invalid path: {pattern!r}")
+    # Paths become Claude permission rules like Edit(./src/**); these characters would let a
+    # pattern close the rule and smuggle in another one (e.g. "x),Bash(*").
+    if RULE_CHARS & set(p) or any(c.isspace() for c in p):
+        raise PathError(f"path may not contain ',', '(', ')', quotes or whitespace: {pattern!r}")
     pure = PurePosixPath(p)
     if pure.is_absolute() or p.startswith("~"):
         raise PathError(f"path must be project-relative: {pattern!r}")

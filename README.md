@@ -1,8 +1,9 @@
 <h1 align="center">agent-orchestration-kit</h1>
 
 <p align="center">
-  A project-local harness where <b>Claude Code plans and reviews</b> and <b>Codex CLI implements</b>.<br>
-  Connected by a small MCP server (<code>codex-bridge</code>) that owns task state, runs Codex safely and re-verifies its work.<br>
+  A project-local, provider-agnostic harness for <b>multi-agent coding workflows</b>.<br>
+  Roles (planner, executor, reviewer) map to agents; agents run on CLIs (Codex, Claude Code) with isolated accounts.<br>
+  A small MCP server (<code>agent-bridge</code>) owns task state, runs agents safely and re-verifies their work.<br>
   Everything lives in the repository; no global configuration is touched.
 </p>
 
@@ -13,29 +14,40 @@
 <p align="center">
   <img alt="platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
   <img alt="python" src="https://img.shields.io/badge/python-3.12-blue">
-  <img alt="dependencies" src="https://img.shields.io/badge/dependencies-mcp-brightgreen">
-  <img alt="tests" src="https://img.shields.io/badge/tests-97%20passed%20%7C%201%20opt--in-brightgreen">
-  <img alt="version" src="https://img.shields.io/badge/version-0.1.0-blue">
+  <img alt="dependencies" src="https://img.shields.io/badge/dependencies-mcp%20%7C%20pyyaml-brightgreen">
+  <img alt="tests" src="https://img.shields.io/badge/tests-146%20passed%20%7C%203%20opt--in-brightgreen">
+  <img alt="version" src="https://img.shields.io/badge/version-0.1.0%20%2B%20unreleased-blue">
 </p>
 
 ---
 
-When one AI agent both writes the code and judges it, nobody checks the work: "done" means whatever the agent says, even if the tests never ran or it edited files outside its assignment.
+When one AI agent both writes the code and judges it, nobody checks the work: "done" means
+whatever the agent says, even if the tests never ran or it edited files outside its assignment.
 
-`agent-orchestration-kit` splits the roles:
-- **Claude Code (advisor)**: analyses, splits work into tasks, reviews patches and decides approve / rework / block.
-- **Codex CLI (executor)**: implements, writes tests and fixes one task at a time.
-- **`codex-bridge`**: keeps task state in SQLite, runs Codex in a sandbox, checks which files changed and re-runs the verification commands itself. Codex's own report is never treated as evidence.
+`agent-orchestration-kit` separates the jobs and lets you choose who does each one:
+
+- **Roles**: `planner` splits work into tasks, `executor` implements one task at a time,
+  `reviewer` decides approve / rework / block. Custom roles can be added.
+- **Agents**: an adapter (`codex-cli`, `claude-cli`, or `client`, the MCP caller itself), one
+  account, an optional model, read/write capabilities.
+- **Accounts**: isolated logins (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`), each with its own
+  concurrency limit and quota.
+- **`agent-bridge`**: keeps task state in SQLite, routes tasks to agents, runs them with the
+  narrowest permissions, checks which files changed and re-runs the verification commands
+  itself. An agent's own report is never treated as evidence.
 
 ```
-user ─▶ Claude Code ──MCP stdio──▶ codex-bridge ──argv, own process group──▶ codex exec --json
-          (plan, review)           (SQLite state, scope check,                (implement, test)
-                                    verification, audit log)
+user ─▶ MCP client (Claude Code) ──MCP stdio──▶ agent-bridge ──argv, own process group──▶ codex exec --json
+          (plan, review, or just drive)          (roles → agents → accounts,              claude -p --output-format stream-json
+                                                  scope check, verification, audit log)   (plan / implement / review)
 ```
 
-Everything is project-local: `.mcp.json`, `.claude/`, `CLAUDE.md`, `.ai/config.json`, and runtime
-state in the repository's git directory (`.git/codex-bridge/`). Nothing under `~/.claude`,
-`~/.codex` or global MCP config is modified.
+Without `.ai/orchestrator.yaml` the kit behaves exactly as 0.1: the Claude Code session plans
+and reviews, Codex executes, accounts come from `.ai/config.json`.
+
+Everything is project-local: `.mcp.json`, `.claude/`, `CLAUDE.md`, `.ai/`, and runtime state in
+the repository's git directory (`.git/agent-bridge/`). Nothing under `~/.claude`, `~/.codex` or
+global MCP config is modified.
 
 ---
 
@@ -43,71 +55,155 @@ state in the repository's git directory (`.git/codex-bridge/`). Nothing under `~
 
 **Requirements:**
 - macOS or Linux, git, [uv](https://docs.astral.sh/uv/) (Python 3.12 is fetched by uv).
-- Claude Code (tested 2.1.303) and Codex CLI (tested 0.163.0), each logged in with its own
-  subscription (`codex login status` → "Logged in using ChatGPT"). No OpenAI API key needed.
+- At least one agent CLI, logged in with its own subscription: Codex CLI (tested 0.163.0,
+  `codex login status`) and/or Claude Code (tested 2.1.306, `claude auth status`). No API key
+  needed.
 
 ```bash
-git clone https://github.com/leetuanbmt/agent-orchestration-kit.git
-cd agent-orchestration-kit
-uv sync                                   # project-local .venv
-scripts/check.sh --with-health            # tests + Codex reachability
-claude                                    # once: trust the folder → codex-bridge connects
-claude mcp list                           # codex-bridge: ✔ Connected
+git clone https://github.com/leetuanbmt/agent-orchestration-kit.git ~/tools/agent-orchestration-kit
+uv tool install --editable ~/tools/agent-orchestration-kit   # puts `agent-bridge` on your PATH
+uv tool update-shell                                          # once, if ~/.local/bin is not on PATH
 ```
 
-`.mcp.json` registers the server with `${CLAUDE_PROJECT_DIR:-.}` paths and `.claude/settings.json`
-enables it (`enabledMcpjsonServers`). Claude Code ignores a project's own approvals until the folder
-is trusted, which is why the first interactive start is needed; `claude -p` loads it without a prompt.
+The install is editable: the tool runs from the checkout, so `git pull` there updates it and the
+rules and skill `init` copies always come from the same version. Keep the checkout where it is.
 
-### Use it in another project
+### Set up a project
+
+Run `init` in the folder that should use the bridge; its settings stay in that folder.
 
 ```bash
-scripts/setup.sh /path/to/project [--force]     # merge .mcp.json, settings, CLAUDE.md block, rules, skill
-scripts/uninstall.sh /path/to/project [--purge] # reverse exactly what setup added
+cd /path/to/project
+agent-bridge init            # .mcp.json, .claude/settings.json, rules, skill, CLAUDE.md block, .ai/
+claude                       # once: trust the folder → agent-bridge connects
+claude mcp list              # agent-bridge: ✔ Connected
+agent-bridge                 # the dashboard for this project
 ```
 
+- `.mcp.json` gets `{"command": "agent-bridge", "args": ["serve"]}`, with no machine-specific
+  path, so it can be committed. Claude Code must find `agent-bridge` on its `PATH`.
 - Existing `.mcp.json` and `.claude/settings.json` are merged key by key (other servers, deny
-  rules and settings stay); `CLAUDE.md` gets a marked block (`<!-- codex-bridge:start/end -->`).
-  Every file setup changes is first copied to `.ai/backup-<UTC timestamp>/`.
-- Rules are installed as `.claude/rules/codex-*.md` and the skill as
-  `.claude/skills/codex-delegation/`. A different file already at one of those paths, or a
-  different `codex-bridge` server, stops setup unless `--force` is given.
-- The target's `.mcp.json` points at this kit by **absolute path** (`uv run --project <kit>`):
-  it is machine-specific; moving the kit means running setup again.
-- The install manifest is kept in `<git-dir>/codex-bridge/install-manifest.json`, out of Codex's
-  reach. Uninstall removes only what setup added and keeps files you edited since (with a
-  warning). `--purge` also deletes the target's `.ai/` directory, including its config.
-- Each project has its own bridge database in its git directory, so task state and Codex sessions
-  never leak between projects.
+  rules and settings stay); `CLAUDE.md` gets a marked block (`<!-- agent-bridge:start/end -->`).
+  Every file `init` changes is first copied to `.ai/backup-<UTC timestamp>/`.
+- Rules are installed as `.claude/rules/{orchestration,delegation,security}.md` and the skill as
+  `.claude/skills/agent-orchestration/`. A different file already at a destination, or a
+  different `agent-bridge` server, stops `init` unless `--force` is given.
+- Upgrading an install made by an older kit: its `codex-bridge` server, settings entries,
+  `CLAUDE.md` block and state directory are replaced by the `agent-bridge` ones, and unedited
+  `codex-*` rule and skill files are removed (kept with a warning when edited). Permission rules
+  you wrote yourself for `mcp__codex-bridge__*` tools need renaming by hand.
+- The install manifest is kept in `<git-dir>/agent-bridge/install-manifest.json`, out of any
+  agent's reach. `agent-bridge uninstall [--purge]` removes only what `init` added and keeps
+  files you edited since (with a warning); `--purge` also deletes `.ai/`, including its config.
+- Without the tool, `scripts/setup.sh <dir> [--force]` and `scripts/uninstall.sh <dir> [--purge]`
+  do the same from a checkout; that `.mcp.json` then runs `uv run --project <kit> agent-bridge
+  serve`, an absolute path that breaks if the kit moves.
+
+Working on the kit itself: `uv sync`, then `scripts/check.sh --with-health`.
 
 ---
 
 ## Quick start
 
-### 1. Delegate work through Claude
+### 1. Pick a setup
 
-Ask Claude for the change; the `codex-delegation` skill drives:
-
-```
-bridge_create_task → bridge_execute_task → bridge_task_status(wait_s)
-  → bridge_task_result → bridge_review_task (→ bridge_resume_task for rework)
-```
-
-### 2. Check status
+Copy one of the examples to `.ai/orchestrator.yaml` (or keep none for the legacy setup), then:
 
 ```bash
-uv run codex-bridge health        # bridge + Codex status, remaining quota per account
-uv run codex-bridge account-list  # accounts, login state, codex-switch homes/profiles
-uv run codex-bridge list          # tasks, newest first
+agent-bridge config-check   # schema check with descriptive errors
+agent-bridge agents         # who plans, executes, reviews; who is available now
 ```
 
-### 3. Add a dedicated Codex account
+| Example | Planner | Executor | Reviewer |
+|---|---|---|---|
+| *(no file, legacy)* | Claude Code session | Codex (per `config.json` account) | Claude Code session |
+| [`examples/orchestrator.yaml`](examples/orchestrator.yaml) | Claude headless | Codex on two accounts (fallback order) | Claude headless |
+| [`examples/claude-executor.yaml`](examples/claude-executor.yaml) | Codex | Claude headless (`allow_write`) | Codex |
+| [`examples/single-agent.yaml`](examples/single-agent.yaml) | Codex | Codex | Codex |
+| [`examples/gates-only.yaml`](examples/gates-only.yaml) | — | Codex | none: deterministic gates only |
+
+### 2. Ask Claude Code for the change
+
+The `agent-orchestration` skill drives either flow:
+
+```
+you plan:      bridge_create_task → bridge_execute_task → bridge_task_status(wait_s)
+                 → bridge_task_result → bridge_review_task (→ bridge_resume_task for rework)
+agent plans:   bridge_plan → bridge_workflow_status(wait_s) → bridge_run_workflow
+                 → bridge_workflow_status (DONE / INCOMPLETE / WAITING)
+```
+
+### 3. Follow it in the dashboard
+
+Run `agent-bridge` in the project. The task list refreshes every 3 seconds and the title counts
+the tasks waiting for you.
+
+| Key | Action |
+|---|---|
+| `f` | Show only tasks that need you (APPROVED, REVIEW, PAUSED, FAILED, BLOCKED) / all |
+| `p` | Read the latest patch |
+| `a` | Approve a task waiting for a human (`APPROVED`) |
+| `v` | Review a task in `REVIEW` yourself: approve, rework or block, with notes |
+| `c` / `m` | Cancel a task / move it to another agent (new session) |
+| `l` / `x` | On *Agents & accounts*: log in the selected account / mark it available again |
+| `e` | On *Settings*: edit `.ai/orchestrator.yaml` (or `config.json`) in `$EDITOR`, then reload |
+| `r` / `q` | Refresh / quit |
+
+The dashboard never starts an agent: a run belongs to the process that started it (the MCP
+server), and quitting the dashboard would interrupt it. The same data is available as JSON:
 
 ```bash
-codex-switch home add work          # fresh login into ~/.codex-accounts/homes/work (human)
-uv run codex-bridge account-list    # shows the home and a ready config snippet
-# add to .ai/config.json:  "accounts": {"work": {"codex_home": "~/.codex-accounts/homes/work"}}
+agent-bridge health        # adapters, remaining quota per account, task counts
+agent-bridge account-list  # accounts, login state, codex-switch homes/profiles
+agent-bridge list          # tasks, newest first
 ```
+
+---
+
+## Roles and agents (`.ai/orchestrator.yaml`)
+
+```yaml
+version: 1
+accounts:
+  codex-work:  {provider: openai,    home: ~/.codex-accounts/homes/work}
+  claude-main: {provider: anthropic, home: ~/.claude-accounts/main, max_concurrency: 1}
+agents:
+  claude:          {adapter: client}                         # the MCP caller
+  claude-headless: {adapter: claude-cli, account: claude-main, model: sonnet}
+  codex-a:         {adapter: codex-cli,  account: codex-work}
+roles:
+  planner: claude-headless
+  executor: {agents: [codex-a], strategy: ordered}
+  reviewer: claude                                           # you review via bridge_review_task
+routing:
+  quota_fallback: {enabled: false, min_remaining_pct: 10}
+workflow:
+  stages: [plan, execute, test, review]
+  max_rework: 2
+```
+
+| Section | Keys |
+|---|---|
+| `accounts.<id>` | `provider` (`openai` \| `anthropic`), `home` (isolated auth home; omit for the inherited global login, used read-only), `max_concurrency` (1–8) |
+| `agents.<id>` | `adapter` (`codex-cli` \| `claude-cli` \| `client`), `account`, `model`, `capabilities` (`[read, write]` subset), `allow_write` (claude-cli only writes when true), `allow_bash` (claude-cli), `timeout_s`, `enabled` |
+| `roles.<name>` | an agent id, or `{agents: [...], strategy: ordered \| explicit, requires: read \| write}`. `executor` is required and must be able to write; `planner`/`reviewer` need read |
+| `routing.quota_fallback` | `enabled`, `min_remaining_pct`, `agents` (candidates in order; default: the executor role) |
+| `workflow` | `stages` (ordered subset of `plan, execute, test, review`; needs `execute` and at least one gate), `max_rework` (0–4) |
+
+Unknown keys, unknown ids, a provider/adapter mismatch, two accounts sharing one home, or a role
+no listed agent can play are rejected with the field path in the message.
+
+- **Routing.** A task pinned by `agent` (or `account`) runs there. Otherwise the first eligible
+  executor in role order is chosen when it first starts (enabled, CLI installed, can write,
+  account available and under `max_concurrency`), logged as `agent_routed`; the task then keeps
+  that agent and session. `strategy: explicit` requires every task to name its agent.
+- **Review stage.** A `client` reviewer is the MCP caller. A reviewer agent runs read-only after
+  the bridge's checks pass; its decision is recorded with `reviewer: <agent>`. If it fails, the
+  task stays in REVIEW and the caller decides. Without a `review` stage the bridge approves work
+  that passed every gate (`reviewer: bridge`); high-risk work still waits for a human.
+- **Plan stage.** `bridge_plan` runs the planner agent read-only; the bridge validates every
+  planned task (paths, commands, dependencies) before creating any, then `bridge_run_workflow`
+  executes them in dependency order, one at a time.
 
 ---
 
@@ -118,166 +214,204 @@ States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED →
 
 | Move | Who | Trigger |
 |---|---|---|
-| `RUNNING → VERIFYING` | bridge | Codex exited cleanly |
+| `RUNNING → VERIFYING` | bridge | the agent exited cleanly |
 | `VERIFYING → REVIEW` / `REWORK` | bridge | scope clean and every verification command passed / any check failed |
 | `RUNNING → PAUSED` | bridge | quota, auth, network, missing CLI, interrupted runner (does not consume the attempt budget) |
-| `REVIEW → APPROVED` / `REWORK` / `BLOCKED` | Claude | `bridge_review_task` |
+| `REVIEW → APPROVED` / `REWORK` / `BLOCKED` | client or reviewer agent | `bridge_review_task` / reviewer run |
+| `REVIEW → APPROVED` | bridge | no review stage and every gate passed |
 | `APPROVED → DONE` | bridge, or a **human** for high risk | quality gates re-checked |
 
 A task with `risk_level: high`, or a change under a sensitive path (migrations, auth, deploy, CI,
-secrets), stops at `APPROVED` until a human runs `codex-bridge approve <id>` in a terminal.
+secrets), stops at `APPROVED` until a human runs `agent-bridge approve <id>` in a terminal.
 
 ---
 
 ## Command reference
 
-### MCP tools (used by Claude)
+### MCP tools
 
 | Tool | Description |
 |---|---|
-| `bridge_health` | Codex path/version/login, active tasks, remaining quota % per account |
+| `bridge_health` | Adapters (path/version), Codex login, active tasks, remaining quota % per account |
+| `bridge_list_agents` | Agents, roles, capabilities, availability, stages, quota fallback |
 | `bridge_list_accounts` | Accounts, login state, quota snapshot (5h / 7d windows), codex-switch homes/profiles (no credentials) |
-| `bridge_create_task` | Validated task contract (paths, criteria, verification, deps, risk, account) |
-| `bridge_execute_task` | Start Codex in the background |
+| `bridge_create_task` | Validated task contract (paths, criteria, verification, deps, risk, agent/account) |
+| `bridge_execute_task` | Start the executor agent in the background |
 | `bridge_task_status` | Compact state; `wait_s ≤ 55` long-poll |
-| `bridge_task_result` | Spec, attempts, Codex final JSON, diff stat + patch, bridge checks |
-| `bridge_review_task` | approve / rework / block (Claude) |
-| `bridge_resume_task` | Rework or recover, same Codex session and account |
+| `bridge_task_result` | Spec, attempts, agent final JSON, diff stat + patch, bridge checks, reviews |
+| `bridge_review_task` | approve / rework / block by the client (also overrides a failed reviewer agent) |
+| `bridge_resume_task` | Rework or recover, same session and agent |
 | `bridge_cancel_task` | Kill the run's process group and cancel |
 | `bridge_list_tasks` | Newest first, optional state filter |
+| `bridge_plan` | Run the planner agent; creates a workflow |
+| `bridge_workflow_status` | Workflow state and tasks; `wait_s ≤ 55` long-poll |
+| `bridge_run_workflow` | Drive a workflow until DONE / INCOMPLETE / WAITING |
 
-### CLI (`uv run codex-bridge <cmd>`)
+### CLI (`agent-bridge <cmd>`)
 
 | Command | Description |
 |---|---|
-| `health` | Bridge and Codex status |
+| *(none)* / `tui` | Dashboard for the project in the current directory |
+| `init [dir] [--force]` / `uninstall [dir] [--purge]` | Install into / remove from a project |
+| `serve` | MCP stdio server (what `.mcp.json` runs) |
+| `config-check` | Validate `.ai/orchestrator.yaml` (or the legacy config) |
+| `agents` | Agents, roles and availability |
+| `health` | Bridge and adapter status |
 | `create <spec.json>` | Create a task from a spec file |
 | `execute` / `status` / `result` | Run a task, read its state, read its result |
 | `review` / `resume` / `cancel` | Review, continue or cancel a task |
+| `plan "<objective>"` / `run-workflow <W…>` / `workflow-status <W…>` | Planner-agent workflows |
 | `list` | List tasks |
 | `account-list` | Accounts, login state, codex-switch homes/profiles |
 | `account-clear <name>` | Clear an account's unavailable flag after the user confirms |
 
-**Human-only** (need an interactive terminal and a typed confirmation):
+**Human-only** (need an interactive terminal and a typed confirmation, or the dashboard):
 
 | Command | Description |
 |---|---|
 | `approve <id>` | Approve a high-risk / sensitive-path task |
-| `reassign <id> <account>` | Move a task to another account (new Codex session) |
-| `account-login <name>` | Fresh login for a `codex_home` you choose |
+| `reassign <id> <agent\|account>` | Move a task to another agent (new session) |
+| `account-login <name>` | Fresh login into the account's own home (`codex login` or `claude auth login`) |
 
 ---
 
-## Configuration (`.ai/config.json`, optional)
+## Bridge configuration (`.ai/config.json`, optional)
 
 See `.ai/config.example.json`. Unknown keys are rejected.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `sandbox` | `workspace-write` | or `read-only`; `danger-full-access` is not accepted |
+| `codex_bin` / `claude_bin` | `codex` / `claude` | CLI executables |
 | `default_timeout_s` / `max_timeout_s` | 1800 / 7200 | per-run limits |
-| `max_attempts` | 3 | initial run + 2 reworks; then BLOCKED |
+| `max_attempts` | 3 | legacy setup only; with `orchestrator.yaml` use `workflow.max_rework` |
 | `network_retries` / `retry_backoff_s` | 1 / 10 | bounded retry for network errors only |
 | `verify_timeout_s` | 900 | per verification command |
 | `verify_allowlist` | pytest, uv, python, … | executables verification may start |
 | `protected_paths` | `.env*`, keys, `.git/**`, `.ai/**`, … | never writable by a task |
 | `sensitive_paths` | migrations, auth, deploy, CI, secrets | change ⇒ human approval |
-| `env_deny` / `env_allow` | `*_API_KEY`, `*_TOKEN`, … | scrubbed from Codex/verify env |
-| `accounts` / `default_account` | `{}` / `default` | see Accounts |
-| `auto_switch` | `{"enabled": false, "min_remaining_pct": 10, "fallback_accounts": []}` | see Accounts → Auto-switch |
+| `env_deny` / `env_allow` | `*_API_KEY`, `*_TOKEN`, … | scrubbed from agent/verify env |
+| `accounts` / `default_account` / `auto_switch` | — | legacy setup only; with `orchestrator.yaml`, `accounts` or an enabled `auto_switch` here is an error |
 | `lock_dir` | system temp | cross-process account locks |
 
 ### State and files
 
 | Path | Tracked | Content |
 |---|---|---|
-| `.ai/config.json` | yes | project config; any change by Codex is a scope violation |
-| `.ai/config.example.json` | yes | documented example |
-| `$(git rev-parse --absolute-git-dir)/codex-bridge/` | never | `bridge.db` (tasks, attempts, audit log), output schema, per-run temp files, `install-manifest.json` (setup) |
+| `.ai/config.json` | yes | bridge config; any change by an agent is a scope violation |
+| `.ai/orchestrator.yaml` | no (machine-specific homes) | roles, agents, accounts, workflow |
+| `$(git rev-parse --absolute-git-dir)/agent-bridge/` | never | `bridge.db` (tasks, attempts, workflows, quota snapshots, audit log), per-run temp files, `install-manifest.json` (setup) |
 
 State lives in the git directory because Codex's `workspace-write` sandbox can write anywhere in
 the worktree, including git-ignored files, but not under `.git/` (verified on codex-cli 0.163).
-A database inside the worktree would let Codex rewrite its own task state. Older installs with
-`.ai/bridge.db` are migrated automatically on the first start.
+Older databases gain the new columns and tables on the first start.
 
 ---
 
 ## Accounts
 
-`default` runs Codex with the inherited environment (`~/.codex`), read-only from the bridge's
-point of view. Named accounts are separate Codex homes, each logged in on its own (see *Quick start → 3*).
+An account without `home` uses the CLI's inherited global login (`~/.codex`, `~/.claude`),
+read-only from the bridge's point of view. An account with `home` is a separate login: the
+bridge sets `CODEX_HOME` or `CLAUDE_CONFIG_DIR` for every run on it. Homes must be absolute,
+outside the project and outside the global homes, and never shared by two accounts.
 
-`codex-bridge account-login <name>` does the same for a `codex_home` you choose. Neither path
-copies tokens from another profile, and both fail loudly if the global `~/.codex/auth.json`
-changes during login. `codex-switch` snapshot profiles are listed but never used, because using
-them would mean copying refresh tokens.
+`agent-bridge account-login <name>` (human) logs a fresh session into that home; for Codex it
+fails loudly if the global `~/.codex/auth.json` changes during login. `codex-switch home add`
+homes work as Codex accounts; `codex-switch` snapshot profiles are listed but never used, because
+using them would mean copying refresh tokens.
 
-- A task stays on its account. Retries and resumes use the same `CODEX_HOME` and Codex session.
-  A human moves it with `codex-bridge reassign <id> <account>` (new session), or the bridge does
-  when `auto_switch` is enabled (below).
+- A task stays on its agent and account. Retries and resumes use the same home and session. A
+  human moves it with `agent-bridge reassign <id> <agent>` (new session), or the bridge does when
+  quota fallback is enabled (below).
 - QUOTA or AUTH marks the account unavailable. New runs on it are refused until
-  `codex-bridge account-clear <name>` after the user confirms.
-- Quota is read from the latest `rate_limits` event in the account's Codex session rollouts
-  (`<codex_home>/sessions/**/rollout-*.jsonl`; nothing else in the home is opened). Remaining =
-  `100 − max(5h used %, 7d used %)`; a window past its reset counts as 0 % used. It is a snapshot
-  as fresh as the account's last Codex turn, and `UNKNOWN` for an account that has never run.
-- Concurrency: one active task per account (cross-process `flock` in `lock_dir`) and one
-  `workspace-write` task per worktree; `read-only` tasks may run alongside. Parallel writers need
-  separate repositories or worktrees, each with its own bridge state.
+  `agent-bridge account-clear <name>` after the user confirms.
+- Quota: for Codex, the latest `rate_limits` event in the home's session rollouts
+  (`<home>/sessions/**/rollout-*.jsonl`; nothing else is opened); for Claude, the
+  `rate_limit_event` the CLI reported on its last run through the bridge. Remaining =
+  `100 − max(5h used %, 7d used %)`; `UNKNOWN` for an account that has never reported.
+- Concurrency: `max_concurrency` agent processes per account (cross-process `flock` slots in
+  `lock_dir`) and one `workspace-write` task per worktree; read-only runs (planning, reviewing,
+  `read-only` tasks) may run alongside.
 
-### Auto-switch (opt-in)
+### Quota fallback (opt-in)
 
-```json
-"auto_switch": {"enabled": true, "min_remaining_pct": 15, "fallback_accounts": ["work", "default"]}
+```yaml
+routing:
+  quota_fallback: {enabled: true, min_remaining_pct: 15, agents: [codex-b, codex-a]}
 ```
 
-Before a task starts (`execute`) or restarts (`resume`), the bridge checks its account. When the
-account is in QUOTA state or its remaining quota is below `min_remaining_pct`, the task moves to
-the first account in `fallback_accounts` that is available, logged in, not running another task,
-and at or above the threshold (or `UNKNOWN`).
-
-- The move works like `reassign`: the Codex session is dropped and the task restarts with the full
-  prompt plus any review feedback; files Codex already changed stay in the worktree.
-- Every move is an `account_auto_switched` event (from, to, reason, remaining %); when no fallback
-  qualifies, `auto_switch_skipped` is logged and the task stays where it is.
-- Never triggered by AUTH, nor by an account whose quota is `UNKNOWN`. Off by default; only the
-  user edits `.ai/config.json`.
+Before a task starts or restarts, the bridge checks its account. When the account is in QUOTA
+state or below `min_remaining_pct`, the task moves to the first candidate agent on another
+account that is available, logged in, under its concurrency limit and at or above the threshold
+(or `UNKNOWN`). The move drops the session (the task restarts with the full prompt plus review
+feedback), is logged as `account_auto_switched`, and is never triggered by AUTH. Enabling it is
+the user's authorisation; the legacy `auto_switch` block in `config.json` maps onto it.
 
 ---
 
 ## How it works & Security
 
-1. **Codex:** sandbox `workspace-write` or `read-only` only, no network, `/tmp` and `$TMPDIR` not
-   writable, user `~/.codex/config.toml` ignored (`--ignore-user-config`), prompt passed on stdin.
-2. **Processes:** argv lists, no shell; own process group, SIGTERM then SIGKILL on timeout or cancel;
-   orphaned Codex groups from a dead runner are killed on the next start (only if the PID is Codex).
-3. **Environment:** credential-shaped variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, …) are removed.
-4. **Paths:** checked at creation (absolute, `..`, `~`, symlink escape, protected, over-broad) and after
-   each run (hash snapshot of dirty + protected files, full worktree diff via a throwaway index,
-   `HEAD` must not move).
-5. **Verification:** re-run by the bridge, argv only, allowlisted executables, timeout.
-6. **Approval:** Codex cannot approve. Claude approves via MCP. High-risk or sensitive-path tasks need a
-   human at an interactive terminal (`approve` refuses without a TTY). `.claude/settings.json` also
-   denies these commands, `sqlite3` and edits under `.ai/` to Claude.
-7. **Audit:** every transition, attempt, review, account change and migration is an event in
-   `bridge.db`. Stored output passes through secret redaction.
+1. **Codex CLI:** OS sandbox `workspace-write` or `read-only`, no network, `/tmp` and `$TMPDIR` not
+   writable, user `~/.codex/config.toml` ignored, prompt on stdin. Planner and reviewer runs are
+   `read-only`.
+2. **Claude CLI:** no OS sandbox, so the bridge narrows it: `--strict-mcp-config` (no MCP servers,
+   so no recursive orchestration), `--setting-sources project` (no user hooks), `--permission-mode
+   dontAsk` with a tool allowlist: Read/Glob/Grep; with `allow_write: true`, Edit/Write scoped to
+   the task's `allowed_paths` (`Edit(./src/**)`) while excluded and protected paths are denied.
+   A probe showed unscoped Write reaching files outside the worktree and scoped rules refusing
+   them. **This is still weaker isolation than Codex**: read tools can read anything the user
+   can, and Bash (`allow_bash: true`) is not path-confined at all. Prefer Codex as executor;
+   never combine `allow_bash` with untrusted work.
+3. **Recursion guard:** every agent process gets `AGENT_BRIDGE_AGENT=1`; the server and CLI refuse
+   to start under it.
+4. **Processes:** argv lists, no shell; own process group, SIGTERM then SIGKILL on timeout or
+   cancel; orphaned agent groups from a dead runner are killed on the next start (only if the
+   PID is a `codex` or `claude` process).
+5. **Environment:** credential-shaped variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, …) are removed.
+6. **Paths:** checked at creation (absolute, `..`, `~`, symlink escape, protected, over-broad) and
+   after each run for every adapter (hash snapshot, full worktree diff, `HEAD` must not move).
+7. **Verification:** re-run by the bridge, argv only, allowlisted executables, timeout.
+8. **Approval:** executors cannot approve. The client or a reviewer agent approves; the bridge
+   approves only in gates-only workflows. High-risk or sensitive-path tasks need a human at an
+   interactive terminal. `.claude/settings.json` also denies these commands, account logins,
+   `sqlite3` and edits under `.ai/` to Claude Code.
+9. **Audit:** every transition, attempt, routing decision, review (with reviewer), account change
+   and workflow state is an event in `bridge.db`. Stored output passes through secret redaction.
 
 ---
 
 ## Testing
 
 ```bash
-scripts/check.sh                            # full suite (fake codex: deterministic)
-CODEX_SMOKE=1 uv run pytest -m real_codex   # one real Codex run, opt-in, uses your quota
+scripts/check.sh                                   # full suite (fake codex + fake claude: deterministic)
+CODEX_SMOKE=1 uv run pytest -m real_codex          # two real Codex runs (task + single-agent workflow), opt-in, uses your quota
+CLAUDE_SMOKE=1 uv run pytest tests/e2e/test_real_claude_smoke.py   # one real Claude review (haiku)
 ```
 
 Result:
 ```console
-97 passed, 1 skipped
+150 passed, 3 skipped
 ```
 
-The fake `tests/fakes/codex` speaks the real JSONL protocol and covers: success, blocked, quota,
-auth, network, crash, hang, commit, out-of-scope writes, sessions per `CODEX_HOME`.
+`tests/fakes/codex` and `tests/fakes/claude` speak the real JSONL / stream-json protocols and
+answer by output schema (executor, reviewer, planner). The suite covers configurations A–E
+(Claude→Codex→Claude, Codex→Claude→Codex, two Codex executor accounts, single agent, gates
+only), routing, pinning, affinity, quota fallback, bounded rework, reviewer failure, config
+validation, account isolation, concurrency slots, legacy mapping and schema upgrade.
+
+---
+
+## Implemented and not supported
+
+| Implemented | Not supported (yet) |
+|---|---|
+| Adapters `codex-cli`, `claude-cli`, `client` | Other CLIs (Gemini, Aider, …): add an `Adapter` subclass |
+| Roles planner / executor / reviewer + custom roles in config | Custom roles have no stage of their own; `tester` is the bridge's `test` stage |
+| Ordered and explicit routing, pinning, affinity, per-account limits | Load-balancing strategies beyond "first eligible" |
+| Opt-in quota fallback across agents | Fallback on AUTH (by design: never) |
+| Planner agent → workflow → sequential driver | Parallel writing tasks in one worktree (use separate worktrees) |
+| Reviewer agent with client override; gates-only workflows | Multi-reviewer voting |
+| Claude quota from `rate_limit_event` | Claude quota before the account's first run through the bridge |
 
 ---
 
@@ -285,23 +419,25 @@ auth, network, crash, hang, commit, out-of-scope writes, sessions per `CODEX_HOM
 
 | Symptom | Cause / fix |
 |---|---|
-| `codex-bridge: ⏸ Pending approval` | open `claude` in the folder once and trust it |
-| `health.ok = false` | `codex` missing or not logged in: `codex login` (human) |
-| task PAUSED `QUOTA` / `AUTH` | wait or re-login, then `codex-bridge account-clear <name>` and resume; with `auto_switch` on, resuming a QUOTA pause moves it to a fallback |
-| `auto_switch_skipped` event | no fallback qualified: all busy, logged out, unavailable or below threshold |
+| `agent-bridge: ⏸ Pending approval` | open `claude` in the folder once and trust it |
+| `config-check` error | the message names the field; fix `.ai/orchestrator.yaml` |
+| `health.ok = false` | an adapter CLI missing, or `codex` not logged in: log in (human) |
+| `no eligible executor agent (…)` | every executor is disabled, busy or unavailable; the reasons are listed per agent |
+| task PAUSED `QUOTA` / `AUTH` | wait or re-login, then `agent-bridge account-clear <name>` and resume; with quota fallback on, resuming a QUOTA pause moves it |
+| `agent_review_failed` event | the reviewer agent errored; the task waits in REVIEW for `bridge_review_task` |
+| workflow `WAITING` | `detail.waiting` and task states say what needs attention; run `bridge_run_workflow` again after |
 | task PAUSED `INTERRUPTED` | the runner died; `bridge_resume_task` continues the session |
 | `ConflictError … already writing` | one writer per worktree; wait or use another worktree |
-| `account … busy in another bridge process` | another project uses that account right now |
-| REWORK `outside allowed paths` | Codex touched files outside the spec; read the patch, rework |
-| pytest fails only inside Codex | sandbox forbids `$TMPDIR`, `ps`; the bridge's own run is the gate |
+| `account … busy in another bridge process` | the account's slots are in use elsewhere |
+| REWORK `outside allowed paths` | the executor touched files outside the spec; read the patch, rework |
 
 ---
 
 ## Uninstall
 
-In another project: `scripts/uninstall.sh /path/to/project` (add `--purge` to drop `.ai/`).
-The bridge database in `.git/codex-bridge/` can be deleted by hand. For the kit itself, delete
-the directory; nothing outside it (and `~/.codex-accounts/homes/*` you created yourself) is used.
+In a project: `agent-bridge uninstall` (add `--purge` to drop `.ai/`). The bridge database in
+`.git/agent-bridge/` can be deleted by hand. The tool: `uv tool uninstall agent-orchestration-kit`,
+then delete the checkout; nothing outside it (and account homes you created yourself) is used.
 
 ## Known limitations
 

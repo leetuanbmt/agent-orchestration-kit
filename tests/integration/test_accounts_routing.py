@@ -112,7 +112,7 @@ def test_availability(make_bridge, accounts, fake_codex, monkeypatch, failure):
     event = b.store.db.execute(
         "SELECT * FROM events WHERE kind='account_state' ORDER BY id DESC LIMIT 1"
     ).fetchone()
-    assert event["task_id"] is None and event["actor"] == Actor.CLAUDE
+    assert event["task_id"] is None and event["actor"] == Actor.CLIENT
     assert run(b.resume_task(task, wait=True))["state"] == "REVIEW"
     assert calls(fake_codex)[-1]["codex_home"] == accounts["a"]["codex_home"]
     assert b.store.account_state("a")["state"] == "available"

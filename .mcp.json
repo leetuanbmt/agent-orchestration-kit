@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "codex-bridge": {
+    "agent-bridge": {
       "command": "uv",
-      "args": ["run", "--project", "${CLAUDE_PROJECT_DIR:-.}", "codex-bridge", "serve"],
+      "args": ["run", "--project", "${CLAUDE_PROJECT_DIR:-.}", "agent-bridge", "serve"],
       "env": {
         "BRIDGE_PROJECT_ROOT": "${CLAUDE_PROJECT_DIR:-.}"
       }
