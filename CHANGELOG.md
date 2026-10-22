@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Dashboard: Search, Agents and Accounts moved to the left column. Selecting an account shows
+  its provider, login, state, quota, home, the agents using it and its last error in Detail.
+
 ### Fixed
 - `agents`, `bridge_list_agents` and the dashboard no longer show an agent as available when
   its account is logged out ("account <name> logged out"). Routing is unchanged.

@@ -135,6 +135,12 @@ async def shoot_dashboard(out: Path) -> None:
         await pilot.press("enter")
         await pilot.pause(0.5)
         app.save_screenshot(str(out / "dashboard-actions.svg"))
+        await pilot.press("escape")
+        accounts = app.query_one("#accounts")
+        accounts.focus()
+        accounts.move_cursor(row=accounts.get_row_index("work"))  # the account out of quota
+        await pilot.pause(0.5)
+        app.save_screenshot(str(out / "dashboard-account.svg"))
 
 
 def shoot_cli(out: Path) -> None:

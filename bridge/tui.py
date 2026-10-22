@@ -38,6 +38,35 @@ TERMINAL = {"DONE", "CANCELLED", "BLOCKED"}
 CURSOR = "❯"
 
 
+def account_detail(listing: dict[str, Any], agents: list[dict[str, Any]], key: str) -> Text:
+    """The Detail panel for the account row `key` (an `account_rows` key)."""
+    cells = dict(account_rows(listing)).get(key)
+    out = Text()
+    if cells is None:
+        return out
+    for label, value in zip(("Account", "Provider", "Source", "Logged in", "State", "Quota",
+                             "Home"), cells, strict=True):
+        out.append(f"{label:<12}", style="dim")
+        out.append_text(value if isinstance(value, Text) else Text(str(value)))
+        out.append("\n")
+    acc = next((a for a in listing["accounts"] if a["name"] == key), None)
+    if acc is None:  # not usable here; the row says why
+        return out
+    out.append(f"{'Slots':<12}", style="dim")
+    out.append(f"{acc.get('max_concurrency', 1)}\n")
+    users = [f"{a['agent']} ({', '.join(a['roles']) or 'no role'})" for a in agents
+             if a["account"] == key]
+    out.append(f"{'Agents':<12}", style="dim")
+    out.append(", ".join(users) or "-")
+    out.append("\n")
+    if acc.get("last_error"):
+        out.append(f"\nLast error: {acc['last_error']}\n", style="red")
+    if not acc.get("logged_in"):
+        out.append(f"\nNeeds you: log in  (Enter for actions, or agent-bridge "
+                   f"account-login {key})\n", style="bold yellow")
+    return out
+
+
 def detail_text(result: dict[str, Any], tries: int) -> Text:
     """`result` is `task_result`, whose `attempts` is the attempt list; `tries` is the budget used."""
     out = Text()
@@ -260,9 +289,19 @@ class BridgeApp(App[None]):
         self.bridge = bridge
         self.selected: str | None = None
         self.query_text = ""
+        # Latest listings, kept for the account Detail view without re-probing logins.
+        self.accounts_listing: dict[str, Any] = {"accounts": [], "codex_switch": {
+            "homes": [], "profiles": []}}
+        self.agents_listing: list[dict[str, Any]] = []
 
     def compose(self) -> ComposeResult:
         with Horizontal():
+            with Vertical(id="side"):
+                yield Input(placeholder="/ search tasks", id="search")
+                yield self._panel(DataTable(id="agents", cursor_type="row", show_header=False),
+                                  "Agents")
+                yield self._panel(DataTable(id="accounts", cursor_type="row",
+                                            show_header=False), "Accounts")
             with Vertical(id="left"):
                 yield self._panel(DataTable(id="needs", cursor_type="row", show_header=False),
                                   "Needs you")
@@ -270,13 +309,7 @@ class BridgeApp(App[None]):
                                   "Tasks")
             with VerticalScroll(id="detail", classes="panel") as detail:
                 detail.border_title = "Detail"
-                yield Static("Select a task", id="detail-text")
-            with Vertical(id="side"):
-                yield Input(placeholder="/ search tasks", id="search")
-                yield self._panel(DataTable(id="agents", cursor_type="row", show_header=False),
-                                  "Agents")
-                yield self._panel(DataTable(id="accounts", cursor_type="row",
-                                            show_header=False), "Accounts")
+                yield Static("Select a task or an account", id="detail-text")
         # Not "bar": ProgressBar's own inner Bar widget already uses that id.
         with Horizontal(id="quota-row"):
             yield ProgressBar(total=100, show_eta=False, show_percentage=False, id="quota")
@@ -345,6 +378,7 @@ class BridgeApp(App[None]):
         self.call_from_thread(self._fill_accounts, listing)
 
     def _fill_agents(self, listing: dict[str, Any]) -> None:
+        self.agents_listing = listing["agents"]
         agents = self.query_one("#agents", DataTable)
         agents.clear()
         for a in listing["agents"]:
@@ -352,6 +386,7 @@ class BridgeApp(App[None]):
             agents.add_row(dot, a["agent"], ", ".join(a["roles"]) or "-", key=a["agent"])
 
     def _fill_accounts(self, listing: dict[str, Any]) -> None:
+        self.accounts_listing = listing
         table = self.query_one("#accounts", DataTable)
         table.clear()
         for key, cells in account_rows(listing):
@@ -382,8 +417,15 @@ class BridgeApp(App[None]):
         self.refresh_bindings()
 
     @on(DataTable.RowHighlighted, "#accounts")
-    def account_highlighted(self) -> None:
+    def account_highlighted(self, event: DataTable.RowHighlighted) -> None:
         self.refresh_bindings()
+        if event.data_table.has_focus and event.row_key.value:
+            self.show_account(event.row_key.value)
+
+    def show_account(self, key: str) -> None:
+        self.query_one("#detail").border_title = key.partition(":")[2] or key
+        self.query_one("#detail-text", Static).update(
+            account_detail(self.accounts_listing, self.agents_listing, key))
 
     def on_descendant_focus(self) -> None:
         # Only the list you are in shows its cursor; the others keep a plain look.

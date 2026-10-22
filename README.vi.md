@@ -144,20 +144,22 @@ agent plan:    bridge_plan → bridge_workflow_status(wait_s) → bridge_run_wor
 
 Chạy `agent-bridge` trong project. Tất cả nằm trên một màn hình, tự làm mới mỗi 3 giây:
 
-- **Needs you** (trái, trên): task đang chờ bạn (APPROVED, REVIEW, PAUSED, FAILED, BLOCKED).
-  **Tasks** ở dưới: mọi task.
-- **Detail** (giữa): mục tiêu của task đang chọn, kết quả kiểm tra (PASS / FAIL), diff stat,
-  review.
-- **Search**, **Agents** và **Accounts** (phải). Accounts liệt kê mọi account máy đang có:
+- **Search**, **Agents** và **Accounts** (trái). Accounts liệt kê mọi account máy đang có:
   account của project và toàn máy, home codex-switch chưa thêm, profile codex-switch và
   claude-switch (đánh dấu không dùng được vì chứa token đã copy) và CLI agent đã cài nhưng chưa
   có account.
+- **Needs you** (giữa, trên): task đang chờ bạn (APPROVED, REVIEW, PAUSED, FAILED, BLOCKED).
+  **Tasks** ở dưới: mọi task.
+- **Detail** (phải): mục tiêu của task đang chọn, kết quả kiểm tra (PASS / FAIL), diff stat,
+  review; hoặc thông tin account đang chọn: provider, đăng nhập, trạng thái, quota, home, các
+  agent dùng nó và lỗi gần nhất.
 - Thanh dưới đáy hiện quota còn lại của account executor.
 
 Bấm **Enter** trên bất kỳ dòng nào để mở các thao tác hợp lệ cho dòng đó, không cần nhớ phím.
 Footer chỉ hiện những phím dùng được cho dòng đang chọn.
 
 <img alt="Enter trên task đang REVIEW" src="docs/images/dashboard-actions.svg" width="900">
+<img alt="Đang chọn một account" src="docs/images/dashboard-account.svg" width="900">
 
 | Phím | Thao tác |
 |---|---|

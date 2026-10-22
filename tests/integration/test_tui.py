@@ -124,7 +124,7 @@ def test_account_rows() -> None:
 # @pt.id KIT-TUI-003-account-actions
 # @pt.item Account keys in the dashboard
 # @pt.condition fake agent CLIs on PATH; the human-only commands are intercepted
-# @pt.expected the accounts table loads in the background with the installed-but-unused CLIs; `n` on one asks for a name with that provider preselected and runs account-add; `u` on a google account only shows the eval line; `l` on a non-account row runs nothing
+# @pt.expected the accounts table loads in the background with the installed-but-unused CLIs; selecting an account shows its provider and the agents using it in Detail (a CLI row shows "no account"); `n` on one asks for a name with that provider preselected and runs account-add; `u` on a google account only shows the eval line; `l` on a non-account row runs nothing
 # @pt.target bridge.tui.BridgeApp
 # @pt.method integration
 # @pt.legacy none
@@ -154,6 +154,15 @@ roles: {executor: codex, reviewer: agy}
             assert keys[:2] == ["cx", "gm"] and "installed:opencode" in keys
 
             table.focus()
+            table.move_cursor(row=keys.index("gm"))
+            await pilot.pause()
+            detail = str(app.query_one("#detail-text", Static).render())
+            assert "google" in detail and "agy (reviewer)" in detail
+            assert app.query_one("#detail").border_title == "gm"
+            table.move_cursor(row=keys.index("installed:opencode"))
+            await pilot.pause()
+            assert "no account" in str(app.query_one("#detail-text", Static).render())
+
             table.move_cursor(row=keys.index("installed:anthropic"))
             await pilot.press("l")
             await _settle(pilot)
