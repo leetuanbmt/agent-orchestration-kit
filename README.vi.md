@@ -266,14 +266,17 @@ terminal.
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Cài vào / gỡ khỏi một project |
 | `serve` | MCP stdio server (lệnh mà `.mcp.json` chạy) |
 | `config-check` | Kiểm tra `.ai/orchestrator.yaml` (hoặc cấu hình legacy) |
-| `agents` | Agent, role và tình trạng sẵn sàng |
-| `health` | Trạng thái bridge và adapter |
+| `agents [--json]` | Role → agent, rồi bảng agent kèm quyền và tình trạng sẵn sàng |
+| `health [--json]` | OK / NOT OK, adapter, quota, số task và việc cần sửa; thoát exit 1 khi không OK |
 | `create <spec.json>` | Tạo task từ file spec |
 | `execute` / `status` / `result` | Chạy task, xem trạng thái, xem kết quả |
 | `review` / `resume` / `cancel` | Review, chạy tiếp hoặc huỷ task |
 | `plan "<objective>"` / `run-workflow <W…>` / `workflow-status <W…>` | Workflow do planner agent lập |
-| `list` | Liệt kê task |
-| `account-list [--json]` | Bảng mọi account: account của project và toàn máy, codex-switch / claude-switch, CLI đã cài chưa có account, kèm lệnh để thêm từng cái (ra JSON khi có `--json` hoặc khi pipe) |
+| `list [--json]` | Task kèm trạng thái, số lần chạy và thời gian; task cần bạn xử lý có dấu `●` và lệnh tiếp theo |
+| `account-list [--json]` | Mọi account: account của project và toàn máy, codex-switch / claude-switch, CLI đã cài chưa có account, kèm lệnh để thêm từng cái |
+
+Trong terminal bốn lệnh này in bảng; khi có `--json` hoặc khi pipe output, chúng in đúng JSON
+mà các MCP tool trả về.
 | `account-use <name> [--shell]` | In dòng `export`/function cho `eval "$(…)"`, hoặc mở subshell, để CLI interactive của bạn dùng account đó |
 | `account-clear <name>` | Gỡ cờ "unavailable" của account sau khi user xác nhận |
 
@@ -432,7 +435,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Kết quả:
 ```console
-161 passed, 5 skipped
+164 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` và `agy` nói đúng giao thức JSONL / stream-json thật và trả lời
