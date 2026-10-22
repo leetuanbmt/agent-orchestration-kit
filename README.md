@@ -142,19 +142,22 @@ agent plans:   bridge_plan → bridge_workflow_status(wait_s) → bridge_run_wor
 
 Run `agent-bridge` in the project. One screen, refreshed every 3 seconds:
 
-- **Needs you** (left, top): tasks waiting for you (APPROVED, REVIEW, PAUSED, FAILED, BLOCKED).
-  **Tasks** below it: every task.
-- **Detail** (middle): the selected task's objective, checks (PASS / FAIL), diff stat, reviews.
-- **Search**, **Agents** and **Accounts** (right). Accounts lists every account the machine
+- **Search**, **Agents** and **Accounts** (left). Accounts lists every account the machine
   knows about: project and machine-wide accounts, codex-switch homes not added yet,
   codex-switch and claude-switch profiles (marked not usable: they hold copied tokens) and
   installed agent CLIs without an account.
+- **Needs you** (middle, top): tasks waiting for you (APPROVED, REVIEW, PAUSED, FAILED,
+  BLOCKED). **Tasks** below it: every task.
+- **Detail** (right): the selected task's objective, checks (PASS / FAIL), diff stat, reviews;
+  or the selected account's provider, login, state, quota, home, the agents using it and its
+  last error.
 - The bottom bar shows the executor account's remaining quota.
 
 Press **Enter** on any row for the actions that fit it, so no key has to be remembered. The
 footer shows only the keys that work on the focused row.
 
 <img alt="Enter on a task in REVIEW" src="docs/images/dashboard-actions.svg" width="900">
+<img alt="An account selected" src="docs/images/dashboard-account.svg" width="900">
 
 | Key | Action |
 |---|---|
