@@ -366,6 +366,13 @@ inside it: a fresh session, never a copy of another login. `--home DIR` register
 home instead, e.g. a `codex-switch home add` home. Every project sees these accounts by name;
 an account the project declares itself wins.
 
+One name can serve several providers: after `account-add work --provider openai`,
+`account-add work --provider google` creates the google account with the id `work@google`
+(home `~/.agent-bridge/homes/work@google`). Listings show both as `work`. An agent with
+`account: work` gets the account of its adapter's provider. The `account-login`, `account-use`,
+`account-clear` and `account-remove` commands take `--provider` (or the id `work@google`) when
+the name is shared.
+
 To use an account in your own terminal:
 
 ```bash
@@ -456,7 +463,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Result:
 ```console
-170 passed, 5 skipped
+172 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` and `agy` speak the real JSONL / stream-json protocols and

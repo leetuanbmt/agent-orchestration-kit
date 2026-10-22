@@ -188,8 +188,11 @@ class OrchestratorConfig(BaseModel):
         for kind, names in (("account", self.accounts), ("agent", self.agents),
                             ("role", self.roles)):
             for name in names:
-                if not re.match(_NAME, name):
-                    raise ValueError(f"invalid {kind} id {name!r}: use [a-z0-9_-], max 32 chars")
+                base, at, provider = name.partition("@")
+                if not re.match(_NAME, base) or (at and (
+                        kind != "account" or provider != self.accounts[name].provider)):
+                    raise ValueError(f"invalid {kind} id {name!r}: use [a-z0-9_-], max 32 chars"
+                                     " (an account may end in @<its provider>)")
         homes: dict[tuple[str, str], str] = {}
         for name, acc in self.accounts.items():
             key = (acc.provider, str(Path(acc.home).expanduser()) if acc.home else "")
@@ -200,7 +203,12 @@ class OrchestratorConfig(BaseModel):
         for name, agent in self.agents.items():
             if agent.account is None:
                 continue
+            need = ADAPTER_PROVIDERS[agent.adapter]
             acc = self.accounts.get(agent.account)
+            other = self.accounts.get(f"{agent.account}@{need}")
+            if other is not None and (acc is None or acc.provider != need):
+                # A name shared across providers: the adapter's provider picks the account.
+                agent.account, acc = f"{agent.account}@{need}", other
             if acc is None:
                 raise ValueError(f"agent {name}: unknown account {agent.account!r}")
             if acc.provider != ADAPTER_PROVIDERS[agent.adapter]:
@@ -264,7 +272,8 @@ def legacy(cfg: BridgeConfig, registry: dict | None = None) -> OrchestratorConfi
     for name, entry in sorted((registry or {}).items()):
         accounts.setdefault(name, AccountProfile(**entry))
     agents = {"client": AgentConfig(adapter="client")}
-    agents |= {name: AgentConfig(adapter="codex-cli", account=name, model=cfg.model)
+    agents |= {name.replace("@", "-"): AgentConfig(adapter="codex-cli", account=name,
+                                                   model=cfg.model)
                for name, acc in accounts.items() if acc.provider == "openai"}
     fallback = cfg.auto_switch
     executors = list(dict.fromkeys([cfg.default_account, *fallback.fallback_accounts]))

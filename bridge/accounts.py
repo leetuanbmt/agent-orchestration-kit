@@ -29,6 +29,34 @@ REGISTRY_DIR = ".agent-bridge"
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 
 
+# One name may be reused across providers. The account added second keeps a unique id,
+# `<name>@<provider>`, so state, quota, slots and tasks stay keyed by a single string.
+def account_id(name: str, provider: str) -> str:
+    return f"{name}@{provider}"
+
+
+def display_name(account: str) -> str:
+    return account.partition("@")[0]
+
+
+def pick_account(name: str, provider: str | None, known: Mapping[str, str]) -> str:
+    """The id for a typed account name; `known` maps ids to providers.
+
+    `--provider` (or a typed `name@provider`) chooses between accounts sharing the name."""
+    if "@" in name:
+        return name
+    same = {k: v for k, v in known.items() if display_name(k) == name}
+    if provider:
+        match = [k for k, v in same.items() if v == provider]
+        if not match:
+            raise ValueError(f"no {provider} account named {name}")
+        return match[0]
+    if len(same) > 1:
+        raise ValueError(f"{name} is used by {', '.join(sorted(same.values()))}: add "
+                         "--provider")
+    return next(iter(same), name)
+
+
 @dataclass(frozen=True)
 class Account:
     name: str
@@ -176,29 +204,30 @@ def register(name: str, provider: str, home: str | None = None) -> Account:
     if provider not in HOME_ENV and provider != "opencode":
         raise ValueError(f"unknown provider {provider!r}")
     data = load_registry()
-    if name in data:
-        raise ValueError(f"account {name} already exists")
+    if any(display_name(k) == name and e.get("provider") == provider for k, e in data.items()):
+        raise ValueError(f"account {name} ({provider}) already exists")
+    key = name if name not in data else account_id(name, provider)
     if provider not in HOME_ENV:
         # opencode has no isolated home: the account is its global login, so only one exists.
         if home is not None:
             raise ValueError(f"{provider} has no isolated home; its global login is used")
         if other := next((n for n, e in data.items() if e.get("provider") == provider), None):
             raise ValueError(f"account {other} already uses the global {provider} login")
-        data[name] = {"provider": provider, "home": None}
+        data[key] = {"provider": provider, "home": None}
         _save_registry(data)
-        return Account(name, None, provider)
+        return Account(key, None, provider)
     if home is None:
-        path = registry_dir() / "homes" / name
+        path = registry_dir() / "homes" / key
         path.mkdir(mode=0o700, parents=True, exist_ok=False)
         if provider == "openai":
             # Interactive `codex` started with this CODEX_HOME must find the file-stored login.
             (path / "config.toml").write_text('cli_auth_credentials_store = "file"\n')
         home = str(path)
-    acc = resolve_profile(name, provider, home, None)
+    acc = resolve_profile(key, provider, home, None)
     for other, entry in data.items():
         if entry.get("home") and Path(entry["home"]).resolve() == acc.home:
             raise ValueError(f"{acc.home} is already the home of account {other}")
-    data[name] = {"provider": provider, "home": str(acc.home)}
+    data[key] = {"provider": provider, "home": str(acc.home)}
     _save_registry(data)
     return acc
 

@@ -14,6 +14,8 @@ from rich.console import Group, RenderableType
 from rich.table import Table
 from rich.text import Text
 
+from .accounts import display_name
+
 # What a human may have to do, by state; drives the "needs you" filter and the row colours.
 ATTENTION = {"APPROVED": "approve", "REVIEW": "review", "PAUSED": "resume or fix account",
              "BLOCKED": "decide", "FAILED": "retry or cancel"}
@@ -75,7 +77,9 @@ def account_rows(listing: dict[str, Any],
         # The stored state only changes after a failed run; a failed login probe outranks it.
         state = (Text("logged out", style="red") if acc.get("logged_in") is False
                  else acc.get("state", "-"))
-        rows.append((acc["name"], (acc["name"], acc.get("provider", "openai"), acc["source"],
+        # Keyed by id; shown by name (the Provider column tells a reused name apart).
+        rows.append((acc["name"], (display_name(acc["name"]), acc.get("provider", "openai"),
+                                   acc["source"],
                                    "yes" if acc.get("logged_in") else "no", state,
                                    quota_text(acc.get("quota")),
                                    acc.get("home") or "(global login)")))

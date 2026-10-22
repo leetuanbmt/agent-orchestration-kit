@@ -30,6 +30,7 @@ from textual.widgets import (Button, DataTable, Footer, Input, Label, OptionList
 from textual.widgets.option_list import Option
 
 from . import install
+from .accounts import display_name
 from .config import AI_DIR, find_root
 from .render import ATTENTION, STYLE, account_rows, quota_text, remaining_pct
 from .service import Bridge
@@ -432,7 +433,7 @@ class BridgeApp(App[None]):
             self.show_account(event.row_key.value)
 
     def show_account(self, key: str) -> None:
-        self.query_one("#detail").border_title = key.partition(":")[2] or key
+        self.query_one("#detail").border_title = key.partition(":")[2] or display_name(key)
         self.query_one("#detail-text", Static).update(
             account_detail(self.accounts_listing, self.agents_listing, key))
 

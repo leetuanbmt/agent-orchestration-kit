@@ -11,6 +11,7 @@ from bridge import accounts, cli
 from bridge.config import BridgeConfig
 from bridge.models import Actor
 from bridge.orchestrator import legacy, parse
+from bridge.render import account_rows
 from tests.conftest import run
 from tests.integration.test_orchestration import WRITE, events, log
 
@@ -231,3 +232,57 @@ roles: {executor: codex, reviewer: agy}
 """, registry=registry)
     assert str(orch.accounts["spare"].home) == "/srv/spare"
     assert orch.accounts["gm"].home is None
+
+
+# @pt.id KIT-ACCT-REG-004-same-name
+# @pt.item One account name used by several providers
+# @pt.condition `tuanvm` is added for openai, then for google; config agents refer to `tuanvm`
+# @pt.expected the second account gets the id tuanvm@google and its own home; a repeat for one provider is refused; each agent gets the account of its adapter's provider; typed names need --provider only when ambiguous; listings show the plain name
+# @pt.target bridge.accounts.register, bridge.accounts.pick_account, bridge.orchestrator.parse, bridge.render.account_rows
+# @pt.method unit
+# @pt.legacy none
+def test_same_name_accounts():
+    first = accounts.register("tuanvm", "openai")
+    second = accounts.register("tuanvm", "google")
+    assert (first.name, second.name) == ("tuanvm", "tuanvm@google")
+    assert second.home == accounts.registry_dir() / "homes" / "tuanvm@google"
+    with pytest.raises(ValueError, match="already exists"):
+        accounts.register("tuanvm", "google")
+    registry = accounts.load_registry()
+    known = {k: e["provider"] for k, e in registry.items()}
+    assert accounts.pick_account("tuanvm", "google", known) == "tuanvm@google"
+    assert accounts.pick_account("tuanvm", "openai", known) == "tuanvm"
+    assert accounts.pick_account("tuanvm@google", None, known) == "tuanvm@google"
+    with pytest.raises(ValueError, match="add --provider"):
+        accounts.pick_account("tuanvm", None, known)
+    with pytest.raises(ValueError, match="no anthropic account"):
+        accounts.pick_account("tuanvm", "anthropic", known)
+    orch = parse("""
+agents:
+  codex: {adapter: codex-cli, account: tuanvm}
+  agy: {adapter: agy-cli, account: tuanvm}
+roles: {executor: codex, reviewer: agy}
+""", registry=registry)
+    assert orch.agents["codex"].account == "tuanvm"
+    assert orch.agents["agy"].account == "tuanvm@google"
+    assert "tuanvm-google" not in legacy(BridgeConfig(), registry).agents  # google: no agent
+    listing = {"accounts": [{"name": "tuanvm@google", "provider": "google", "source": "registry",
+                             "logged_in": True, "state": "available"}],
+               "codex_switch": {"homes": [], "profiles": []}}
+    assert account_rows(listing)[0][1][:2] == ("tuanvm", "google")
+
+
+# @pt.id KIT-ACCT-REG-005-list-outside
+# @pt.item account-list outside a project
+# @pt.condition no git project in the current directory; a registry account exists
+# @pt.expected a one-line "not a git repository" error and exit 1, not a traceback
+# @pt.target bridge.cli._run
+# @pt.method unit
+# @pt.legacy none
+def test_list_outside_project(monkeypatch, capsys):
+    accounts.register("work", "openai")
+    _human(monkeypatch)
+    with pytest.raises(SystemExit) as failed:
+        cli.main(["account-list"])
+    assert failed.value.code == 1
+    assert "not a git repository" in capsys.readouterr().err

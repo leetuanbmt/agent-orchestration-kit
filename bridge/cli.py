@@ -18,8 +18,8 @@ from typing import Any
 
 from . import install, orchestrator
 from .accounts import (account_env, global_auth_fingerprint, global_claude_identity,
-                       global_login_marker, load_registry, login_argv, login_status, register,
-                       resolve_profile, shell_use, unregister)
+                       global_login_marker, load_registry, login_argv, login_status,
+                       pick_account, register, resolve_profile, shell_use, unregister)
 from .config import BridgeConfig, find_root, load_config
 from .executor import AGENT_ENV
 from .service import Bridge, dumps, resolve_account
@@ -54,6 +54,11 @@ def _config_here() -> Any:
         return load_config(find_root())
     except RuntimeError:  # account-add works outside a project too
         return BridgeConfig()
+
+
+def _pick(args: argparse.Namespace, known: dict[str, str]) -> str:
+    """The account id `args.name` means; `--provider` settles a name shared by providers."""
+    return pick_account(args.name, getattr(args, "provider", None), known)
 
 
 def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
@@ -108,25 +113,32 @@ async def _run(args: argparse.Namespace) -> Any:
         logged_in = login_status(cfg, acc) is True or _login(cfg, acc, args.device_auth)
         return {"account": acc.name, "provider": acc.provider, "logged_in": logged_in}
     if args.cmd == "account-remove":
+        name = _pick(args, {k: e["provider"] for k, e in load_registry().items()})
         typed = input(f"Type the account name to remove {args.name}: ").strip()
         if typed != args.name:
             raise SystemExit(2)
-        return {"account": args.name, "home_deleted": unregister(args.name)}
+        return {"account": name, "home_deleted": unregister(name)}
     if args.cmd in {"account-list", "account-login", "account-use"}:
         try:
             root = find_root()
         except RuntimeError:
             # Outside a project only machine-wide accounts exist; switching is the common case.
-            if args.cmd != "account-use" or args.name not in load_registry():
+            if args.cmd != "account-use":
                 raise
-            entry = load_registry()[args.name]
+            registry = load_registry()
+            name = _pick(args, {k: e["provider"] for k, e in registry.items()})
+            if name not in registry:
+                raise
             root, cfg = None, BridgeConfig()
-            acc = resolve_profile(args.name, entry["provider"], entry.get("home"), None)
+            acc = resolve_profile(name, registry[name]["provider"], registry[name].get("home"),
+                                  None)
         if root is not None:
             cfg = load_config(root)
             if args.cmd == "account-list":
                 return Bridge(root, cfg).list_accounts()
-            acc = resolve_account(orchestrator.load(root, cfg), cfg, root, args.name)
+            orch = orchestrator.load(root, cfg)
+            name = _pick(args, {k: a.provider for k, a in orch.accounts.items()})
+            acc = resolve_account(orch, cfg, root, name)
         if args.cmd == "account-use":
             if args.shell:
                 if acc.provider == "google":
@@ -148,7 +160,7 @@ async def _run(args: argparse.Namespace) -> Any:
         b.recover()
     match args.cmd:
         case "account-clear":
-            return b.clear_account(args.name)
+            return b.clear_account(_pick(args, {k: a.provider for k, a in b.orch.accounts.items()}))
         case "health":
             return await b.health()
         case "create":
@@ -204,7 +216,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("account-list", help="usable accounts on this machine").add_argument(
         "--all", action="store_true",
         help="also list switch profiles, homes not added and CLIs without an account")
-    sub.add_parser("account-clear").add_argument("name")
+    clear = sub.add_parser("account-clear")
+    clear.add_argument("name")
     login = sub.add_parser("account-login", help="HUMAN ONLY: log in an isolated account")
     login.add_argument("name")
     login.add_argument("--device-auth", action="store_true")
@@ -222,6 +235,9 @@ def main(argv: list[str] | None = None) -> None:
                                              'eval "$(agent-bridge account-use <name>)"')
     use.add_argument("name")
     use.add_argument("--shell", action="store_true", help="open a subshell using the account")
+    for cmd in (clear, login, use, sub.choices["account-remove"]):
+        cmd.add_argument("--provider", help="which account, when one name is used by several "
+                                            "providers")
     c = sub.add_parser("create", help="create a task from a JSON spec file")
     c.add_argument("spec")
     for name in ("execute", "result"):
