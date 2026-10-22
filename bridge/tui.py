@@ -246,11 +246,11 @@ class BridgeApp(App[None]):
     .panel { border: round $panel-lighten-2; border-title-color: $hi;
              border-title-style: bold; padding: 0 1; background: $background; }
     .panel:focus, .panel:focus-within { border: round $hi; }
-    #left { width: 2fr; }
+    #left { width: 2fr; min-width: 26; }
     #needs { height: auto; max-height: 40%; }
     #tasks { height: 1fr; }
     #detail { width: 3fr; }
-    #side { width: 2fr; }
+    #side { width: 2fr; min-width: 38; }
     #search { border: round $panel-lighten-2; margin-bottom: 0; }
     #search:focus { border: round $hi; }
     #agents { height: auto; max-height: 40%; }
@@ -337,7 +337,7 @@ class BridgeApp(App[None]):
             table.add_column("", key="cur", width=1)
             table.add_columns("Task", "State", "Objective")
         self.query_one("#agents", DataTable).add_columns("", "Agent", "Roles")
-        self.query_one("#accounts", DataTable).add_columns("", "Account", "Provider", "State")
+        self.query_one("#accounts", DataTable).add_columns("", "Account", "State")
         self.action_refresh()
         self.set_interval(3, self.refresh_tasks)
 
@@ -407,7 +407,10 @@ class BridgeApp(App[None]):
             usable = ":" not in key and logged_in == "yes" and state == "available"
             dot = Text("●" if ":" not in key else "○", style="green" if usable else "red"
                        if ":" not in key else "dim")
-            table.add_row(dot, name, provider, state if ":" in key else
+            # The panel is narrow: no Provider column (Detail has it). A name shared across
+            # providers shows its id (`work@google`); a CLI without an account, its provider.
+            label = key if ":" not in key else name if name != "-" else provider
+            table.add_row(dot, label, state if ":" in key else
                           ("logged out" if logged_in != "yes" else state), key=key)
         executor = self.bridge.orch.role("executor").agents
         account = self.bridge.orch.agents[executor[0]].account if executor else None

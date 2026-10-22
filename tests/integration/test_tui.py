@@ -163,6 +163,9 @@ roles: {executor: codex, reviewer: agy}
             table = app.query_one("#accounts", DataTable)
             keys = [k.value for k in table.rows]
             assert keys[:2] == ["cx", "gm"] and "installed:opencode" in keys
+            # Narrow panel: dot, name, state; a CLI without an account is named by provider.
+            assert len(table.columns) == 3
+            assert str(table.get_row("installed:opencode")[1]) == "opencode"
 
             table.focus()
             table.move_cursor(row=keys.index("gm"))

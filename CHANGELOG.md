@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- The dashboard's Accounts panel cut the state down to one letter on a normal terminal. It
+  now shows the account and its state (Provider moved to Detail; a name shared across
+  providers shows its id, such as `work@google`), and the side and task columns keep a
+  minimum width.
 - The dashboard opened with the search box focused, where the arrow keys do nothing; it now
   opens on Needs you (or Tasks), and ↓ or Esc leaves the search box for the task list.
 - The dashboard's account commands (`n`, `l`, `d`, `u`) ran the project's own `bridge/` package
