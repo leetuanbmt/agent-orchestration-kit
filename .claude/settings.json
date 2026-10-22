@@ -7,6 +7,10 @@
       "Bash(*agent-bridge reassign*)",
       "Bash(*-m bridge reassign*)",
       "Bash(*account-login*)",
+      "Bash(*account-add*)",
+      "Bash(*account-remove*)",
+      "Bash(*opencode auth login*)",
+      "Bash(*opencode auth logout*)",
       "Bash(*codex login*)",
       "Bash(*codex logout*)",
       "Bash(*claude auth login*)",
@@ -18,7 +22,9 @@
       "Bash(*sqlite3*)",
       "Edit(/.ai/**)",
       "Read(~/.codex/auth.json)",
-      "Read(~/.codex-accounts/**)"
+      "Read(~/.codex-accounts/**)",
+      "Read(~/.agent-bridge/homes/**)",
+      "Read(~/.gemini/antigravity-cli/**)"
     ]
   }
 }

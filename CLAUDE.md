@@ -19,11 +19,13 @@ approvals and anything irreversible.
    `bridge_review_task(approve)` without reading `bridge_task_result`: the patch, the bridge's own
    verification output and scope violations. An agent's self-report is not evidence. A reviewer
    agent's decision is recorded as such; you may override it only after reading the evidence.
-3. **Human-only actions.** Claude never runs `agent-bridge approve`, `reassign` or
-   `account-login`, never edits `.ai/`, never runs `codex login`/`logout`, `claude auth
-   login`/`logout` or `codex-switch` commands that change accounts. An LLM statement is not
+3. **Human-only actions.** Claude never runs `agent-bridge approve`, `reassign`,
+   `account-login`, `account-add` or `account-remove`, never edits `.ai/`, never runs `codex
+   login`/`logout`, `claude auth login`/`logout`, `opencode auth login`/`logout`, `agy` sign-in
+   or `codex-switch` commands that change accounts. An LLM statement is not
    human approval.
-4. **Project isolation.** Never modify `~/.claude`, `~/.codex`, `~/.codex-accounts`, any
+4. **Project isolation.** Never modify `~/.claude`, `~/.codex`, `~/.codex-accounts`,
+   `~/.agent-bridge`, `~/.gemini`, any
    configured account home or global MCP configuration. Everything this kit needs lives in the
    repository.
 5. **Bounded work.** At most `max_rework + 1` runs per task (default 3); a task that keeps

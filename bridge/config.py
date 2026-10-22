@@ -41,6 +41,8 @@ class BridgeConfig(BaseModel):
 
     codex_bin: str = "codex"
     claude_bin: str = "claude"
+    opencode_bin: str = "opencode"
+    agy_bin: str = "agy"
     model: str | None = None
     # danger-full-access is deliberately not representable: no silent fallback to unrestricted.
     sandbox: Literal["read-only", "workspace-write"] = "workspace-write"

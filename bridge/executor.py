@@ -84,7 +84,8 @@ _CLASSES = [
     ("quota", re.compile(r"usage limit|rate.?limit|too many requests|\b429\b|quota|try again at",
                          re.I)),
     ("auth", re.compile(r"\b401\b|unauthori[sz]ed|not logged in|log ?in again|/login|"
-                        r"authentication (?:required|failed)|missing bearer|invalid api key",
+                        r"authentication (?:required|failed)|missing bearer|invalid api key|"
+                        r"not authenticated|please sign in",
                         re.I)),
     ("network", re.compile(r"could not resolve|connection (?:refused|reset|closed)|network|"
                            r"stream disconnected|error sending request|\b50[234]\b|dns", re.I)),
@@ -164,6 +165,12 @@ class Adapter:
         """Fill res.final_text from files if needed; return True when the turn completed."""
         raise NotImplementedError
 
+    def extra_env(self, req: RunRequest) -> dict[str, str]:
+        return {}
+
+    def stdin(self, req: RunRequest) -> str:
+        return req.prompt
+
     def version(self) -> str:
         try:
             out = subprocess.run([self.binary, "--version"], capture_output=True, text=True,
@@ -187,6 +194,7 @@ class Adapter:
             argv = self.build(req, tmp)
             env = account_env(req.account,
                               clean_env(os.environ, self.cfg.env_deny, self.cfg.env_allow))
+            env |= self.extra_env(req)
             env[AGENT_ENV] = "1"
             proc = await asyncio.create_subprocess_exec(
                 *argv, cwd=self.root, env=env, start_new_session=True,
@@ -202,7 +210,7 @@ class Adapter:
             async def feed() -> None:
                 assert proc.stdin
                 with contextlib.suppress(BrokenPipeError, ConnectionResetError):
-                    proc.stdin.write(req.prompt.encode())
+                    proc.stdin.write(self.stdin(req).encode())
                     await proc.stdin.drain()
                     proc.stdin.close()
 
@@ -406,9 +414,142 @@ class ClaudeAdapter(Adapter):
         return bool(ctx.get("completed"))
 
 
-ADAPTERS: dict[str, type[Adapter]] = {"codex-cli": CodexAdapter, "claude-cli": ClaudeAdapter}
+def _json_object(text: str) -> dict[str, Any] | None:
+    """The JSON object in a final message that may be wrapped in a code fence or prose."""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        return None
+    with contextlib.suppress(ValueError):
+        parsed = json.loads(text[start:end + 1])
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+class ReadOnlyAdapter(Adapter):
+    """An adapter whose CLI has no verified way to confine writes: it never gets a writing run."""
+
+    def build(self, req: RunRequest, tmp: Path) -> list[str]:
+        if req.sandbox != "read-only":
+            raise ValueError(f"{self.name} is read-only (planner/reviewer)")
+        return self.argv(req)
+
+    def argv(self, req: RunRequest) -> list[str]:
+        raise NotImplementedError
+
+
+# Inline opencode config for every run: no edits, shell, web fetches or paths outside the
+# project; the project's own opencode config is ignored. Probed on opencode 2.1.2: with it the
+# model reported having no tool to write files, and nothing was written.
+_OPENCODE_READ_ONLY = {"permission": {"edit": "deny", "bash": "deny", "webfetch": "deny",
+                                      "external_directory": "deny"}}
+
+
+class OpenCodeAdapter(ReadOnlyAdapter):
+    """`opencode run`. It has no structured-output flag: the schema goes into the prompt and the
+    final text is parsed as JSON."""
+
+    name, provider = "opencode-cli", "opencode"
+
+    @property
+    def binary(self) -> str:
+        return self.cfg.opencode_bin
+
+    def argv(self, req: RunRequest) -> list[str]:
+        # --standalone: a private server per run instead of the user's background service.
+        a = [self.binary, "run", "--format", "json", "--standalone"]
+        if req.model:
+            a += ["-m", req.model]
+        if req.session_id:
+            a += ["--session", req.session_id]
+        return a  # the prompt goes on stdin
+
+    def extra_env(self, req: RunRequest) -> dict[str, str]:
+        return {"OPENCODE_CONFIG_CONTENT": json.dumps(_OPENCODE_READ_ONLY),
+                "OPENCODE_DISABLE_PROJECT_CONFIG": "1", "OPENCODE_DISABLE_AUTOUPDATE": "1"}
+
+    def stdin(self, req: RunRequest) -> str:
+        return (f"{req.prompt}\n\nReply with exactly one JSON object and nothing else (no prose, "
+                f"no code fence), matching this JSON schema:\n{json.dumps(req.schema)}")
+
+    def handle(self, ev: dict[str, Any], res: RunResult, ctx: dict[str, Any]) -> None:
+        if not res.session_id and ev.get("sessionID"):
+            res.session_id = ev["sessionID"]
+            if ctx["on_session"]:
+                ctx["on_session"](res.session_id)
+        part = ev.get("part") or {}
+        t = ev.get("type")
+        if t == "text" and part.get("text"):
+            res.final_text = str(part["text"])
+        elif t == "step_finish":
+            res.usage = {k: part.get(k) for k in ("tokens", "cost") if k in part}
+        elif t == "tool_use" and part.get("tool") == "bash":
+            res.commands.append(str((part.get("state") or {}).get("input", ""))[:300])
+        elif t == "error":
+            err = ev.get("error") or {}
+            # e.g. {"type": "provider.quota", "status": 402}: keep both for classify().
+            ctx["errors"].append(f"{err.get('type', '')} {err.get('status', '')}: "
+                                 f"{err.get('message', '')}".strip())
+
+    def finish(self, res: RunResult, tmp: Path, ctx: dict[str, Any]) -> bool:
+        res.final = _json_object(res.final_text)
+        if res.final is None and not ctx["errors"]:
+            ctx["errors"].append("no JSON object in the final message")
+        return res.final is not None and not ctx["errors"]
+
+
+class AgyAdapter(ReadOnlyAdapter):
+    """Antigravity CLI print mode in plan mode, which refused every file write when probed on
+    agy 1.4.5. Its browser tools cannot be switched off from the command line."""
+
+    name, provider = "agy-cli", "google"
+
+    @property
+    def binary(self) -> str:
+        return self.cfg.agy_bin
+
+    def argv(self, req: RunRequest) -> list[str]:
+        # `-p=` with --input-format stream-json: the prompt comes from stdin, not argv.
+        a = [self.binary, "--input-format", "stream-json", "--output-format", "stream-json",
+             "-p=", "--mode", "plan", "--sandbox", "--disable-slash-commands",
+             "--json-schema", json.dumps(req.schema)]
+        if req.model:
+            a += ["--model", req.model]
+        if req.session_id:
+            a += ["--conversation", req.session_id]
+        return a
+
+    def stdin(self, req: RunRequest) -> str:
+        return json.dumps({"event": "user",
+                           "message": {"role": "user", "content": req.prompt}}) + "\n"
+
+    def handle(self, ev: dict[str, Any], res: RunResult, ctx: dict[str, Any]) -> None:
+        t = ev.get("event")
+        if t == "init":
+            res.session_id = ev.get("conversation_id")
+            if ctx["on_session"] and res.session_id:
+                ctx["on_session"](res.session_id)
+        elif t == "result":
+            r = ev.get("result") or {}
+            res.session_id = r.get("conversation_id") or res.session_id
+            res.usage = r.get("usage")
+            res.final_text = str(r.get("response") or "")
+            if isinstance(r.get("structured_output"), dict):
+                res.final = r["structured_output"]
+            ok = r.get("status") == "SUCCESS"
+            ctx["completed"] = ok and res.final is not None
+            if not ok:
+                ctx["errors"].append(f"{r.get('status')}: {r.get('error') or ''}".strip())
+            elif res.final is None:
+                ctx["errors"].append("no structured output")
+
+    def finish(self, res: RunResult, tmp: Path, ctx: dict[str, Any]) -> bool:
+        return bool(ctx.get("completed"))
+
+
+ADAPTERS: dict[str, type[Adapter]] = {"codex-cli": CodexAdapter, "claude-cli": ClaudeAdapter,
+                                      "opencode-cli": OpenCodeAdapter, "agy-cli": AgyAdapter}
 # Process names `kill_stale` may signal: only something this bridge could have started.
-AGENT_BINARIES = ("codex", "claude")
+AGENT_BINARIES = ("codex", "claude", "opencode", "agy")
 
 
 async def kill_group(proc: asyncio.subprocess.Process) -> None:

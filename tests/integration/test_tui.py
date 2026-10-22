@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import DataTable, Input, Select, Static, TabbedContent
 
 from bridge.models import State
-from bridge.tui import BridgeApp, PatchView
+from bridge.tui import BridgeApp, PatchView, account_rows
 from tests.conftest import run, spec
 
 
@@ -87,3 +87,88 @@ def test_tui_human_actions(make_bridge, monkeypatch) -> None:
     run(drive())
     done = [e["actor"] for e in b.store.events(high) if e["to_state"] == "DONE"]
     assert done == ["human"]
+
+
+# @pt.id KIT-TUI-002-account-rows
+# @pt.item Accounts table shows everything the machine knows about
+# @pt.condition project and registry accounts, an unadded codex-switch home, codex-switch and claude-switch profiles, an installed CLI without an account
+# @pt.expected each appears once with its source; only real accounts are keyed by bare name; copied-token profiles are marked not usable
+# @pt.target bridge.tui.account_rows
+# @pt.method unit
+# @pt.legacy none
+def test_account_rows() -> None:
+    listing = {
+        "accounts": [{"name": "default", "provider": "openai", "source": "project",
+                      "logged_in": True, "state": "available", "quota": "UNKNOWN", "home": None},
+                     {"name": "gm", "provider": "google", "source": "registry",
+                      "logged_in": False, "state": "available", "quota": "UNKNOWN",
+                      "home": "/h/gm"}],
+        "codex_switch": {"homes": [{"name": "tv", "codex_home": "/c/tv", "logged_in": True,
+                                    "configured": False},
+                                   {"name": "used", "codex_home": "/c/u", "logged_in": True,
+                                    "configured": True}],
+                         "profiles": [{"name": "old"}]},
+        "claude_switch": {"profiles": [{"name": "me", "email": "me@example.com"}]},
+        "unconfigured": [{"provider": "opencode", "binary": "/bin/opencode"}],
+    }
+    rows = dict(account_rows(listing))
+    assert list(rows) == ["default", "gm", "codex-switch:tv", "codex-profile:old",
+                          "claude-switch:me", "installed:opencode"]
+    assert rows["gm"][2] == "registry" and rows["default"][6] == "(global login)"
+    assert "not usable" in str(rows["claude-switch:me"][4])
+    assert "not usable" in str(rows["codex-profile:old"][4])
+
+
+# @pt.id KIT-TUI-003-account-actions
+# @pt.item Account keys in the dashboard
+# @pt.condition fake agent CLIs on PATH; the human-only commands are intercepted
+# @pt.expected the accounts table loads in the background with the installed-but-unused CLIs; `n` on one asks for a name with that provider preselected and runs account-add; `u` on a google account only shows the eval line; `l` on a non-account row runs nothing
+# @pt.target bridge.tui.BridgeApp
+# @pt.method integration
+# @pt.legacy none
+def test_tui_account_actions(make_orch, monkeypatch) -> None:
+    monkeypatch.setattr("bridge.accounts.codex_switch_profiles",
+                        lambda: {"installed": False, "profiles": []})
+    monkeypatch.setattr("bridge.accounts.claude_switch_profiles",
+                        lambda: {"installed": False, "profiles": []})
+    b = make_orch("""
+accounts:
+  cx: {provider: openai, home: {home}/cx}
+  gm: {provider: google, home: {home}/gm}
+agents:
+  codex: {adapter: codex-cli, account: cx}
+  agy: {adapter: agy-cli, account: gm}
+roles: {executor: codex, reviewer: agy}
+""")
+    calls: list[tuple[str, ...]] = []
+
+    async def drive() -> None:
+        app = BridgeApp(b)
+        monkeypatch.setattr(app, "_human_cmd", lambda *args: calls.append(args))
+        async with app.run_test(size=(180, 45)) as pilot:
+            app.query_one(TabbedContent).active = "agents"
+            await _settle(pilot)
+            table = app.query_one("#account-table", DataTable)
+            keys = [k.value for k in table.rows]
+            assert keys[:2] == ["cx", "gm"] and "installed:opencode" in keys
+
+            table.focus()
+            table.move_cursor(row=keys.index("installed:anthropic"))
+            await pilot.press("l")
+            await _settle(pilot)
+            assert calls == []
+            await pilot.press("n")
+            await pilot.pause()
+            assert str(app.screen.query_one("#choice", Select).value) == "anthropic"
+            app.screen.query_one("#text", Input).value = "work"
+            await pilot.click("#ok")
+            await _settle(pilot)
+            assert calls == [("account-add", "work", "--provider", "anthropic")]
+
+            table.move_cursor(row=keys.index("gm"))
+            await pilot.press("u")
+            await _settle(pilot)
+            assert len(calls) == 1
+            assert any("account-use gm" in str(n.message) for n in app._notifications)
+
+    run(drive())

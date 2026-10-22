@@ -68,6 +68,21 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_codex: Pat
 
 
 @pytest.fixture
+def fake_others(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_codex: Path) -> Path:
+    """Fake opencode and agy (on PATH through fake_codex); agy is logged in under $HOME."""
+    for name in ("opencode", "agy"):
+        exe = FAKES / name
+        exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    state = tmp_path / "fake_others"
+    monkeypatch.setenv("FAKE_OPENCODE_DIR", str(state / "opencode"))
+    monkeypatch.setenv("FAKE_AGY_DIR", str(state / "agy"))
+    token = Path(os.environ["HOME"]) / ".gemini/antigravity-cli/antigravity-oauth-token"
+    token.parent.mkdir(parents=True, exist_ok=True)
+    token.touch()
+    return state
+
+
+@pytest.fixture
 def make_bridge(repo: Path, fake_codex: Path):
     def make(**cfg: object) -> Bridge:
         return Bridge(repo, BridgeConfig(**{"retry_backoff_s": 0, "lock_dir": str(fake_codex / "locks"), **cfg}))  # type: ignore[arg-type]
@@ -75,7 +90,7 @@ def make_bridge(repo: Path, fake_codex: Path):
 
 
 @pytest.fixture
-def make_orch(repo: Path, fake_codex: Path, fake_claude: Path):
+def make_orch(repo: Path, fake_codex: Path, fake_claude: Path, fake_others: Path):
     """Bridge driven by an orchestrator.yaml text; `{home}` expands to a per-test directory."""
     homes = fake_codex.parent / "homes"
 
@@ -84,8 +99,11 @@ def make_orch(repo: Path, fake_codex: Path, fake_claude: Path):
         for profile in orch.accounts.values():
             if profile.home:
                 Path(profile.home).mkdir(parents=True, exist_ok=True)
-                marker = "auth.json" if profile.provider == "openai" else ".credentials.json"
-                (Path(profile.home) / marker).touch()
+                marker = {"openai": "auth.json", "anthropic": ".credentials.json",
+                          "google": ".gemini/antigravity-cli/antigravity-oauth-token"}
+                path = Path(profile.home) / marker[profile.provider]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
         return Bridge(repo, BridgeConfig(**{"retry_backoff_s": 0,  # type: ignore[arg-type]
                                             "lock_dir": str(fake_codex / "locks"), **cfg}), orch)
     return make

@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Deterministic stand-in for `opencode run --format json` (event shapes from opencode 2.1.2).
+
+Events: step_start, text (part.text), step_finish (part.tokens/cost), error (error.type/status).
+It has no structured-output flag, so the reply is JSON in the text; the schema in the prompt
+decides which object (review, plan, or the executor report).
+
+FAKE_OPENCODE_SCENARIO: comma-separated per invocation (last repeats): ok | fenced | quota | auth | crash
+FAKE_OPENCODE_DECISION: "decision:notes" for reviewer runs (default "approve:looks good").
+FAKE_OPENCODE_LOGGED_OUT: when set, `auth list` reports no credentials.
+FAKE_OPENCODE_DIR:      scratch dir for the call counter and argv/prompt/env log.
+"""
+
+import json
+import os
+import sys
+import uuid
+from pathlib import Path
+
+argv = sys.argv[1:]
+if argv[:1] == ["--version"]:
+    print("2.1.2")
+    sys.exit(0)
+if argv[:2] == ["auth", "list"]:
+    if not os.environ.get("FAKE_OPENCODE_LOGGED_OUT"):
+        print("Anthropic         API key                     stored")
+    sys.exit(0)
+
+state = Path(os.environ["FAKE_OPENCODE_DIR"])
+state.mkdir(parents=True, exist_ok=True)
+counter = state / "calls"
+n = int(counter.read_text()) if counter.exists() else 0
+counter.write_text(str(n + 1))
+scenarios = os.environ.get("FAKE_OPENCODE_SCENARIO", "ok").split(",")
+scenario = scenarios[min(n, len(scenarios) - 1)]
+prompt = sys.stdin.read()
+with (state / "log.jsonl").open("a") as f:
+    f.write(json.dumps({"argv": argv, "prompt": prompt, "cwd": os.getcwd(),
+                        "config": os.environ.get("OPENCODE_CONFIG_CONTENT"),
+                        "project_config_disabled": os.environ.get("OPENCODE_DISABLE_PROJECT_CONFIG"),
+                        "agent_env": os.environ.get("AGENT_BRIDGE_AGENT")}) + "\n")
+
+session = argv[argv.index("--session") + 1] if "--session" in argv else f"ses_{uuid.uuid4().hex}"
+
+
+def emit(kind, **fields):
+    print(json.dumps({"type": kind, "timestamp": 1, "sessionID": session, **fields}), flush=True)
+
+
+emit("step_start", part={"type": "step-start"})
+if scenario in ("quota", "auth"):
+    err = ({"type": "provider.quota", "status": 402, "message": "Insufficient Balance"}
+           if scenario == "quota" else
+           {"type": "provider.auth", "status": 401, "message": "Unauthorized"})
+    emit("error", error=err)
+    sys.exit(1)
+if scenario == "crash":
+    print("fatal: fake crash", file=sys.stderr)
+    sys.exit(2)
+
+if '"decision"' in prompt:
+    decision, _, notes = os.environ.get("FAKE_OPENCODE_DECISION", "approve:looks good").partition(":")
+    out = {"decision": decision, "notes": notes}
+elif '"tasks"' in prompt:
+    out = {"tasks": [{"objective": "Set x to 2 in src/app.py", "context": "", "scope": "",
+                      "allowed_paths": ["src/**"], "excluded_paths": [],
+                      "acceptance_criteria": ["src/app.py contains x = 2"],
+                      "verification_commands": [], "depends_on": [], "risk_level": "low"}],
+           "notes": "fake opencode plan"}
+else:
+    out = {"status": "completed", "summary": "fake opencode", "files_changed": [],
+           "tests_run": [], "notes": ""}
+text = json.dumps(out)
+if scenario == "fenced":
+    text = f"Here is my answer:\n```json\n{text}\n```"
+emit("text", part={"type": "text", "text": text})
+emit("step_finish", part={"type": "step-finish", "tokens": {"input": 10, "output": 5}, "cost": 0})

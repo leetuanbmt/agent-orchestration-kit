@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Deterministic stand-in for the Antigravity CLI print mode (event shapes from agy 1.4.5).
+
+`agy --input-format stream-json --output-format stream-json -p= ...` reads one
+{"event": "user", "message": {...}} line from stdin and prints init, step_update and result
+events; result.structured_output holds the --json-schema reply.
+
+Logged in when $HOME/.gemini/antigravity-cli/antigravity-oauth-token exists (agy keeps its
+login under HOME, so an isolated account is a whole HOME).
+
+FAKE_AGY_SCENARIO: comma-separated per invocation (last repeats): ok | quota | auth | crash
+FAKE_AGY_DECISION: "decision:notes" for reviewer runs (default "approve:looks good").
+FAKE_AGY_DIR:      scratch dir for the call counter and argv/stdin log.
+"""
+
+import json
+import os
+import sys
+import uuid
+from pathlib import Path
+
+argv = sys.argv[1:]
+token = Path(os.environ.get("HOME", "/nonexistent")) / ".gemini/antigravity-cli/antigravity-oauth-token"
+if argv[:1] == ["--version"]:
+    print("1.4.5")
+    sys.exit(0)
+if not argv:  # interactive start: signs in, then the human quits it
+    token.parent.mkdir(parents=True, exist_ok=True)
+    token.write_text("fake")
+    sys.exit(0)
+if argv[:1] == ["models"]:
+    if not token.exists():
+        print("Error: Please sign in to view available models.", file=sys.stderr)
+        sys.exit(1)
+    print("gemini-3.8-flash-low\tGemini 3.8 Flash (Low)")
+    sys.exit(0)
+
+state = Path(os.environ["FAKE_AGY_DIR"])
+state.mkdir(parents=True, exist_ok=True)
+counter = state / "calls"
+n = int(counter.read_text()) if counter.exists() else 0
+counter.write_text(str(n + 1))
+scenarios = os.environ.get("FAKE_AGY_SCENARIO", "ok").split(",")
+scenario = scenarios[min(n, len(scenarios) - 1)]
+if not token.exists():
+    scenario = "auth"
+raw = sys.stdin.read()
+with (state / "log.jsonl").open("a") as f:
+    f.write(json.dumps({"argv": argv, "stdin": raw, "home": os.environ.get("HOME"),
+                        "cwd": os.getcwd(), "agent_env": os.environ.get("AGENT_BRIDGE_AGENT")})
+            + "\n")
+
+conversation = argv[argv.index("--conversation") + 1] if "--conversation" in argv else str(uuid.uuid4())
+
+
+def emit(event, **fields):
+    print(json.dumps({"event": event, **fields}), flush=True)
+
+
+def result(status, response="", structured=None, error=None):
+    r = {"conversation_id": conversation, "status": status, "response": response,
+         "usage": {"input_tokens": 10, "output_tokens": 5}}
+    if structured is not None:
+        r["structured_output"] = structured
+    if error:
+        r["error"] = error
+    emit("result", result=r)
+
+
+message = json.loads(raw.splitlines()[0]) if raw.strip() else {}
+if message.get("event") != "user" or not (message.get("message") or {}).get("content"):
+    result("ERROR", error='stream input message is missing the "event" field')
+    sys.exit(1)
+prompt = message["message"]["content"]
+emit("init", conversation_id=conversation, init={"model": "fake", "cwd": os.getcwd()})
+if scenario == "quota":
+    result("ERROR", error="RESOURCE_EXHAUSTED: quota exceeded for this account")
+    sys.exit(1)
+if scenario == "auth":
+    result("ERROR", error="Print mode: not authenticated. Please sign in.")
+    sys.exit(1)
+if scenario == "crash":
+    print("fatal: fake crash", file=sys.stderr)
+    sys.exit(2)
+
+schema = json.loads(argv[argv.index("--json-schema") + 1]) if "--json-schema" in argv else {}
+keys = set(schema.get("properties", {}))
+if "decision" in keys:
+    decision, _, notes = os.environ.get("FAKE_AGY_DECISION", "approve:looks good").partition(":")
+    out = {"decision": decision, "notes": notes}
+elif "tasks" in keys:
+    out = {"tasks": [{"objective": "Set x to 2 in src/app.py", "context": "", "scope": "",
+                      "allowed_paths": ["src/**"], "excluded_paths": [],
+                      "acceptance_criteria": ["src/app.py contains x = 2"],
+                      "verification_commands": [], "depends_on": [], "risk_level": "low"}],
+           "notes": "fake agy plan"}
+else:
+    out = {"status": "completed", "summary": "fake agy", "files_changed": [], "tests_run": [],
+           "notes": ""}
+emit("step_update", step_update={"conversation_id": conversation, "state": "DONE",
+                                 "step_type": "agent_response", "text_delta": json.dumps(out)})
+result("SUCCESS", json.dumps(out), out)
