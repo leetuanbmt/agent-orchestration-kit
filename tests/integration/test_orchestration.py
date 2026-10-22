@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -439,6 +440,24 @@ def test_agents_health(make_orch, fake_claude):
     h = run(b.health())
     assert set(h["adapters"]) == {"claude-cli", "codex-cli"} and h["ok"]
     assert h["quota"] == {"cx1": "UNKNOWN", "cx2": "UNKNOWN", "cl": "UNKNOWN"}
+
+
+# @pt.id KIT-SURF-003-agent-logged-out
+# @pt.item An agent on a logged-out account is not shown as available
+# @pt.condition Config A; cx1's login is removed, then a listing's logins are passed in
+# @pt.expected codex shows "account cx1 logged out"; given logins win over the probe; routing
+#   state is untouched
+# @pt.target Bridge.list_agents
+# @pt.method integration
+# @pt.legacy none
+def test_agent_logged_out(make_orch, fake_claude):
+    b = make_orch(CONFIG_A)
+    (Path(b.orch.accounts["cx1"].home) / "auth.json").unlink()
+    codex = next(a for a in b.list_agents()["agents"] if a["agent"] == "codex")
+    assert not codex["available"] and codex["unavailable_reason"] == "account cx1 logged out"
+    codex = next(a for a in b.list_agents({"cx1": True})["agents"] if a["agent"] == "codex")
+    assert codex["available"]
+    assert b._unavailable("codex", "write") is None
 
 
 # @pt.id KIT-STATE-010-schema-upgrade

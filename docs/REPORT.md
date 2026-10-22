@@ -120,7 +120,7 @@ Verification of this change:
 
 | Check | Result |
 |---|---|
-| `scripts/check.sh` | 166 passed, 5 skipped (opt-in real smoke tests) |
+| `scripts/check.sh` | 167 passed, 5 skipped (opt-in real smoke tests) |
 | Real Claude CLI, `CLAUDE_SMOKE=1` | 1 passed: fake Codex made the change, real `claude -p` (haiku) reviewed read-only with no MCP servers and approved as actor `agent`; task DONE |
 | Real Codex, `CODEX_SMOKE=1 -m real_codex` | 2 passed: the 0.1 lifecycle (READY→REVIEW→DONE) and a single-agent workflow where real Codex planned with the plan schema, implemented, and approved with the review schema (read-only); workflow DONE |
 | Claude write scoping probe | see *Limitations*: scoped Edit/Write rules refuse writes outside `allowed_paths` |

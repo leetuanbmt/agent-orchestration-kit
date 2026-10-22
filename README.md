@@ -449,7 +449,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Result:
 ```console
-166 passed, 5 skipped
+167 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` and `agy` speak the real JSONL / stream-json protocols and
