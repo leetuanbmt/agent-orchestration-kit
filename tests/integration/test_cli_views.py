@@ -101,6 +101,7 @@ def test_accounts_compact():
     assert "Home" not in narrow and "Source" not in narrow and "/h/work" not in narrow
     assert "old" not in narrow and "4 more not usable here" in narrow
     assert "--provider google" in narrow and "--home /c/tv" in narrow
+    assert "\n\n\n" not in narrow  # no blank line between the hints and the note
     wide = _text(accounts_view(LISTING, width=160, show_all=True), 160)
     assert all(s in wide for s in ("Home", "/h/work", "old", "me", "not added", "no account"))
     assert "5h 78% left" in wide and "more not usable" not in wide

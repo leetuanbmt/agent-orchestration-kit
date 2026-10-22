@@ -94,7 +94,7 @@ def test_tui_human_actions(make_bridge, monkeypatch) -> None:
 # @pt.id KIT-TUI-002-account-rows
 # @pt.item Accounts table shows everything the machine knows about
 # @pt.condition project and registry accounts, an unadded codex-switch home, codex-switch and claude-switch profiles, an installed CLI without an account
-# @pt.expected each appears once with its source; only real accounts are keyed by bare name; copied-token profiles are marked not usable and left out with profiles=False (the dashboard)
+# @pt.expected each appears once with its source; only real accounts are keyed by bare name; copied-token profiles are marked not usable and left out with profiles=False (the dashboard); an account whose login probe failed reads "logged out" whatever its stored state
 # @pt.target bridge.tui.account_rows
 # @pt.method unit
 # @pt.legacy none
@@ -117,6 +117,7 @@ def test_account_rows() -> None:
     assert list(rows) == ["default", "gm", "codex-switch:tv", "codex-profile:old",
                           "claude-switch:me", "installed:opencode"]
     assert rows["gm"][2] == "registry" and rows["default"][6] == "(global login)"
+    assert str(rows["gm"][4]) == "logged out" and rows["default"][4] == "available"
     assert "not usable" in str(rows["claude-switch:me"][4])
     assert "not usable" in str(rows["codex-profile:old"][4])
     assert [k for k, _ in account_rows(listing, profiles=False)] == [
