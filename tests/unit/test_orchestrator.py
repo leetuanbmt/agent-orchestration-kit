@@ -1,5 +1,6 @@
 """Orchestrator config: schema validation, legacy mapping, account isolation and slots."""
 
+import json
 import os
 from pathlib import Path
 
@@ -44,6 +45,20 @@ def test_examples():
     assert main.role("executor").agents == ["codex-a", "codex-b"]
     assert main.agent(main.role("reviewer").agents[0]).adapter == "claude-cli"
     assert main.max_attempts == 3
+
+
+# @pt.id KIT-ORCH-001b-config-example
+# @pt.item Shipped .ai/config.example.json
+# @pt.condition the example is loaded as BridgeConfig next to an orchestrator.yaml
+# @pt.expected it validates and holds no legacy-only keys (accounts, auto_switch) that orchestrator.yaml rejects
+# @pt.target bridge.config.BridgeConfig, bridge.orchestrator.load
+# @pt.method unit
+# @pt.legacy .ai/config.json accounts (moved to orchestrator.yaml)
+def test_config_example():
+    data = json.loads((EXAMPLES.parent / ".ai" / "config.example.json").read_text())
+    cfg = BridgeConfig.model_validate(data)
+    assert not cfg.accounts and not cfg.auto_switch.enabled
+    assert not {"accounts", "default_account", "auto_switch", "max_attempts"} & set(data)
 
 
 # @pt.id KIT-ORCH-002-errors

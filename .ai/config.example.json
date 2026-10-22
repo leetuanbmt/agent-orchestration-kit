@@ -1,9 +1,11 @@
 {
   "sandbox": "workspace-write",
+  "codex_bin": "codex",
+  "claude_bin": "claude",
+  "opencode_bin": "opencode",
+  "agy_bin": "agy",
   "default_timeout_s": 1800,
-  "max_attempts": 3,
-  "default_account": "default",
-  "accounts": {
-    "work": {"codex_home": "~/.agent-bridge-homes/work"}
-  }
+  "max_timeout_s": 7200,
+  "network_retries": 1,
+  "verify_timeout_s": 900
 }

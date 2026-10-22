@@ -201,7 +201,9 @@ def main(argv: list[str] | None = None) -> None:
                               "not OK")
     sub.add_parser("config-check", help="validate .ai/orchestrator.yaml (or the legacy config)")
     sub.add_parser("agents", help="list agents, roles and availability")
-    sub.add_parser("account-list", help="every account on this machine")
+    sub.add_parser("account-list", help="usable accounts on this machine").add_argument(
+        "--all", action="store_true",
+        help="also list switch profiles, homes not added and CLIs without an account")
     sub.add_parser("account-clear").add_argument("name")
     login = sub.add_parser("account-login", help="HUMAN ONLY: log in an isolated account")
     login.add_argument("name")
@@ -274,7 +276,10 @@ def main(argv: list[str] | None = None) -> None:
             from rich.console import Console
 
             from . import render
-            Console().print(getattr(render, view)(out))
+            console = Console()
+            extra = ({"width": console.width, "show_all": args.all}
+                     if args.cmd == "account-list" else {})
+            console.print(getattr(render, view)(out, **extra))
         else:
             print(dumps(out))
     if args.cmd == "health" and not out["ok"]:

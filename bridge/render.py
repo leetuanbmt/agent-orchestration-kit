@@ -21,14 +21,15 @@ STYLE = {"DONE": "green", "APPROVED": "bold yellow", "REVIEW": "yellow", "PAUSED
          "VERIFYING": "cyan"}
 
 
-def quota_text(quota: Any) -> str:
+def quota_text(quota: Any, short: bool = False) -> str:
+    left = "" if short else " left"
     if not isinstance(quota, dict):
-        return f"{quota:.0f}% left" if isinstance(quota, (int, float)) else str(quota)
+        return f"{quota:.0f}%{left}" if isinstance(quota, (int, float)) else str(quota)
     parts = []
-    for key, label in (("primary", "5h"), ("secondary", "week")):
+    for key, label in (("primary", "5h"), ("secondary", "wk" if short else "week")):
         window = quota.get(key)
         if isinstance(window, dict) and window.get("used_percent") is not None:
-            parts.append(f"{label} {100 - float(window['used_percent']):.0f}% left")
+            parts.append(f"{label} {100 - float(window['used_percent']):.0f}%{left}")
     return " · ".join(parts) or "UNKNOWN"
 
 
@@ -62,11 +63,12 @@ def _steps(hints: list[str], title: str = "Next:") -> list[RenderableType]:
     return [out]
 
 
-def account_rows(listing: dict[str, Any]) -> list[tuple[str, tuple[Any, ...]]]:
+def account_rows(listing: dict[str, Any],
+                 profiles: bool = True) -> list[tuple[str, tuple[Any, ...]]]:
     """Every account the machine knows about; only rows keyed by a bare name are usable here.
 
-    codex-switch homes can be added; claude-switch profiles hold copied tokens and are
-    shown so the user knows they exist, never used."""
+    codex-switch homes can be added; switch profiles hold copied tokens and are never used,
+    so `profiles=False` leaves them out."""
     rows: list[tuple[str, tuple[Any, ...]]] = []
     for acc in listing["accounts"]:
         rows.append((acc["name"], (acc["name"], acc.get("provider", "openai"), acc["source"],
@@ -78,11 +80,11 @@ def account_rows(listing: dict[str, Any]) -> list[tuple[str, tuple[Any, ...]]]:
             rows.append((f"codex-switch:{home['name']}", (
                 home["name"], "openai", "codex-switch home", "yes" if home["logged_in"] else "no",
                 Text("not added", style="yellow"), "-", home["codex_home"])))
-    for profile in listing["codex_switch"]["profiles"]:
+    for profile in listing["codex_switch"]["profiles"] if profiles else []:
         rows.append((f"codex-profile:{profile['name']}", (
             profile["name"], "openai", "codex-switch profile", "-",
             Text("not usable: copied tokens", style="dim"), "-", "-")))
-    for profile in listing.get("claude_switch", {}).get("profiles", []):
+    for profile in listing.get("claude_switch", {}).get("profiles", []) if profiles else []:
         rows.append((f"claude-switch:{profile['name']}", (
             profile["name"], "anthropic", "claude-switch profile", "-",
             Text("not usable: copied tokens", style="dim"), "-", profile.get("email") or "-")))
@@ -93,15 +95,33 @@ def account_rows(listing: dict[str, Any]) -> list[tuple[str, tuple[Any, ...]]]:
     return rows
 
 
-def accounts_view(listing: dict[str, Any]) -> Group:
-    table = Table("Account", "Provider", "Source", "Logged in", "State", "Quota", "Home")
-    for _, cells in account_rows(listing):
-        table.add_row(*cells)
+# Below this many columns the table drops Source and Home and shortens the quota.
+NARROW = 120
+
+
+def accounts_view(listing: dict[str, Any], width: int = NARROW,
+                  show_all: bool = False) -> Group:
+    """Usable accounts only unless `show_all`; rows keyed by a bare name are the accounts."""
+    rows = account_rows(listing)
+    shown = [(k, c) for k, c in rows if show_all or ":" not in k]
+    quotas = {a["name"]: a.get("quota") for a in listing["accounts"]}
+    if width < NARROW:
+        table = Table("Account", "Provider", "Login", "State", "Quota")
+        for key, c in shown:
+            table.add_row(c[0], c[1], c[3], c[4],
+                          quota_text(quotas[key], short=True) if key in quotas else "-")
+    else:
+        table = Table("Account", "Provider", "Source", "Logged in", "State", "Quota", "Home")
+        for _, c in shown:
+            table.add_row(*c)
     hints = [f"agent-bridge account-add {h['name']} --provider openai --home {h['codex_home']}"
              for h in listing["codex_switch"]["homes"] if not h["configured"]]
     hints += [cli["hint"] for cli in listing.get("unconfigured", [])]
-    note = Text("\nswitch profiles hold copied tokens: listed only, never used. "
-                "--json for the full data.", style="dim")
+    hidden = len(rows) - len(shown)
+    note = Text(f"\n{hidden} more not usable here (switch profiles, homes not added, CLIs "
+                "without an account): --all to list them." if hidden else
+                "\nswitch profiles hold copied tokens: listed only, never used.", style="dim")
+    note.append(" --json for the full data.")
     return Group(table, *_steps(hints, "To add an account:"), note)
 
 

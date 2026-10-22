@@ -1,11 +1,13 @@
 """Human views of health / agents / list: a table in a terminal, the same JSON otherwise."""
 
+import io
 import json
 
 import pytest
+from rich.console import Console
 
 from bridge import cli
-from bridge.render import ago
+from bridge.render import accounts_view, ago
 from tests.conftest import run, spec
 
 
@@ -66,6 +68,42 @@ def test_health_exit(project, capsys, monkeypatch):
         _out(capsys, "health", tty=False, monkeypatch=monkeypatch)
     assert piped.value.code == 1
     assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+LISTING = {
+    "accounts": [{"name": "work", "provider": "openai", "source": "registry", "logged_in": True,
+                  "state": "available", "home": "/h/work",
+                  "quota": {"primary": {"used_percent": 22}, "secondary": {"used_percent": 13}}}],
+    "codex_switch": {"homes": [{"name": "tv", "codex_home": "/c/tv", "logged_in": True,
+                                "configured": False}], "profiles": [{"name": "old"}]},
+    "claude_switch": {"profiles": [{"name": "me"}]},
+    "unconfigured": [{"provider": "google", "binary": "/bin/agy",
+                      "hint": "agent-bridge account-add <name> --provider google"}],
+}
+
+
+def _text(renderable, width):
+    console = Console(width=width, record=True, file=io.StringIO())
+    console.print(renderable)
+    return console.export_text()
+
+
+# @pt.id KIT-CLI-VIEW-004-accounts-compact
+# @pt.item account-list shows usable accounts, compactly on a narrow terminal
+# @pt.condition one registry account plus a home not added, two switch profiles and a bare CLI
+# @pt.expected by default only the account is listed, with a count of the hidden rows and the add hints; a narrow terminal drops Source and Home and shortens the quota; --all lists every row
+# @pt.target bridge.render.accounts_view, bridge.cli.main
+# @pt.method unit
+# @pt.legacy none
+def test_accounts_compact():
+    narrow = _text(accounts_view(LISTING, width=80), 80)
+    assert "work" in narrow and "5h 78% · wk 87%" in narrow
+    assert "Home" not in narrow and "Source" not in narrow and "/h/work" not in narrow
+    assert "old" not in narrow and "4 more not usable here" in narrow
+    assert "--provider google" in narrow and "--home /c/tv" in narrow
+    wide = _text(accounts_view(LISTING, width=160, show_all=True), 160)
+    assert all(s in wide for s in ("Home", "/h/work", "old", "me", "not added", "no account"))
+    assert "5h 78% left" in wide and "more not usable" not in wide
 
 
 # @pt.id KIT-CLI-VIEW-003-ago

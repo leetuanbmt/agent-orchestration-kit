@@ -237,7 +237,7 @@ def test_list_surfaces(tmp_path, monkeypatch, capsys):
                         lambda name: "/bin/agy" if name == "agy" else None)
     cli.main(["account-list"])
     out = capsys.readouterr().out
-    assert "default" in out and "project" in out and "{" not in out
+    assert "default" in out and "available" in out and "{" not in out
     assert "agent-bridge account-add <name> --provider google" in out
     monkeypatch.setattr(b, "list_accounts", Mock(side_effect=ValueError("bad account")))
     with pytest.raises(server.ToolError, match="bad account"):
