@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- `init` works when `.claude/skills` (or another kit directory) is a symlink to a directory
+  inside the project, such as a shared `.agents/skills`: the link is followed and the skill is
+  installed there. Links leaving the work tree or entering `.git`, and symlinked files, are
+  still refused. Retired `codex-*` paths are only looked at when the manifest lists them.
 - `account-list`, `agents` and the dashboard no longer start agy to check a google account's
   login: run under the account's HOME, agy made macOS show "Keychain Not Found" on every
   refresh. The check reads the token file's size instead.
