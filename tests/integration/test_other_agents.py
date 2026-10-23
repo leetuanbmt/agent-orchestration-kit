@@ -286,3 +286,26 @@ def test_list_outside_project(monkeypatch, capsys):
         cli.main(["account-list"])
     assert failed.value.code == 1
     assert "not a git repository" in capsys.readouterr().err
+
+
+# @pt.id KIT-ACCT-012-agy-login-without-starting-agy
+# @pt.item agy login checks never start agy
+# @pt.condition google accounts whose HOME has no token, an empty token, a token; the global login; agy missing from PATH
+# @pt.expected logged in only with a non-empty token file, unknown without the CLI, and agy is never started (starting it under an account HOME pops macOS "Keychain Not Found")
+# @pt.target bridge.accounts.login_status
+# @pt.method integration
+# @pt.legacy login_status ran `agy models` under the account HOME
+def test_agy_login_status_reads_token_file(fake_others, tmp_path, monkeypatch):
+    from bridge.accounts import AGY_TOKEN, Account, login_status
+    cfg = BridgeConfig()
+    home = tmp_path / "gm"
+    acc = Account("gm", home, "google")
+    assert login_status(cfg, acc) is False
+    (home / AGY_TOKEN).parent.mkdir(parents=True)
+    (home / AGY_TOKEN).touch()
+    assert login_status(cfg, acc) is False
+    (home / AGY_TOKEN).write_text("token")
+    assert login_status(cfg, acc) is True
+    assert login_status(cfg, Account("global", None, "google")) is True  # fixture's $HOME token
+    assert not (fake_others / "agy" / "models_called").exists()
+    assert login_status(BridgeConfig(agy_bin="agy-not-installed"), acc) is None

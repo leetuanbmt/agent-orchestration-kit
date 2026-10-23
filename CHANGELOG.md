@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- `account-list`, `agents` and the dashboard no longer start agy to check a google account's
+  login: run under the account's HOME, agy made macOS show "Keychain Not Found" on every
+  refresh. The check reads the token file's size instead.
 - Tasks the workflow driver starts or resumes are recorded with actor `bridge` instead of
   `client`, so the audit trail tells automatic retries from explicit calls.
 - The dashboard quota bar and `account-list` ignored a window's reset time, so a reset 5h
