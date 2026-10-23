@@ -205,6 +205,31 @@ def _next_for(task: dict[str, Any]) -> str | None:
     return None
 
 
+def projects_view(data: dict[str, Any], now: float | None = None) -> Group | Text:
+    """`agent-bridge tasks`: one block per project or worktree, newest activity first."""
+    if not data["projects"]:
+        return Text("No project has tasks yet. Projects appear here once agent-bridge has run "
+                    "in them (the MCP server, the dashboard or any command).", style="dim")
+    blocks: list[RenderableType] = []
+    for p in data["projects"]:
+        head = Text()
+        head.append(p["project"], style="bold")
+        head.append(f"  {p['root']}", style="dim")
+        head.append("\n" + " · ".join(f"{n} {s}" for s, n in sorted(p["counts"].items())),
+                    style="dim")
+        table = Table("", "Task", "State", "Agent", "Updated", expand=True)
+        table.add_column("Objective", ratio=1, no_wrap=True, overflow="ellipsis")
+        for t in p["tasks"]:
+            mark = Text("●", style="bold yellow") if t["state"] in ATTENTION else ""
+            table.add_row(mark, t["task_id"], Text(t["state"], style=STYLE.get(t["state"], "")),
+                          t["agent"] or "-", ago(t["updated_at"], now),
+                          (t["objective"].splitlines() or [""])[0])
+        blocks += [head, table] if p["tasks"] else [head]
+    blocks.append(Text("Details of one: run agent-bridge list or result in that project.",
+                       style="dim"))
+    return Group(*blocks)
+
+
 def tasks_view(tasks: list[dict[str, Any]], now: float | None = None,
                project: str | None = None) -> Group | Text:
     """`project` is the root the tasks belong to: each project (worktree) has its own tasks."""
