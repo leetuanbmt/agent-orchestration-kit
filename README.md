@@ -42,10 +42,29 @@ whatever the agent says, even if the tests never ran or it edited files outside 
   narrowest permissions, checks which files changed and re-runs the verification commands
   itself. An agent's own report is never treated as evidence.
 
-```
-user ─▶ MCP client (Claude Code) ──MCP stdio──▶ agent-bridge ──argv, own process group──▶ codex exec --json
-          (plan, review, or just drive)          (roles → agents → accounts,              claude -p --output-format stream-json
-                                                  scope check, verification, audit log)   (plan / implement / review)
+Who does what: the main Claude session talks to the bridge only through MCP tools, the bridge
+starts every other agent, and a human keeps the irreversible steps.
+
+```mermaid
+flowchart TB
+    user(["You"])
+    claude["<b>Main Claude Code session</b> (client)<br/>plans, splits work into tasks, reviews, reports"]
+    router["<b>agent-bridge</b> · route<br/>role → agent → account<br/>default agent, quota fallback"]
+    codex["Executor: codex exec<br/>OS sandbox, own account"]
+    helper["Planner / reviewer, read-only<br/>claude -p · opencode · agy"]
+    gates["<b>agent-bridge</b> · gates<br/>scope of every changed file<br/>bridge-run verification"]
+    db[("<b>agent-bridge</b> · SQLite in .git/agent-bridge<br/>tasks · attempts · audit log")]
+    human["Human in a terminal<br/>approve · account-login · reassign"]
+
+    user <--> claude
+    claude -- "bridge_* tools over MCP stdio" --> router
+    router -- "start" --> codex
+    router -- "start" --> helper
+    codex -- "diff, exit code" --> gates
+    helper -- "plan / decision" --> db
+    gates -- "REVIEW / REWORK" --> db
+    human -- "high-risk approval, logins" --> db
+    db -. "status, evidence" .-> claude
 ```
 
 Without `.ai/orchestrator.yaml` the kit behaves exactly as 0.1: the Claude Code session plans
@@ -241,6 +260,50 @@ no listed agent can play are rejected with the field path in the message.
 
 ---
 
+## Orchestration flow with the main Claude session
+
+The main Claude Code session plans and reviews; the bridge, not any agent, decides whether the
+work passed. One task, from request to report:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor You
+    participant C as Main Claude session
+    participant B as agent-bridge
+    participant X as Executor (Codex)
+    actor H as Human (terminal)
+
+    You->>C: describe the change
+    C->>B: bridge_create_task(spec, allowed_paths, verification_commands)
+    B-->>C: READY (path rules checked)
+    C->>B: bridge_execute_task
+    B->>B: route to the default executor (fallback in order)
+    B->>X: run in its account home, sandboxed
+    loop every 55 s
+        C->>B: bridge_task_status(wait_s=55)
+    end
+    X-->>B: exits
+    B->>B: scope check + re-run verification
+    alt a check failed
+        B-->>C: REWORK (budget left) or BLOCKED
+        C->>B: bridge_resume_task(notes)
+    else all gates passed
+        B-->>C: REVIEW
+        C->>B: bridge_task_result (patch, checks, violations)
+        C->>B: bridge_review_task(approve / rework / block)
+        B->>B: re-check gates → APPROVED
+        alt risk high or sensitive path
+            B-->>H: waits at APPROVED
+            H->>B: agent-bridge approve TASK_ID
+        end
+        B-->>C: DONE
+    end
+    C-->>You: report with the evidence
+```
+
+---
+
 ## Task lifecycle
 
 States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED → DONE`, plus `REWORK`,
@@ -256,7 +319,7 @@ States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED →
 | `APPROVED → DONE` | bridge, or a **human** for high risk | quality gates re-checked |
 
 A task with `risk_level: high`, or a change under a sensitive path (migrations, auth, deploy, CI,
-secrets), stops at `APPROVED` until a human runs `agent-bridge approve <id>` in a terminal.
+secrets), stops at `APPROVED` until a human runs `agent-bridge approve TASK_ID` in a terminal.
 
 ---
 

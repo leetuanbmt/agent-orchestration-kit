@@ -42,10 +42,29 @@ xong, kể cả khi test chưa chạy hay nó sửa ra ngoài phạm vi được
   quyền hẹp nhất, kiểm tra file nào thay đổi và tự chạy lại lệnh verification. Lời tự báo cáo
   của agent không được tính là bằng chứng.
 
-```
-user ─▶ MCP client (Claude Code) ──MCP stdio──▶ agent-bridge ──argv, own process group──▶ codex exec --json
-          (plan, review, hoặc chỉ điều phối)     (role → agent → account,                  claude -p --output-format stream-json
-                                                  scope check, verification, audit log)    (plan / implement / review)
+Ai làm gì: phiên Claude chính chỉ nói chuyện với bridge qua MCP tool, bridge khởi chạy mọi
+agent khác, còn các bước không đảo ngược được thuộc về người dùng.
+
+```mermaid
+flowchart TB
+    user(["Bạn"])
+    claude["<b>Phiên Claude Code chính</b> (client)<br/>lập kế hoạch, chia task, review, báo cáo"]
+    router["<b>agent-bridge</b> · định tuyến<br/>role → agent → account<br/>agent mặc định, dự phòng khi hết quota"]
+    codex["Executor: codex exec<br/>OS sandbox, account riêng"]
+    helper["Planner / reviewer, chỉ đọc<br/>claude -p · opencode · agy"]
+    gates["<b>agent-bridge</b> · cổng kiểm<br/>scope của mọi file đã đổi<br/>bridge tự chạy verification"]
+    db[("<b>agent-bridge</b> · SQLite in .git/agent-bridge<br/>tasks · attempts · audit log")]
+    human["Người dùng ở terminal<br/>approve · account-login · reassign"]
+
+    user <--> claude
+    claude -- "tool bridge_* qua MCP stdio" --> router
+    router -- "khởi chạy" --> codex
+    router -- "khởi chạy" --> helper
+    codex -- "diff, mã thoát" --> gates
+    helper -- "plan / decision" --> db
+    gates -- "REVIEW / REWORK" --> db
+    human -- "duyệt rủi ro cao, login" --> db
+    db -. "trạng thái, bằng chứng" .-> claude
 ```
 
 Không có `.ai/orchestrator.yaml` thì kit chạy y như 0.1: phiên Claude Code lập kế hoạch và
@@ -243,6 +262,50 @@ field.
 
 ---
 
+## Luồng điều phối với phiên Claude chính
+
+Phiên Claude Code chính lập kế hoạch và review; bridge, không phải agent nào, quyết định công
+việc có đạt hay không. Một task, từ yêu cầu tới báo cáo:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor You as Bạn
+    participant C as Phiên Claude chính
+    participant B as agent-bridge
+    participant X as Executor (Codex)
+    actor H as Người dùng (terminal)
+
+    You->>C: mô tả thay đổi
+    C->>B: bridge_create_task(spec, allowed_paths, verification_commands)
+    B-->>C: READY (đã kiểm luật path)
+    C->>B: bridge_execute_task
+    B->>B: định tuyến tới executor mặc định (dự phòng theo thứ tự)
+    B->>X: chạy trong home của account, có sandbox
+    loop mỗi 55 giây
+        C->>B: bridge_task_status(wait_s=55)
+    end
+    X-->>B: kết thúc
+    B->>B: kiểm scope + chạy lại verification
+    alt có kiểm tra thất bại
+        B-->>C: REWORK (còn lượt) hoặc BLOCKED
+        C->>B: bridge_resume_task(notes)
+    else qua mọi cổng kiểm
+        B-->>C: REVIEW
+        C->>B: bridge_task_result (patch, checks, violations)
+        C->>B: bridge_review_task(approve / rework / block)
+        B->>B: kiểm lại cổng → APPROVED
+        alt rủi ro cao hoặc path nhạy cảm
+            B-->>H: chờ ở APPROVED
+            H->>B: agent-bridge approve TASK_ID
+        end
+        B-->>C: DONE
+    end
+    C-->>You: báo cáo kèm bằng chứng
+```
+
+---
+
 ## Vòng đời task
 
 Trạng thái: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED → DONE`, cộng thêm
@@ -258,7 +321,7 @@ Trạng thái: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPRO
 | `APPROVED → DONE` | bridge, hoặc **người** với task rủi ro cao | quality gate được kiểm tra lại |
 
 Task có `risk_level: high`, hoặc thay đổi đụng tới path nhạy cảm (migrations, auth, deploy, CI,
-secrets), dừng ở `APPROVED` cho tới khi một người chạy `agent-bridge approve <id>` trong
+secrets), dừng ở `APPROVED` cho tới khi một người chạy `agent-bridge approve TASK_ID` trong
 terminal.
 
 ---
