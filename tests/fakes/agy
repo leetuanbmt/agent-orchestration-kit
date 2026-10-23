@@ -29,6 +29,9 @@ if not argv:  # interactive start: signs in, then the human quits it
     token.write_text("fake")
     sys.exit(0)
 if argv[:1] == ["models"]:
+    if os.environ.get("FAKE_AGY_DIR"):  # the bridge must not start agy just to check a login
+        Path(os.environ["FAKE_AGY_DIR"]).mkdir(parents=True, exist_ok=True)
+        (Path(os.environ["FAKE_AGY_DIR"]) / "models_called").touch()
     if not token.exists():
         print("Error: Please sign in to view available models.", file=sys.stderr)
         sys.exit(1)

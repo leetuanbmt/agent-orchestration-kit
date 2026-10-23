@@ -124,12 +124,21 @@ def binary(cfg: BridgeConfig, provider: str) -> str:
             "opencode": cfg.opencode_bin}[provider]
 
 
+AGY_TOKEN = Path(".gemini") / "antigravity-cli" / "antigravity-oauth-token"
+
+
 def login_status(cfg: BridgeConfig, acc: Account) -> bool | None:
+    if acc.provider == "google":
+        # Starting agy under an account's HOME makes macOS ask for a keychain that HOME lacks
+        # ("Keychain Not Found"), so the check looks at the token file's size, never its content.
+        if shutil.which(binary(cfg, acc.provider)) is None:
+            return None
+        with contextlib.suppress(OSError):
+            return ((acc.home or Path.home()) / AGY_TOKEN).stat().st_size > 0
+        return False
     exe = binary(cfg, acc.provider)
     argv = {"openai": [exe, "login", "status", *codex_overrides(acc)],
             "anthropic": [exe, "auth", "status"],
-            # agy has no status command; listing models needs a signed-in account.
-            "google": [exe, "models"],
             "opencode": [exe, "auth", "list"]}[acc.provider]
     try:
         result = subprocess.run(argv, env=account_env(acc, os.environ), timeout=20,
@@ -165,7 +174,7 @@ def global_login_marker(cfg: BridgeConfig, provider: str) -> object:
     if provider == "anthropic":
         return global_claude_identity(cfg)
     if provider == "google":
-        token = Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
+        token = Path.home() / AGY_TOKEN
         with contextlib.suppress(OSError):
             st = token.stat()
             return st.st_mtime_ns, st.st_size

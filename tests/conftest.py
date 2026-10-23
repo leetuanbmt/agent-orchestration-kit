@@ -78,7 +78,7 @@ def fake_others(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_codex: Pat
     monkeypatch.setenv("FAKE_AGY_DIR", str(state / "agy"))
     token = Path(os.environ["HOME"]) / ".gemini/antigravity-cli/antigravity-oauth-token"
     token.parent.mkdir(parents=True, exist_ok=True)
-    token.touch()
+    token.write_text("fake")
     return state
 
 
