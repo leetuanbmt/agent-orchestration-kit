@@ -70,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs `opencode auth login` to pick the integration and method (API key, token).
 
 ### Added
+- `agent-bridge tasks` lists tasks from any directory, grouped by project: every project the
+  bridge has run in (recorded in `~/.agent-bridge/projects.json`) and each git worktree, with
+  per-state counts and the newest tasks (`--state`, `--limit`, `--json`). Databases are opened
+  read-only.
 - A role can name its `default` agent (`executor: {agents: [a, b], default: b}`): unpinned tasks
   try it first and fall back to the other agents in list order, so the default no longer has to
   be first in the list. Not allowed with `strategy: explicit`.

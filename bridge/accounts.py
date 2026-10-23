@@ -206,6 +206,28 @@ def _save_registry(data: dict[str, dict[str, str | None]]) -> None:
     os.replace(tmp, base / "accounts.json")
 
 
+def known_projects() -> list[str]:
+    """Project roots (worktrees included) where agent-bridge has run on this machine."""
+    with contextlib.suppress(OSError, ValueError):
+        data = json.loads((registry_dir() / "projects.json").read_text())
+        if isinstance(data, list):
+            return [p for p in data if isinstance(p, str)]
+    return []
+
+
+def remember_project(root: Path) -> None:
+    """Add a project to the machine-wide list `agent-bridge tasks` reads; best effort."""
+    projects = known_projects()
+    if str(root) in projects:
+        return
+    with contextlib.suppress(OSError):
+        base = registry_dir()
+        base.mkdir(mode=0o700, exist_ok=True)
+        tmp = base / f"projects.json.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps(sorted({*projects, str(root)}), indent=2) + "\n")
+        os.replace(tmp, base / "projects.json")
+
+
 def register(name: str, provider: str, home: str | None = None) -> Account:
     """Record a machine-wide account; without `home`, create a fresh one under the registry."""
     if name == "default" or not _NAME.fullmatch(name):

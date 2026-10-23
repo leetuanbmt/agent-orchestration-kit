@@ -22,7 +22,7 @@ from .accounts import (account_env, global_auth_fingerprint, global_claude_ident
                        pick_account, register, resolve_profile, shell_use, unregister)
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config
 from .executor import AGENT_ENV
-from .service import Bridge, dumps, resolve_account
+from .service import Bridge, dumps, project_tasks, resolve_account
 
 
 def _human_confirm(task_id: str) -> bool:
@@ -45,7 +45,7 @@ def _server_entry() -> dict[str, Any]:
 
 # Commands a person reads: a table in a terminal, JSON with --json or through a pipe.
 VIEWS = {"account-list": "accounts_view", "health": "health_view", "agents": "agents_view",
-         "list": "tasks_view"}
+         "list": "tasks_view", "tasks": "projects_view"}
 HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove"}
 EXAMPLES = install.KIT / "examples"
 
@@ -98,6 +98,12 @@ async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "uninstall":
         install.uninstall(Path(args.dir), args.purge)
         return None
+    if args.cmd == "tasks":  # works anywhere: reads every known project's tasks
+        try:
+            here = find_root()
+        except RuntimeError:
+            here = None
+        return project_tasks(args.state, args.limit, here)
     if args.cmd == "config-check":
         root = find_root()
         orch = orchestrator.load(root, load_config(root))
@@ -274,6 +280,10 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("status")
     s.add_argument("task_id")
     s.add_argument("--wait", type=float, default=0)
+    tk = sub.add_parser("tasks", help="tasks of every project and worktree agent-bridge has "
+                                      "run in, grouped by project")
+    tk.add_argument("--state")
+    tk.add_argument("--limit", type=int, default=10, help="tasks shown per project")
     ls = sub.add_parser("list")
     ls.add_argument("--state")
     ls.add_argument("--limit", type=int, default=50)

@@ -9,6 +9,7 @@ import json
 import os
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import time
 from collections.abc import Callable
@@ -17,8 +18,9 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .accounts import HOME_ENV, Account, AccountLock, binary, discover, load_registry, login_status, \
-    resolve, resolve_profile
+from . import install
+from .accounts import HOME_ENV, Account, AccountLock, binary, discover, known_projects, \
+    load_registry, login_status, remember_project, resolve, resolve_profile
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
 from .executor import ADAPTERS, PLAN_SCHEMA, REVIEW_SCHEMA, Adapter, RunRequest, RunResult, \
     build_plan_prompt, build_prompt, build_review_prompt, build_rework_prompt, kill_stale
@@ -29,7 +31,7 @@ from .quota import codex_home_for, read_quota, remaining_pct
 from .review import diff, parse_command, run_verification, scope_violations, snapshot, \
     touches_sensitive
 from .security import PathError, process_started, redact, rule_unsafe, validate_pattern
-from .state import ConflictError, Store
+from .state import ConflictError, Store, overview
 
 # Outcomes that mean "the environment, not the code": park the task, never auto-retry.
 PAUSE_OUTCOMES = {"quota", "auth", "network", "missing_binary"}
@@ -82,6 +84,7 @@ class Bridge:
         if migrated:
             self.store.log(None, "bridge", "state_migrated",
                            {"from": str(legacy), "to": str(database)})
+        remember_project(self.root)
         self._adapters: dict[str, Adapter] = {}
         self._runs: dict[str, asyncio.Task[None]] = {}
         self._workflows: dict[str, asyncio.Task[None]] = {}
@@ -943,6 +946,41 @@ class Bridge:
         pending = [*self._runs.values(), *self._workflows.values()]
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+
+
+def project_tasks(state: str | None = None, limit: int = 10,
+                  here: Path | None = None) -> dict[str, Any]:
+    """Tasks of every project agent-bridge has run in (and `here`), and of their git worktrees
+    (each keeps its own tasks), most recently active project first."""
+    roots: dict[str, None] = {}
+    for root in dict.fromkeys([*known_projects(), *([str(here)] if here else [])]):
+        out = subprocess.run(["git", "-C", root, "worktree", "list", "--porcelain"],
+                             capture_output=True, text=True, check=False)
+        roots |= dict.fromkeys([root, *(line.removeprefix("worktree ")
+                                        for line in out.stdout.splitlines()
+                                        if line.startswith("worktree "))])
+    projects = []
+    for root in roots:
+        try:
+            db = install.bridge_dir(install.git_dir(Path(root))) / "bridge.db"
+        except (OSError, subprocess.CalledProcessError):
+            continue  # the project or worktree is gone
+        if not db.exists():
+            continue
+        try:
+            data = overview(db, state, limit)
+        except sqlite3.Error:
+            continue  # locked mid-migration or not a bridge database
+        if not data["counts"]:
+            continue
+        projects.append({"project": Path(root).name, "root": root, "counts": data["counts"],
+                         "tasks": [{"task_id": t["id"], "state": t["state"],
+                                    "agent": t.get("agent") or t.get("account"),
+                                    "objective": (t.get("spec") or {}).get("objective", ""),
+                                    "updated_at": t["updated_at"]} for t in data["tasks"]]})
+    projects.sort(key=lambda p: max((t["updated_at"] for t in p["tasks"]), default=0),
+                  reverse=True)
+    return {"projects": projects}
 
 
 def dumps(obj: Any) -> str:

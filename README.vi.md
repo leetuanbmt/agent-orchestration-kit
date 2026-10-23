@@ -203,6 +203,7 @@ terminal (JSON khi thêm `--json` hoặc qua pipe):
 agent-bridge health        # adapter, quota còn lại theo account, số task
 agent-bridge account-list  # account, trạng thái đăng nhập, codex-switch / claude-switch, CLI chưa dùng
 agent-bridge list          # task, mới nhất trước
+agent-bridge tasks         # task của mọi project và worktree trên máy, nhóm theo project
 ```
 
 <img alt="agent-bridge list" src="docs/images/cli-list.svg" width="900">
@@ -537,7 +538,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Kết quả:
 ```console
-186 passed, 5 skipped
+187 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` và `agy` nói đúng giao thức JSONL / stream-json thật và trả lời
