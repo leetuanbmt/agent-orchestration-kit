@@ -24,8 +24,9 @@ class State(StrEnum):
 
 
 class Actor(StrEnum):
-    BRIDGE = "bridge"  # automatic, driven by execution/verification outcomes
-    CLAUDE = "claude"  # planner/reviewer, via MCP or the CLI
+    BRIDGE = "bridge"  # automatic, driven by execution/verification outcomes and workflows
+    CLIENT = "client"  # whoever calls the MCP tools or the CLI (often an interactive agent)
+    AGENT = "agent"  # a configured agent's structured decision (planner, reviewer)
     HUMAN = "human"  # interactive TTY confirmation only
 
 
@@ -36,10 +37,11 @@ ACTIVE = frozenset({S.RUNNING, S.VERIFYING})
 # (from, to) -> actors allowed to make the move. Anything absent is illegal.
 TRANSITIONS: dict[tuple[State, State], frozenset[Actor]] = {
     (S.BACKLOG, S.READY): frozenset({A.BRIDGE}),
-    (S.READY, S.RUNNING): frozenset({A.CLAUDE}),
-    (S.REWORK, S.RUNNING): frozenset({A.CLAUDE}),
-    (S.FAILED, S.RUNNING): frozenset({A.CLAUDE}),
-    (S.PAUSED, S.RUNNING): frozenset({A.CLAUDE}),
+    # The bridge starts runs itself only inside a workflow it is driving.
+    (S.READY, S.RUNNING): frozenset({A.CLIENT, A.BRIDGE}),
+    (S.REWORK, S.RUNNING): frozenset({A.CLIENT, A.BRIDGE}),
+    (S.FAILED, S.RUNNING): frozenset({A.CLIENT, A.BRIDGE}),
+    (S.PAUSED, S.RUNNING): frozenset({A.CLIENT, A.BRIDGE}),
     (S.RUNNING, S.VERIFYING): frozenset({A.BRIDGE}),
     (S.RUNNING, S.FAILED): frozenset({A.BRIDGE}),
     (S.RUNNING, S.PAUSED): frozenset({A.BRIDGE}),
@@ -48,19 +50,20 @@ TRANSITIONS: dict[tuple[State, State], frozenset[Actor]] = {
     (S.VERIFYING, S.REWORK): frozenset({A.BRIDGE}),
     (S.VERIFYING, S.BLOCKED): frozenset({A.BRIDGE}),
     (S.VERIFYING, S.PAUSED): frozenset({A.BRIDGE}),
-    (S.REVIEW, S.APPROVED): frozenset({A.CLAUDE}),
-    (S.REVIEW, S.REWORK): frozenset({A.CLAUDE}),
-    (S.REVIEW, S.BLOCKED): frozenset({A.CLAUDE}),
-    (S.REWORK, S.BLOCKED): frozenset({A.CLAUDE, A.BRIDGE}),
-    (S.FAILED, S.BLOCKED): frozenset({A.CLAUDE, A.BRIDGE}),
-    (S.PAUSED, S.BLOCKED): frozenset({A.CLAUDE, A.BRIDGE}),
+    # BRIDGE approves only when the workflow has no review stage (deterministic gates).
+    (S.REVIEW, S.APPROVED): frozenset({A.CLIENT, A.AGENT, A.BRIDGE}),
+    (S.REVIEW, S.REWORK): frozenset({A.CLIENT, A.AGENT}),
+    (S.REVIEW, S.BLOCKED): frozenset({A.CLIENT, A.AGENT}),
+    (S.REWORK, S.BLOCKED): frozenset({A.CLIENT, A.BRIDGE}),
+    (S.FAILED, S.BLOCKED): frozenset({A.CLIENT, A.BRIDGE}),
+    (S.PAUSED, S.BLOCKED): frozenset({A.CLIENT, A.BRIDGE}),
     # Low/medium risk: the bridge closes the task once its quality gates hold.
     # High risk / sensitive change: only a human closes it.
     (S.APPROVED, S.DONE): frozenset({A.BRIDGE, A.HUMAN}),
 }
 for _s in State:
     if _s not in TERMINAL:
-        TRANSITIONS[(_s, S.CANCELLED)] = frozenset({A.CLAUDE, A.HUMAN})
+        TRANSITIONS[(_s, S.CANCELLED)] = frozenset({A.CLIENT, A.HUMAN})
     if _s in ACTIVE:
         # Interrupted runs (process died) are parked for a manual resume.
         TRANSITIONS.setdefault((_s, S.PAUSED), frozenset({A.BRIDGE}))
@@ -79,10 +82,12 @@ def check_transition(src: State, dst: State, actor: Actor) -> None:
 
 
 class TaskSpec(BaseModel):
-    """What Claude hands to Codex. The bridge assigns the task id."""
+    """What the planner hands to an executor agent. The bridge assigns the task id."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    # agent pins the task to one configured agent; account is the legacy way to pin by account.
+    agent: str | None = None
     account: str | None = None
     objective: str = Field(min_length=1, max_length=4000)
     context: str = Field("", max_length=20000)

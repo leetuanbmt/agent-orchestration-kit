@@ -1,14 +1,21 @@
 {
-  "enabledMcpjsonServers": ["codex-bridge"],
+  "enabledMcpjsonServers": ["agent-bridge"],
   "permissions": {
     "deny": [
-      "Bash(*codex-bridge approve*)",
+      "Bash(*agent-bridge approve*)",
       "Bash(*-m bridge approve*)",
-      "Bash(*codex-bridge reassign*)",
+      "Bash(*agent-bridge reassign*)",
       "Bash(*-m bridge reassign*)",
       "Bash(*account-login*)",
+      "Bash(*account-add*)",
+      "Bash(*account-remove*)",
+      "Bash(*config-init*)",
+      "Bash(*opencode auth login*)",
+      "Bash(*opencode auth logout*)",
       "Bash(*codex login*)",
       "Bash(*codex logout*)",
+      "Bash(*claude auth login*)",
+      "Bash(*claude auth logout*)",
       "Bash(*codex-switch switch*)",
       "Bash(*codex-switch next*)",
       "Bash(*codex-switch home add*)",
@@ -16,7 +23,9 @@
       "Bash(*sqlite3*)",
       "Edit(/.ai/**)",
       "Read(~/.codex/auth.json)",
-      "Read(~/.codex-accounts/**)"
+      "Read(~/.codex-accounts/**)",
+      "Read(~/.agent-bridge/homes/**)",
+      "Read(~/.gemini/antigravity-cli/**)"
     ]
   }
 }

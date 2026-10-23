@@ -45,7 +45,7 @@ def manifest_path(root):
         ['git', '-C', str(root), 'rev-parse', '--absolute-git-dir'],
         check=True, capture_output=True, text=True,
     ).stdout.strip()
-    return Path(git_dir) / 'codex-bridge/install-manifest.json'
+    return Path(git_dir) / 'agent-bridge/install-manifest.json'
 
 
 # @pt.id KIT-SETUP-001-fresh
@@ -57,15 +57,15 @@ def manifest_path(root):
 # @pt.legacy none (new kit)
 def test_fresh_install(repo):
     result = run('setup.sh', repo)
-    server = json.loads((repo / '.mcp.json').read_text())['mcpServers']['codex-bridge']
-    assert server['args'] == ['run', '--project', str(KIT), 'codex-bridge', 'serve']
+    server = json.loads((repo / '.mcp.json').read_text())['mcpServers']['agent-bridge']
+    assert server['args'] == ['run', '--project', str(KIT), 'agent-bridge', 'serve']
     assert server['env'] == {'BRIDGE_PROJECT_ROOT': '${CLAUDE_PROJECT_DIR:-.}'}
     settings = json.loads((repo / '.claude/settings.json').read_text())
     assert settings == json.loads((KIT / '.claude/settings.json').read_text())
-    for name in ['orchestration', 'delegation', 'review', 'security']:
-        assert (repo / f'.claude/rules/codex-{name}.md').read_bytes() == (KIT / f'.claude/rules/codex-{name}.md').read_bytes()
-    assert (repo / '.claude/skills/codex-delegation/SKILL.md').read_bytes() == (KIT / '.claude/skills/codex-delegation/SKILL.md').read_bytes()
-    assert '<!-- codex-bridge:start -->' in (repo / 'CLAUDE.md').read_text()
+    for name in ['orchestration', 'delegation', 'security']:
+        assert (repo / f'.claude/rules/{name}.md').read_bytes() == (KIT / f'.claude/rules/{name}.md').read_bytes()
+    assert (repo / '.claude/skills/agent-orchestration/SKILL.md').read_bytes() == (KIT / '.claude/skills/agent-orchestration/SKILL.md').read_bytes()
+    assert '<!-- agent-bridge:start -->' in (repo / 'CLAUDE.md').read_text()
     assert (repo / '.ai/.gitignore').read_bytes() == b'*\n!.gitignore\n!config.json\n'
     manifest = manifest_path(repo)
     assert manifest.is_file()
@@ -107,13 +107,13 @@ def test_preserve_existing(repo):
     run('setup.sh', repo)
     assert (repo / 'CLAUDE.md').read_bytes().startswith(originals['CLAUDE.md'].encode())
     mcp = json.loads((repo / '.mcp.json').read_text())
-    del mcp['mcpServers']['codex-bridge']
+    del mcp['mcpServers']['agent-bridge']
     assert mcp == json.loads(originals['.mcp.json'])
     settings = json.loads((repo / '.claude/settings.json').read_text())
     assert settings['extra'] == 42
     assert settings['permissions']['allow'] == ['Read']
     assert settings['permissions']['deny'][0] == 'existing'
-    assert settings['enabledMcpjsonServers'] == ['other', 'codex-bridge']
+    assert settings['enabledMcpjsonServers'] == ['other', 'agent-bridge']
     for name, data in originals.items():
         assert any(p.read_bytes() == data.encode() for p in (repo / '.ai').glob('backup-*/' + name))
     before = snapshot(repo)
@@ -122,7 +122,7 @@ def test_preserve_existing(repo):
     run('uninstall.sh', repo)
     for name, data in originals.items():
         assert (repo / name).read_bytes() == data.encode()
-    assert not list((repo / '.claude/rules').glob('codex-*.md'))
+    assert not list((repo / '.claude').rglob('*.md'))
 
 
 # @pt.id KIT-SETUP-003-conflicts
@@ -132,7 +132,7 @@ def test_preserve_existing(repo):
 # @pt.target scripts/setup.sh scripts/uninstall.sh
 # @pt.method integration
 # @pt.legacy none (new kit)
-@pytest.mark.parametrize('name,data', [('.mcp.json', '{"mcpServers":{"codex-bridge":{"command":"custom"}}}'), ('.claude/rules/codex-review.md', 'custom rule\n')])
+@pytest.mark.parametrize('name,data', [('.mcp.json', '{"mcpServers":{"agent-bridge":{"command":"custom"}}}'), ('.claude/rules/delegation.md', 'custom rule\n')])
 def test_conflicts(repo, name, data):
     write(repo, name, data)
     before = snapshot(repo)
@@ -152,7 +152,7 @@ def test_conflicts(repo, name, data):
 # @pt.legacy none (new kit)
 def test_uninstall_modified(repo):
     run('setup.sh', repo)
-    write(repo, '.claude/rules/codex-security.md', 'user modification\n')
+    write(repo, '.claude/rules/security.md', 'user modification\n')
     before = snapshot(repo)
     run('setup.sh', repo, ok=False)
     assert snapshot(repo) == before
@@ -162,8 +162,8 @@ def test_uninstall_modified(repo):
     settings['later'] = True
     settings_path.write_text(json.dumps(settings))
     result = run('uninstall.sh', repo)
-    assert 'Warning' in result.stderr and 'codex-security.md' in result.stderr
-    assert (repo / '.claude/rules/codex-security.md').read_text() == 'user modification\n'
+    assert 'Warning' in result.stderr and 'security.md' in result.stderr
+    assert (repo / '.claude/rules/security.md').read_text() == 'user modification\n'
     assert json.loads(settings_path.read_text()) == {'permissions': {'deny': ['later rule']}, 'later': True}
 
 
@@ -202,17 +202,17 @@ def test_invalid_target(tmp_path):
 # @pt.method integration
 # @pt.legacy none (new kit)
 def test_preexisting_assets(repo):
-    rule = '.claude/rules/codex-review.md'
-    write(repo, rule, (KIT / '.claude/rules/codex-review.md').read_text())
+    rule = '.claude/rules/delegation.md'
+    write(repo, rule, (KIT / '.claude/rules/delegation.md').read_text())
     write(repo, '.claude/settings.json', (KIT / '.claude/settings.json').read_text())
-    original = 'before\n<!-- codex-bridge:start -->old<!-- codex-bridge:end -->\nafter\n'
+    original = 'before\n<!-- agent-bridge:start -->old<!-- agent-bridge:end -->\nafter\n'
     write(repo, 'CLAUDE.md', original)
     write(repo, '.ai/.gitignore', 'custom\n')
     run('setup.sh', repo)
-    assert (repo / 'CLAUDE.md').read_text().startswith('before\n<!-- codex-bridge:start -->')
-    assert (repo / 'CLAUDE.md').read_text().endswith('<!-- codex-bridge:end -->\nafter\n')
+    assert (repo / 'CLAUDE.md').read_text().startswith('before\n<!-- agent-bridge:start -->')
+    assert (repo / 'CLAUDE.md').read_text().endswith('<!-- agent-bridge:end -->\nafter\n')
     run('uninstall.sh', repo)
-    assert (repo / rule).read_bytes() == (KIT / '.claude/rules/codex-review.md').read_bytes()
+    assert (repo / rule).read_bytes() == (KIT / '.claude/rules/delegation.md').read_bytes()
     assert (repo / '.claude/settings.json').read_bytes() == (KIT / '.claude/settings.json').read_bytes()
     assert (repo / 'CLAUDE.md').read_text() == original
     assert (repo / '.ai/.gitignore').read_text() == 'custom\n'
@@ -235,3 +235,140 @@ def test_invalid_json(repo, name, data):
     assert snapshot(repo) == before
     assert not manifest_path(repo).parent.exists()
     assert not (repo / '.ai').exists()
+
+
+# @pt.id KIT-SETUP-009-retired-names
+# @pt.item Upgrading an install that used the codex-* rule and skill names
+# @pt.condition The manifest lists old kit files: one unedited, one edited by the user
+# @pt.expected Setup removes the unedited one and its manifest entry, keeps the edited one with a warning
+# @pt.target scripts/setup.sh
+# @pt.method integration
+# @pt.legacy codex-*.md rules and codex-delegation skill (0.1.x)
+def test_retired_names(repo):
+    run('setup.sh', repo)
+    manifest = json.loads(manifest_path(repo).read_text())
+    old = {'.claude/rules/codex-review.md': b'old review rule\n',
+           '.claude/skills/codex-delegation/SKILL.md': b'old skill\n'}
+    for name, data in old.items():
+        write(repo, name, data.decode())
+        manifest['files'][name] = {'original': None, 'sha256': hashlib.sha256(data).hexdigest()}
+    manifest_path(repo).write_text(json.dumps(manifest))
+    write(repo, '.claude/rules/codex-review.md', 'edited by the user\n')
+    result = run('setup.sh', repo)
+    assert 'keeping modified retired file: .claude/rules/codex-review.md' in result.stderr
+    assert (repo / '.claude/rules/codex-review.md').read_text() == 'edited by the user\n'
+    assert not (repo / '.claude/skills/codex-delegation').exists()
+    files = json.loads(manifest_path(repo).read_text())['files']
+    assert '.claude/skills/codex-delegation/SKILL.md' not in files
+    run('uninstall.sh', repo)
+    assert (repo / '.claude/rules/codex-review.md').exists()
+
+
+# @pt.id KIT-SETUP-010-old-name
+# @pt.item Upgrading an install made when the server was called codex-bridge
+# @pt.condition .mcp.json, settings, CLAUDE.md block and the git-dir manifest use the old name
+# @pt.expected Setup replaces every old entry with agent-bridge, moves the state directory, and uninstall still restores the original project
+# @pt.target bridge.install.install
+# @pt.method integration
+# @pt.legacy codex-bridge server name (0.1.x)
+def test_old_server_name(repo):
+    import base64
+    run('setup.sh', repo)
+    old_dir = manifest_path(repo).parent.with_name('codex-bridge')
+    manifest_path(repo).parent.rename(old_dir)
+    for name in ['.mcp.json', '.claude/settings.json', 'CLAUDE.md']:
+        write(repo, name, (repo / name).read_text().replace('agent-bridge', 'codex-bridge'))
+    m = json.loads((old_dir / 'install-manifest.json').read_text().replace('agent-bridge', 'codex-bridge'))
+    m['claude']['installed'] = base64.b64encode((repo / 'CLAUDE.md').read_bytes()).decode()
+    (old_dir / 'install-manifest.json').write_text(json.dumps(m))
+    run('setup.sh', repo)
+    assert not old_dir.exists() and manifest_path(repo).is_file()
+    for name in ['.mcp.json', '.claude/settings.json', 'CLAUDE.md']:
+        assert 'codex-bridge' not in (repo / name).read_text(), name
+    assert json.loads((repo / '.mcp.json').read_text())['mcpServers']['agent-bridge']['args'][-2:] == ['agent-bridge', 'serve']
+    settings = json.loads((repo / '.claude/settings.json').read_text())
+    kit_settings = json.loads((KIT / '.claude/settings.json').read_text())
+    assert settings['enabledMcpjsonServers'] == ['agent-bridge']
+    assert sorted(settings['permissions']['deny']) == sorted(kit_settings['permissions']['deny'])
+    run('uninstall.sh', repo)
+    assert not (repo / '.mcp.json').exists()
+    assert not (repo / '.claude/settings.json').exists()
+    assert not (repo / 'CLAUDE.md').exists()
+
+
+# @pt.id KIT-SETUP-011-cli-init
+# @pt.item `agent-bridge init` installs into the given folder and picks the server command
+# @pt.condition init run through the installed agent-bridge executable on PATH, then through python -m bridge; bare agent-bridge without a terminal
+# @pt.expected the tool install registers `agent-bridge serve` with no kit path; other launches use `uv run --project <kit>`; the bare command prints help instead of opening the TUI
+# @pt.target bridge.cli._server_entry
+# @pt.method integration
+# @pt.legacy none (new kit)
+def test_cli_init(repo, tmp_path_factory):
+    import sys
+    exe = str(Path(sys.executable).parent / 'agent-bridge')
+    env = {**os.environ, 'GIT_CEILING_DIRECTORIES': str(repo.parent),
+           'PATH': str(Path(exe).parent) + os.pathsep + os.environ['PATH']}
+    out = subprocess.run([exe, 'init', str(repo)], capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    server = json.loads((repo / '.mcp.json').read_text())['mcpServers']['agent-bridge']
+    assert server['command'] == 'agent-bridge' and server['args'] == ['serve']
+    other = tmp_path_factory.mktemp('other')
+    subprocess.run(['git', 'init', str(other)], check=True, capture_output=True)
+    out = subprocess.run([sys.executable, '-m', 'bridge', 'init', str(other)], cwd=KIT,
+                         capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    server = json.loads((other / '.mcp.json').read_text())['mcpServers']['agent-bridge']
+    assert server['args'] == ['run', '--project', str(KIT), 'agent-bridge', 'serve']
+    bare = subprocess.run([exe], cwd=repo, stdin=subprocess.DEVNULL, capture_output=True,
+                          text=True, env=env)
+    assert bare.returncode == 0 and 'init' in bare.stdout and 'serve' in bare.stdout
+
+
+# @pt.id KIT-SETUP-012-config-init
+# @pt.item `agent-bridge config-init` starts .ai/orchestrator.yaml from a shipped example
+# @pt.condition the installed executable lists examples without a terminal, then writes one from a pseudo-terminal, then runs again
+# @pt.expected the listing names every example; without a terminal writing is refused; with one the file is written, git-ignored and passes config-check; an existing file is never overwritten
+# @pt.target bridge.cli._run
+# @pt.method integration
+# @pt.legacy none (new kit)
+def test_config_init(repo, tmp_path):
+    import pty
+    import sys
+    exe = str(Path(sys.executable).parent / 'agent-bridge')
+    env = {**os.environ, 'GIT_CEILING_DIRECTORIES': str(repo.parent), 'HOME': str(tmp_path)}
+    listing = subprocess.run([exe, 'config-init'], cwd=repo, capture_output=True, text=True,
+                             env=env)
+    assert listing.returncode == 0, listing.stderr
+    assert {line.split()[0] for line in listing.stdout.splitlines()[:5]} == {
+        p.stem for p in (KIT / 'examples').glob('*.yaml')}
+    piped = subprocess.run([exe, 'config-init', 'single-agent'], cwd=repo, capture_output=True,
+                           text=True, env=env, stdin=subprocess.DEVNULL)
+    assert piped.returncode == 2 and 'refused' in piped.stderr
+
+    def in_terminal():
+        main, tty = pty.openpty()
+        proc = subprocess.Popen([exe, 'config-init', 'single-agent'], cwd=repo, env=env,
+                                stdin=tty, stdout=tty, stderr=tty)
+        os.close(tty)
+        out = b''
+        try:  # read while the child runs: macOS drops pty output once the child is gone
+            while chunk := os.read(main, 4096):
+                out += chunk
+        except OSError:
+            pass
+        os.close(main)
+        return proc.wait(), out.decode()
+
+    code, out = in_terminal()
+    target = repo / '.ai' / 'orchestrator.yaml'
+    assert code == 0, out
+    assert target.read_text() == (KIT / 'examples' / 'single-agent.yaml').read_text()
+    ignored = subprocess.run(['git', '-C', str(repo), 'check-ignore', '-q', str(target)])
+    assert ignored.returncode == 0
+    check = subprocess.run([exe, 'config-check'], cwd=repo, capture_output=True, text=True,
+                           env=env)
+    assert check.returncode == 0 and str(target) in check.stdout, check.stderr
+    target.write_text('# mine\n')
+    code, out = in_terminal()
+    assert code == 1 and 'exists' in out
+    assert target.read_text() == '# mine\n'

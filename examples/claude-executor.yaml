@@ -1,0 +1,17 @@
+# Codex plans and reviews; Claude Code implements. Claude has no OS sandbox, so writing is
+# opt-in (allow_write) and its Edit/Write tools are scoped to each task's allowed_paths; Bash
+# stays off unless allow_bash is set (Bash is not path-confined). The bridge still checks every
+# changed path after the run.
+version: 1
+accounts:
+  codex-work: {provider: openai, home: ~/.codex-accounts/homes/work}
+  claude-main: {provider: anthropic, home: ~/.claude-accounts/main}
+agents:
+  codex: {adapter: codex-cli, account: codex-work}
+  claude-writer: {adapter: claude-cli, account: claude-main, allow_write: true}
+roles:
+  planner: codex
+  executor: claude-writer
+  reviewer: codex
+workflow:
+  stages: [plan, execute, test, review]

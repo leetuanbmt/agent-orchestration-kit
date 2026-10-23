@@ -1,4 +1,4 @@
-"""Shared fixtures: a throwaway git repo and the fake `codex` binary first on PATH."""
+"""Shared fixtures: a throwaway git repo and the fake `codex`/`claude` binaries first on PATH."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 
 from bridge.config import BridgeConfig
+from bridge.executor import AGENT_ENV
+from bridge.orchestrator import parse
 from bridge.service import Bridge
 
 FAKES = Path(__file__).parent / "fakes"
@@ -21,6 +23,9 @@ def isolated_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    # The suite may itself run inside an agent the bridge started.
+    monkeypatch.delenv(AGENT_ENV, raising=False)
 
 
 def git(root: Path, *args: str) -> None:
@@ -53,9 +58,54 @@ def fake_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
+def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_codex: Path) -> Path:
+    exe = FAKES / "claude"
+    exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    state = tmp_path / "fake_claude"
+    monkeypatch.setenv("FAKE_CLAUDE_DIR", str(state))
+    monkeypatch.setenv("FAKE_CLAUDE_SCENARIO", "ok")
+    return state
+
+
+@pytest.fixture
+def fake_others(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_codex: Path) -> Path:
+    """Fake opencode and agy (on PATH through fake_codex); agy is logged in under $HOME."""
+    for name in ("opencode", "agy"):
+        exe = FAKES / name
+        exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    state = tmp_path / "fake_others"
+    monkeypatch.setenv("FAKE_OPENCODE_DIR", str(state / "opencode"))
+    monkeypatch.setenv("FAKE_AGY_DIR", str(state / "agy"))
+    token = Path(os.environ["HOME"]) / ".gemini/antigravity-cli/antigravity-oauth-token"
+    token.parent.mkdir(parents=True, exist_ok=True)
+    token.touch()
+    return state
+
+
+@pytest.fixture
 def make_bridge(repo: Path, fake_codex: Path):
     def make(**cfg: object) -> Bridge:
         return Bridge(repo, BridgeConfig(**{"retry_backoff_s": 0, "lock_dir": str(fake_codex / "locks"), **cfg}))  # type: ignore[arg-type]
+    return make
+
+
+@pytest.fixture
+def make_orch(repo: Path, fake_codex: Path, fake_claude: Path, fake_others: Path):
+    """Bridge driven by an orchestrator.yaml text; `{home}` expands to a per-test directory."""
+    homes = fake_codex.parent / "homes"
+
+    def make(text: str, **cfg: object) -> Bridge:
+        orch = parse(text.replace("{home}", str(homes)))
+        for profile in orch.accounts.values():
+            if profile.home:
+                Path(profile.home).mkdir(parents=True, exist_ok=True)
+                marker = {"openai": "auth.json", "anthropic": ".credentials.json",
+                          "google": ".gemini/antigravity-cli/antigravity-oauth-token"}
+                path = Path(profile.home) / marker[profile.provider]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+        return Bridge(repo, BridgeConfig(**{"retry_backoff_s": 0,  # type: ignore[arg-type]
+                                            "lock_dir": str(fake_codex / "locks"), **cfg}), orch)
     return make
 
 

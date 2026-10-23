@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Deterministic stand-in for Claude Code headless (`claude -p --output-format stream-json`).
+
+Speaks the event shapes verified against claude 2.1.306: system/init, rate_limit_event,
+assistant, result (structured_output when --json-schema is given).
+
+FAKE_CLAUDE_SCENARIO: comma-separated, one per invocation (last repeats): ok | quota | auth | crash
+FAKE_CLAUDE_WRITE:    "path=content;..." written on ok runs where a Write(./glob) rule allows the
+                      path and no --disallowedTools rule denies it, like the real permission check.
+FAKE_CLAUDE_DECISION: "decision:notes" for reviewer runs (default "approve:looks good").
+FAKE_CLAUDE_PLAN:     JSON list of tasks for planner runs (default: one task).
+FAKE_CLAUDE_UTIL:     five-hour utilization 0-1 reported in rate_limit_event (default 0.2).
+FAKE_CLAUDE_DIR:      scratch dir for the call counter and argv/prompt log.
+Allow rules in the project's .claude/settings.json count when --setting-sources loads project.
+An isolated CLAUDE_CONFIG_DIR is logged in when it holds `.credentials.json`.
+"""
+
+import fnmatch
+import json
+import os
+import sys
+import uuid
+from pathlib import Path
+
+argv = sys.argv[1:]
+config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+logged_in = not config_dir or (Path(config_dir) / ".credentials.json").exists()
+if argv[:1] == ["--version"]:
+    print("2.1.306 (Claude Code, fake)")
+    sys.exit(0)
+if argv[:2] == ["auth", "status"]:
+    print(json.dumps({"loggedIn": logged_in, "authMethod": "fake"}))
+    sys.exit(0)
+
+state = Path(os.environ["FAKE_CLAUDE_DIR"])
+state.mkdir(parents=True, exist_ok=True)
+counter = state / "calls"
+n = int(counter.read_text()) if counter.exists() else 0
+counter.write_text(str(n + 1))
+scenarios = os.environ.get("FAKE_CLAUDE_SCENARIO", "ok").split(",")
+scenario = scenarios[min(n, len(scenarios) - 1)]
+if not logged_in:
+    scenario = "auth"
+
+prompt = sys.stdin.read()
+with (state / "log.jsonl").open("a") as f:
+    f.write(json.dumps({"argv": argv, "prompt": prompt, "config_dir": config_dir,
+                        "cwd": os.getcwd(), "agent_env": os.environ.get("AGENT_BRIDGE_AGENT")})
+            + "\n")
+
+session = argv[argv.index("--resume") + 1] if "--resume" in argv else str(uuid.uuid4())
+tools = argv[argv.index("--allowedTools") + 1].split(",") if "--allowedTools" in argv else []
+denied = argv[argv.index("--disallowedTools") + 1].split(",") if "--disallowedTools" in argv else []
+# Like the real CLI, allow rules from every loaded settings source extend --allowedTools.
+sources = (argv[argv.index("--setting-sources") + 1].split(",") if "--setting-sources" in argv
+           else ["user", "project", "local"])
+project_settings = Path(os.getcwd()) / ".claude" / "settings.json"
+if "project" in sources and project_settings.exists():
+    tools += json.loads(project_settings.read_text()).get("permissions", {}).get("allow", [])
+
+
+def scoped(rules, path):
+    return any(fnmatch.fnmatch(path, r[len("Write(./"):-1]) for r in rules
+               if r.startswith("Write(./"))
+schema = json.loads(argv[argv.index("--json-schema") + 1]) if "--json-schema" in argv else {}
+keys = set(schema.get("properties", {}))
+
+
+def emit(obj):
+    print(json.dumps(obj), flush=True)
+
+
+def result(is_error, text, structured=None, status=None):
+    ev = {"type": "result", "subtype": "success" if not is_error else "error_during_execution",
+          "is_error": is_error, "result": text, "session_id": session,
+          "usage": {"input_tokens": 10, "output_tokens": 5}}
+    if structured is not None:
+        ev["structured_output"] = structured
+    if status:
+        ev["api_error_status"] = status
+    emit(ev)
+
+
+emit({"type": "system", "subtype": "init", "session_id": session, "mcp_servers": [],
+      "tools": tools})
+emit({"type": "rate_limit_event", "rate_limit_info": {"unifiedWindows": {
+    "five_hour": {"utilization": float(os.environ.get("FAKE_CLAUDE_UTIL", "0.2")),
+                  "resetsAt": 9999999999},
+    "seven_day": {"utilization": 0.1, "resetsAt": 9999999999}}}})
+
+if scenario == "quota":
+    result(True, "Claude AI usage limit reached", status=429)
+    sys.exit(1)
+if scenario == "auth":
+    result(True, "Invalid API key · Please run /login", status=401)
+    sys.exit(1)
+if scenario == "crash":
+    print("fatal: fake crash", file=sys.stderr)
+    sys.exit(2)
+
+denials = []
+for pair in filter(None, os.environ.get("FAKE_CLAUDE_WRITE", "").split(";")):
+    path, _, content = pair.partition("=")
+    if not scoped(tools, path) or scoped(denied, path):
+        denials.append(path)
+        continue
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(content)
+with (state / "denials.jsonl").open("a") as f:
+    f.write(json.dumps(denials) + "\n")
+
+if "decision" in keys:
+    decision, _, notes = os.environ.get("FAKE_CLAUDE_DECISION", "approve:looks good").partition(":")
+    out = {"decision": decision, "notes": notes}
+elif "tasks" in keys:
+    out = {"tasks": json.loads(os.environ.get("FAKE_CLAUDE_PLAN") or json.dumps([{
+        "objective": "Set x to 2 in src/app.py", "context": "", "scope": "",
+        "allowed_paths": ["src/**"], "excluded_paths": [],
+        "acceptance_criteria": ["src/app.py contains x = 2"], "verification_commands": [],
+        "depends_on": [], "risk_level": "low"}])), "notes": "fake plan"}
+else:
+    out = {"status": "completed", "summary": "fake claude", "files_changed": [],
+           "tests_run": [], "notes": ""}
+emit({"type": "assistant", "message": {"content": [{"type": "text", "text": "done"}]}})
+result(False, json.dumps(out), out)

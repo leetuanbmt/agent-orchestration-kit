@@ -3,8 +3,12 @@ name = "agent-orchestration-kit"
 version = "0.1.0"
 description = "Project-local Claude (planner/reviewer) <-> Codex CLI (executor) MCP bridge"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "mcp>=2.3.0,<3",
+    "pyyaml>=6.0,<7",
+    "textual>=6,<9",
 ]
 
 [project.urls]
@@ -13,15 +17,25 @@ Repository = "https://github.com/leetuanbmt/agent-orchestration-kit"
 Changelog = "https://github.com/leetuanbmt/agent-orchestration-kit/blob/main/CHANGELOG.md"
 
 [project.scripts]
-codex-bridge = "bridge.cli:main"
+agent-bridge = "bridge.cli:main"
 
 [build-system]
-requires = ["uv_build>=0.8.0,<0.9"]
-build-backend = "uv_build"
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
 
-[tool.uv.build-backend]
-module-name = "bridge"
-module-root = ""
+[tool.hatch.build.targets.wheel]
+packages = ["bridge"]
+
+# `agent-bridge init` copies these into projects; a non-editable install has no checkout to
+# read them from, so the wheel carries them under bridge/kit/ with the same layout.
+[tool.hatch.build.targets.wheel.force-include]
+".claude/rules/orchestration.md" = "bridge/kit/.claude/rules/orchestration.md"
+".claude/rules/delegation.md" = "bridge/kit/.claude/rules/delegation.md"
+".claude/rules/security.md" = "bridge/kit/.claude/rules/security.md"
+".claude/skills/agent-orchestration" = "bridge/kit/.claude/skills/agent-orchestration"
+".claude/settings.json" = "bridge/kit/.claude/settings.json"
+"examples" = "bridge/kit/examples"
+".ai/config.example.json" = "bridge/kit/.ai/config.example.json"
 
 [dependency-groups]
 dev = [
