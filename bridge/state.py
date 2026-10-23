@@ -96,6 +96,22 @@ def _row(r: sqlite3.Row | None) -> dict[str, Any] | None:
     return d
 
 
+def overview(path: Path, state: str | None, limit: int) -> dict[str, Any]:
+    """State counts and the newest tasks of a database, opened read-only: no schema change,
+    no migration, safe while another process runs it."""
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    db.row_factory = sqlite3.Row
+    try:
+        counts = {r[0]: r[1] for r in
+                  db.execute("SELECT state, COUNT(*) FROM tasks GROUP BY state")}
+        where, args = ("WHERE state=?", (state,)) if state else ("", ())
+        rows = db.execute(f"SELECT * FROM tasks {where} ORDER BY updated_at DESC LIMIT ?",
+                          (*args, limit)).fetchall()
+    finally:
+        db.close()
+    return {"counts": counts, "tasks": [r for r in map(_row, rows) if r]}
+
+
 class Store:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)

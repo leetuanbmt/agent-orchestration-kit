@@ -8,7 +8,9 @@ from rich.console import Console
 
 from bridge import cli
 from bridge.render import accounts_view, ago
-from tests.conftest import run, spec
+from bridge.config import BridgeConfig
+from bridge.service import Bridge
+from tests.conftest import git, run, spec
 
 
 @pytest.fixture
@@ -119,3 +121,47 @@ def test_ago():
     assert [ago(1000 - d, 1000) for d in (5, 120, 7200, 172800)] == \
         ["5s ago", "2m ago", "2h ago", "2d ago"]
     assert ago(None) == "-"
+
+
+# @pt.id KIT-CLI-VIEW-005-tasks-across-projects
+# @pt.item agent-bridge tasks lists the tasks of every project the bridge has run in
+# @pt.condition two git repos, one with a linked worktree; each opens a Bridge and creates tasks; `tasks` runs from one of them, then with --state and --limit
+# @pt.expected every project and worktree with tasks appears with its own counts and newest tasks first; the worktree keeps its tasks apart from its main checkout; --state filters the rows but keeps the counts; a terminal gets a table, a pipe gets JSON
+# @pt.target bridge.cli.main, bridge.service.project_tasks, bridge.state.overview, bridge.accounts.remember_project, bridge.render.projects_view
+# @pt.method integration
+# @pt.legacy none
+def test_tasks_across_projects(repo, fake_codex, tmp_path, capsys, monkeypatch):
+    other = tmp_path / "other"
+    (other / "src").mkdir(parents=True)
+    (other / "src" / "app.py").write_text("x = 1\n")
+    git(other, "init", "-q")
+    git(other, "add", "-A")
+    git(other, "commit", "-qm", "init")
+    tree = tmp_path / "proj-feature"
+    git(repo, "worktree", "add", "-q", str(tree))
+
+    cfg = BridgeConfig(retry_backoff_s=0, lock_dir=str(fake_codex / "locks"))
+    made = {}
+    for root, n in ((repo, 2), (other.resolve(), 1), (tree.resolve(), 1)):
+        b = Bridge(root, cfg)
+        made[root.name] = [run(b.create_task(spec(objective=f"{root.name} task {i}")))["task_id"]
+                           for i in range(n)]
+    run(Bridge(repo, cfg).cancel_task(made["proj"][0], "dropped"))
+    # Inside a project: the suite's tmp dirs sit in this repo, whose real tasks must not leak in.
+    monkeypatch.chdir(other)
+
+    data = json.loads(_out(capsys, "tasks", tty=False, monkeypatch=monkeypatch))
+    by_name = {p["project"]: p for p in data["projects"]}
+    assert set(by_name) == {"proj", "other", "proj-feature"}
+    assert by_name["proj"]["counts"] == {"READY": 1, "CANCELLED": 1}
+    # The cancel touched T0001 last, so it comes first.
+    assert [t["task_id"] for t in by_name["proj"]["tasks"]] == made["proj"]
+    assert by_name["proj-feature"]["tasks"][0]["objective"] == "proj-feature task 0"
+
+    ready = json.loads(_out(capsys, "tasks", "--state", "READY", "--limit", "5", tty=False,
+                            monkeypatch=monkeypatch))
+    proj = next(p for p in ready["projects"] if p["project"] == "proj")
+    assert [t["state"] for t in proj["tasks"]] == ["READY"] and proj["counts"]["CANCELLED"] == 1
+
+    table = _out(capsys, "tasks", monkeypatch=monkeypatch)
+    assert "{" not in table and "proj-feature" in table and "other task 0" in table

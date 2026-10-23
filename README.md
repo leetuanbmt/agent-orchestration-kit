@@ -202,6 +202,7 @@ in a terminal (JSON with `--json` or through a pipe):
 agent-bridge health        # adapters, remaining quota per account, task counts
 agent-bridge account-list  # accounts, login state, codex-switch / claude-switch, unused CLIs
 agent-bridge list          # tasks, newest first
+agent-bridge tasks         # tasks of every project and worktree on this machine, by project
 ```
 
 <img alt="agent-bridge list" src="docs/images/cli-list.svg" width="900">
@@ -532,7 +533,7 @@ OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  #
 
 Result:
 ```console
-186 passed, 5 skipped
+187 passed, 5 skipped
 ```
 
 `tests/fakes/codex`, `claude`, `opencode` and `agy` speak the real JSONL / stream-json protocols and
