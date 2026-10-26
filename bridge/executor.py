@@ -149,7 +149,10 @@ def describe_event(ev: dict[str, Any]) -> str | None:
                 break
     elif t == "result":
         summary = f"result {ev.get('subtype', 'unknown')}: {ev.get('result', '')}"
-    return redact(" ".join(summary.split()), 200) if summary else None
+    if summary:
+        summary = "".join(char if char.isprintable() else " " for char in summary)
+        return redact(" ".join(summary.split()), 200)
+    return None
 
 
 @dataclass
