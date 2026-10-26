@@ -26,6 +26,23 @@ def test_describe_event_supported_shapes() -> None:
     assert describe_event({"type": "unrecognized"}) is None
 
 
+# @pt.id KIT-UNIT-LOG-003-printable-event-summaries
+# @pt.item Command progress summaries contain only printable characters
+# @pt.condition a command contains terminal control and Unicode format characters
+# @pt.expected controls are removed while visible command text remains
+# @pt.target bridge.executor.describe_event
+# @pt.method unit
+# @pt.legacy none (new kit)
+def test_describe_event_replaces_non_printable_command_characters() -> None:
+    controls = "\x1b]0;pwned\x07\x1b[2J\x9b\x7f\u202e"
+    summary = describe_event({"type": "item.completed", "item": {
+        "type": "command_execution", "command": f"pytest {controls}", "exit_code": 0}})
+
+    assert "pytest" in summary
+    assert all(char not in summary for char in ("\x1b", "\x07", "\x9b", "\x7f", "\u202e"))
+    assert all(char.isprintable() for char in summary)
+
+
 # @pt.id KIT-UNIT-CLI-001-progress-stderr
 # @pt.item Execute progress is written to stderr and final output remains on stdout
 # @pt.condition CLI execute bridge emits one progress event and returns a summary
