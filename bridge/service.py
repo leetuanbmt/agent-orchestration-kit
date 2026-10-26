@@ -23,7 +23,8 @@ from .accounts import HOME_ENV, Account, AccountLock, binary, discover, known_pr
     load_registry, login_status, remember_project, resolve, resolve_profile
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
 from .executor import ADAPTERS, PLAN_SCHEMA, REVIEW_SCHEMA, Adapter, RunRequest, RunResult, \
-    build_plan_prompt, build_prompt, build_review_prompt, build_rework_prompt, kill_stale
+    build_plan_prompt, build_prompt, build_review_prompt, build_rework_prompt, describe_event, \
+    kill_stale
 from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError
 from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig
 from .orchestrator import load as load_orchestrator
@@ -48,6 +49,16 @@ def _alive(pid: int | None) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _attempt_log_path(root: Path, task_id: str, n: int) -> Path:
+    return state_dir(root) / "logs" / f"{task_id}-{n}.jsonl"
+
+
+def _write_attempt_log_line(log: Any, stream: str, line: str) -> None:
+    log.write(json.dumps({"ts": time.time(), "stream": stream,
+                          "line": redact(line, 100000)}, ensure_ascii=False) + "\n")
+    log.flush()
 
 
 def resolve_account(orch: OrchestratorConfig, cfg: BridgeConfig, root: Path,
@@ -88,6 +99,7 @@ class Bridge:
         self._adapters: dict[str, Adapter] = {}
         self._runs: dict[str, asyncio.Task[None]] = {}
         self._workflows: dict[str, asyncio.Task[None]] = {}
+        self.progress: Callable[[str], None] | None = None
         self._stopping = False
 
     # ---- helpers ---------------------------------------------------------------------------
@@ -567,27 +579,49 @@ class Bridge:
             return self._stopping or self.store.get(task_id)["state"] == State.CANCELLED
 
         retries = 0
-        while True:
-            res: RunResult = await adapter.run(
-                RunRequest(prompt, account, sandbox, self._timeout(agent, spec.get("timeout_s")),
-                           session_id=session, model=agent.model, allow_bash=agent.allow_bash,
-                           write_paths=spec["allowed_paths"],
-                           deny_paths=[*spec.get("excluded_paths", []),
-                                       *self.cfg.protected_paths]),
-                on_start=lambda pid: self.store.update(task_id, codex_pid=pid,
-                                                        codex_started=process_started(pid)),
-                on_session=lambda sid: self.store.update(task_id, session_id=sid),
-                should_cancel=cancelled,
-            )
-            if res.session_id:
-                session = res.session_id
-                self.store.update(task_id, session_id=session, codex_pid=None, codex_started=None)
-            if res.outcome == "network" and retries < self.cfg.network_retries:
-                retries += 1
-                self.store.log(task_id, Actor.BRIDGE, "retry", {"error": res.error, "n": retries})
-                await asyncio.sleep(self.cfg.retry_backoff_s)
-                continue
-            break
+        log_path = _attempt_log_path(self.root, task_id, n)
+        log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(log_path.parent, 0o700)
+        if self.progress:
+            with contextlib.suppress(Exception):
+                self.progress(f"[{task_id} #{n}] log: {log_path}")
+        fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.chmod(log_path, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as log:
+            def on_line(stream: str, line: str) -> None:
+                _write_attempt_log_line(log, stream, line)
+                if stream == "stdout" and self.progress:
+                    try:
+                        ev = json.loads(line)
+                    except ValueError:
+                        return
+                    if isinstance(ev, dict) and (summary := describe_event(ev)):
+                        with contextlib.suppress(Exception):
+                            self.progress(f"[{task_id} #{n}] {summary}")
+
+            while True:
+                res: RunResult = await adapter.run(
+                    RunRequest(prompt, account, sandbox, self._timeout(agent, spec.get("timeout_s")),
+                               session_id=session, model=agent.model, allow_bash=agent.allow_bash,
+                               write_paths=spec["allowed_paths"],
+                               deny_paths=[*spec.get("excluded_paths", []),
+                                           *self.cfg.protected_paths]),
+                    on_start=lambda pid: self.store.update(task_id, codex_pid=pid,
+                                                            codex_started=process_started(pid)),
+                    on_session=lambda sid: self.store.update(task_id, session_id=sid),
+                    should_cancel=cancelled, on_line=on_line,
+                )
+                if res.session_id:
+                    session = res.session_id
+                    self.store.update(task_id, session_id=session, codex_pid=None,
+                                      codex_started=None)
+                if res.outcome == "network" and retries < self.cfg.network_retries:
+                    retries += 1
+                    self.store.log(task_id, Actor.BRIDGE, "retry", {"error": res.error,
+                                                                     "n": retries})
+                    await asyncio.sleep(self.cfg.retry_backoff_s)
+                    continue
+                break
 
         self._record_account(account.name, res)
         changes = diff(self.root, before, self.cfg.protected_paths)
@@ -618,9 +652,13 @@ class Bridge:
 
         self.store.transition(task_id, State.VERIFYING, Actor.BRIDGE, {"attempt": n})
         violations = scope_violations(changes["files"], spec, self.cfg, changes["head_changed"])
-        checks = (await run_verification(spec.get("verification_commands", []), self.root,
+        commands = spec.get("verification_commands", []) if "test" in self.orch.workflow.stages else []
+        if self.progress and commands:
+            with contextlib.suppress(Exception):
+                self.progress(f"[{task_id} #{n}] verifying ({len(commands)} commands)")
+        checks = (await run_verification(commands, self.root,
                                          self.cfg)
-                  if "test" in self.orch.workflow.stages else [])
+                  if commands else [])
         agent_status = (res.final or {}).get("status", "unknown")
         passed = not violations and all(c["passed"] for c in checks) and agent_status == "completed"
         record["verification"] = {"passed": passed, "scope_violations": violations,
@@ -777,7 +815,9 @@ class Bridge:
         attempts = self.store.attempts(task_id)
         if attempts:
             a = attempts[-1]
+            log_path = _attempt_log_path(self.root, task_id, a["n"])
             out["last_attempt"] = {"n": a["n"], "outcome": a["outcome"],
+                                   "log": str(log_path) if log_path.exists() else None,
                                    "changed_files": (a.get("changes") or {}).get("files"),
                                    "verification_passed": (a.get("verification") or {}).get(
                                        "passed")}
@@ -787,9 +827,11 @@ class Bridge:
         row = self.store.get(task_id)
         attempts = []
         for a in self.store.attempts(task_id):
+            log_path = _attempt_log_path(self.root, task_id, a["n"])
             attempts.append({k: a.get(k) for k in (
                 "n", "kind", "outcome", "exit_code", "session_id", "final", "usage", "changes",
                 "verification", "stderr_tail")})
+            attempts[-1]["log"] = str(log_path) if log_path.exists() else None
         return {
             **self._summary(row),
             "spec": row["spec"],

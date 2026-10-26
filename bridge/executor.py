@@ -116,6 +116,42 @@ def classify(text: str) -> str:
     return "crash"
 
 
+def describe_event(ev: dict[str, Any]) -> str | None:
+    """Return a short, safe summary for user-visible execution progress."""
+    t = ev.get("type")
+    item = ev.get("item") or {}
+    summary = None
+    if t == "thread.started":
+        summary = f"session started ({ev.get('thread_id', 'unknown')})"
+    elif t == "item.completed" and item.get("type") == "command_execution":
+        summary = f"command finished (exit {item.get('exit_code', 'unknown')}): {item.get('command', '')}"
+    elif t == "item.completed" and item.get("type") == "file_change":
+        changes = item.get("changes") or []
+        summary = "file edits: " + ", ".join(str(c.get("path", "")) for c in changes
+                                               if isinstance(c, dict))
+    elif t == "item.completed" and item.get("type") == "agent_message":
+        summary = f"agent: {item.get('text', '')}"
+    elif t == "turn.completed":
+        summary = "turn completed"
+    elif t == "turn.failed":
+        summary = f"turn failed: {(ev.get('error') or {}).get('message', '')}"
+    elif t == "error":
+        summary = f"error: {ev.get('message', '')}"
+    elif t == "system" and ev.get("subtype") == "init":
+        summary = f"session started ({ev.get('session_id', 'unknown')})"
+    elif t == "assistant":
+        for block in (ev.get("message") or {}).get("content") or []:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                inp = block.get("input") or {}
+                detail = next((inp[k] for k in ("file_path", "command", "pattern")
+                               if inp.get(k)), "")
+                summary = f"tool {block.get('name', 'unknown')}: {detail}"
+                break
+    elif t == "result":
+        summary = f"result {ev.get('subtype', 'unknown')}: {ev.get('result', '')}"
+    return redact(" ".join(summary.split()), 200) if summary else None
+
+
 @dataclass
 class RunRequest:
     prompt: str
@@ -193,7 +229,8 @@ class Adapter:
     async def run(self, req: RunRequest, *,
                   on_start: Callable[[int], None] | None = None,
                   on_session: Callable[[str], None] | None = None,
-                  should_cancel: Callable[[], bool] | None = None) -> RunResult:
+                  should_cancel: Callable[[], bool] | None = None,
+                  on_line: Callable[[str, str], None] | None = None) -> RunResult:
         if req.sandbox not in ("read-only", "workspace-write"):
             raise ValueError(f"sandbox not allowed: {req.sandbox}")
         if not self.available():
@@ -227,8 +264,12 @@ class Adapter:
             async def read_stdout() -> None:
                 assert proc.stdout
                 async for raw in proc.stdout:
+                    line = raw.decode(errors="replace").rstrip()
+                    if on_line:
+                        with contextlib.suppress(Exception):
+                            on_line("stdout", line)
                     try:
-                        ev = json.loads(raw)
+                        ev = json.loads(line)
                     except ValueError:
                         continue
                     if isinstance(ev, dict):
@@ -237,7 +278,11 @@ class Adapter:
             async def read_stderr() -> None:
                 assert proc.stderr
                 async for raw in proc.stderr:
-                    stderr.append(raw.decode(errors="replace").rstrip())
+                    line = raw.decode(errors="replace").rstrip()
+                    if on_line:
+                        with contextlib.suppress(Exception):
+                            on_line("stderr", line)
+                    stderr.append(line)
 
             async def watchdog() -> str:
                 loop = asyncio.get_running_loop()

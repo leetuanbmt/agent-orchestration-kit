@@ -185,6 +185,8 @@ async def _run(args: argparse.Namespace) -> Any:
                              "home)")
         return _login(cfg, acc, args.device_auth)
     b = Bridge()
+    if args.cmd in {"execute", "resume", "run-workflow"}:
+        b.progress = lambda line: print(line, file=sys.stderr, flush=True)
     if args.cmd not in {"approve", "reassign"}:
         b.recover()
     match args.cmd:

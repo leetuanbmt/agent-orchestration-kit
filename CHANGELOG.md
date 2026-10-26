@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Agent executions append redacted stdout and stderr lines to per-attempt JSONL logs and report
+  meaningful progress events on stderr.
+
 ### Changed
 - Licensed under MIT (`LICENSE`, © leetuanbmt); the wheel carries it and declares
   `License-Expression: MIT`.
