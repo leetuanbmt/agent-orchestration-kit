@@ -1,7 +1,14 @@
 'use strict';
 
+const launchParams = new URLSearchParams(location.search);
+if (launchParams.has("token")) {
+  sessionStorage.setItem("agent-bridge-token", launchParams.get("token"));
+  history.replaceState(history.state, "", location.pathname + location.hash);
+}
+
 const I18N = {
   en: {
+    tokenRequired: "Open the link printed by agent-bridge web.",
     brand: 'agent-bridge', vi: 'VI', en: 'EN', all: 'All', projects: 'Projects', language: 'Language',
     live: 'Live · every 3 s', offline: 'Disconnected · retrying in 5 s', loading: 'Loading…',
     attention: 'Needs attention', progress: 'Progress', running: 'Running now', activity: 'Last 24 hours',
@@ -32,6 +39,7 @@ const I18N = {
     FAILED: 'Failed', BLOCKED: 'Blocked', low: 'Low', medium: 'Medium', high: 'High'
   },
   vi: {
+    tokenRequired: "Mở đường dẫn do agent-bridge web in ra.",
     brand: 'agent-bridge', vi: 'VI', en: 'EN', all: 'Tất cả', projects: 'Dự án', language: 'Ngôn ngữ',
     live: 'Trực tiếp · mỗi 3 giây', offline: 'Mất kết nối · thử lại sau 5 giây', loading: 'Đang tải…',
     attention: 'Cần chú ý', progress: 'Tiến độ', running: 'Đang chạy', activity: '24 giờ qua',
@@ -69,7 +77,7 @@ const $ = id => document.getElementById(id);
 let language = navigator.language.toLowerCase().startsWith('vi') ? 'vi' : 'en';
 try { const saved = localStorage.getItem('dashboard-language'); if (['vi', 'en'].includes(saved)) language = saved; } catch {}
 let state = {p: '', lang: language, r: '', t: ''};
-let overview = null, timer = null, inFlight = false, disconnected = false;
+let overview = null, timer = null, inFlight = false, disconnected = false, tokenRequired = false;
 let detailVersion = 0, requestData = null, taskData = null, detailError = '', returnFocus = null;
 const tr = (key, values = {}) => {
   let value = I18N[state.lang][key] ?? key;
@@ -255,7 +263,7 @@ function activityTile(node, activity) {
 function renderOverview() {
   document.documentElement.lang = state.lang;
   document.title = tr('brand');
-  text($('brand'), tr('brand')); text($('live'), tr(disconnected ? 'offline' : overview ? 'live' : 'loading'));
+  text($('brand'), tr('brand')); text($('live'), tr(tokenRequired ? "tokenRequired" : disconnected ? 'offline' : overview ? 'live' : 'loading'));
   attr($('live'), 'class', `pill live${disconnected ? ' offline' : ''}`);
   $('content').classList.toggle('disconnected', disconnected);
   text($('requests-heading'), tr('requests')); text($('footer'), tr('viewOnly'));
@@ -319,7 +327,9 @@ function readState() {
 }
 function closeDrawer() { setState({r: '', t: ''}); }
 async function getJSON(url) {
-  const response = await fetch(url, {cache: 'no-store'});
+  const response = await fetch(url, {headers: {"X-Bridge-Token": sessionStorage.getItem("agent-bridge-token") || ""}, cache: 'no-store'});
+  tokenRequired = response.status === 401;
+  if (tokenRequired) overview = null;
   if (!response.ok) { const error = new Error(); error.status = response.status; throw error; }
   return response.json();
 }
@@ -339,7 +349,7 @@ async function loadDetail(preserve = false) {
     requestData = request; taskData = task; renderDetail();
   } catch (error) {
     if (version !== detailVersion) return;
-    detailError = error.status === 404 ? 'notFound' : 'detailError'; renderDetail();
+    detailError = error.status === 401 ? "tokenRequired" : error.status === 404 ? 'notFound' : 'detailError'; renderDetail();
   }
 }
 function labeled(list, label, value) { list.append(el('dt', tr(label)), el('dd', value == null || value === '' ? tr('unknown') : value)); }

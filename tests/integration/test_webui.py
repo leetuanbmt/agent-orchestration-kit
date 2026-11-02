@@ -28,10 +28,12 @@ def server(repo):
         thread.join()
 
 
-def request(server, path="/api/overview", method="GET", host=True):
+def request(server, path="/api/overview", method="GET", host=True, token=None):
     conn = HTTPConnection(*server.server_address, timeout=5)
     try:
         conn.putrequest(method, path, skip_host=True)
+        if token is not None:
+            conn.putheader("X-Bridge-Token", token)
         if host is not None:
             conn.putheader("Host", f"127.0.0.1:{server.server_address[1]}" if host is True else host)
         conn.endheaders()
@@ -183,3 +185,36 @@ def test_port_in_use(server, capsys):
         webui.serve(port)
     assert failed.value.code == 1
     assert capsys.readouterr().err == f"error: port {port} is in use; try --port 0\n"
+
+
+# @pt.id T0039-token
+# @pt.item Per-launch API authentication
+# @pt.condition Server configured with a token
+# @pt.expected API routes require token; static routes remain public; Host checked first
+# @pt.target bridge.webui.make_server
+# @pt.method integration
+# @pt.legacy none
+def test_api_token(server, repo, monkeypatch):
+    protected = webui.make_server(0, roots=[str(repo)], token="t")
+    thread = threading.Thread(target=protected.serve_forever, daemon=True)
+    thread.start()
+    try:
+        pid = progress.project_id(str(repo))
+        for path in ("/api/overview", f"/api/projects/{pid}/tasks/T0001",
+                     f"/api/projects/{pid}/requests/T0001", "/api/unknown"):
+            for token in (None, "wrong"):
+                assert request(protected, path, token=token)[::2] == (
+                    401, b'{"error": "token required"}')
+            assert request(protected, path, token="t")[0] == (404 if path == "/api/unknown" else 200)
+        for path in ("/", "/static/app.css", "/static/app.js"):
+            assert request(protected, path)[0] == 200
+        assert request(protected, host="evil.test")[0] == 421
+        assert request(protected, method="HEAD")[::2] == (401, b"")
+        def forbidden(roots):
+            pytest.fail("unauthenticated request accessed dashboard data")
+        monkeypatch.setattr(progress, "snapshot", forbidden)
+        assert request(protected)[0] == 401
+    finally:
+        protected.shutdown()
+        protected.server_close()
+        thread.join()

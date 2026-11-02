@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from . import osutil
 from .config import BridgeConfig
 from .security import clean_env, matches, redact
 
@@ -146,7 +147,7 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig) -> li
         try:
             argv = parse_command(cmd, cfg)
             proc = await asyncio.create_subprocess_exec(
-                *argv, cwd=root, env=env, start_new_session=True, stdin=asyncio.subprocess.DEVNULL,
+                *argv, cwd=root, env=env, **osutil.GROUP_KWARGS, stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             )
             try:
@@ -155,7 +156,7 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig) -> li
                 r["passed"] = proc.returncode == 0
             except TimeoutError:
                 with contextlib.suppress(ProcessLookupError):
-                    os.killpg(proc.pid, 9)
+                    osutil.kill_group(proc.pid, force=True)
                 await proc.wait()
                 out, r["error"] = b"", f"timed out after {cfg.verify_timeout_s}s"
             r["output_tail"] = redact(out.decode(errors="replace"), 3000)

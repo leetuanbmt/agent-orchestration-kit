@@ -6,17 +6,16 @@ import hashlib
 import json
 import os
 import re
-import fcntl
 import shutil
 import sqlite3
 import subprocess
 import time
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import install
+from . import install, osutil
 
 HOME_ENV = "AGENT_BRIDGE_HOME"
 Location = NamedTuple("Location", [("dir", Path), ("kind", str)])
@@ -200,19 +199,7 @@ def fingerprint(conn) -> dict:
 
 
 def running_processes() -> list[dict]:
-    try:
-        result = subprocess.run(["ps", "-axo", "pid=,ppid=,command="],
-                                capture_output=True, text=True, check=True)
-    except (OSError, subprocess.CalledProcessError):
-        return []
-    processes = {}
-    for line in result.stdout.splitlines():
-        parts = line.strip().split(None, 2)
-        if len(parts) == 3:
-            try:
-                processes[int(parts[0])] = (int(parts[1]), parts[2])
-            except ValueError:
-                continue
+    processes = osutil.list_processes()
     excluded = set()
     pid = os.getpid()
     while pid and pid not in excluded:
@@ -361,7 +348,7 @@ def _storage_guard():
     locks.chmod(0o700)
     with (locks / "migrate.lock").open("a") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            osutil.lock_nonblocking(lock)
         except BlockingIOError as exc:
             raise RuntimeError("another storage migration is running") from exc
         running = running_processes()
@@ -380,18 +367,19 @@ def prune(apply: bool = False) -> dict:
 def _prune(apply: bool) -> dict:
     from . import accounts
 
-    roots = accounts.known_projects()
-    removed = [root for root in roots if not Path(root).is_dir()]
-    kept = [root for root in roots if root not in removed]
-    if apply:
-        base = accounts.registry_dir()
-        base.mkdir(mode=0o700, parents=True, exist_ok=True)
-        temporary = base / f"projects.json.{os.getpid()}.tmp"
-        try:
-            temporary.write_text(json.dumps(sorted(kept), indent=2) + "\n")
-            os.replace(temporary, base / "projects.json")
-        finally:
-            temporary.unlink(missing_ok=True)
+    with accounts._projects_lock() if apply else nullcontext():
+        roots = accounts.known_projects()
+        removed = [root for root in roots if not Path(root).is_dir()]
+        kept = [root for root in roots if root not in removed]
+        if apply:
+            base = accounts.registry_dir()
+            base.mkdir(mode=0o700, parents=True, exist_ok=True)
+            temporary = base / f"projects.json.{os.getpid()}.tmp"
+            try:
+                temporary.write_text(json.dumps(sorted(kept), indent=2) + "\n")
+                os.replace(temporary, base / "projects.json")
+            finally:
+                temporary.unlink(missing_ok=True)
     return {"applied": apply, "removed": removed, "kept": len(kept)}
 
 

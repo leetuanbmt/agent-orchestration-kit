@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import hashlib
 import json
 import os
@@ -15,7 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import storage
+from . import osutil, storage
 from .config import BridgeConfig
 from .state import ConflictError
 
@@ -215,14 +214,23 @@ def known_projects() -> list[str]:
     return []
 
 
+@contextlib.contextmanager
+def _projects_lock():
+    base = registry_dir()
+    base.mkdir(mode=0o700, exist_ok=True)
+    with (base / "projects.lock").open("a") as handle:
+        osutil.lock(handle)
+        yield
+
+
 def remember_project(root: Path) -> None:
     """Add a project to the machine-wide list `agent-bridge tasks` reads; best effort."""
     projects = known_projects()
     if str(root) in projects:
         return
-    with contextlib.suppress(OSError):
+    with contextlib.suppress(OSError), _projects_lock():
+        projects = known_projects()
         base = registry_dir()
-        base.mkdir(mode=0o700, exist_ok=True)
         tmp = base / f"projects.json.{os.getpid()}.tmp"
         tmp.write_text(json.dumps(sorted({*projects, str(root)}), indent=2) + "\n")
         os.replace(tmp, base / "projects.json")
@@ -401,14 +409,17 @@ def discover(cfg: BridgeConfig, root: Path, profiles: list[Account] | None = Non
     }
 
 
+def account_key(acc: Account) -> str:
+    seed = str(acc.home) if acc.home else "default"
+    return f"{acc.provider}:{seed}" if acc.provider != "openai" else seed
+
+
 class AccountLock:
     """Cross-process slot lock: an account runs at most `slots` agent processes at once."""
 
     def __init__(self, acc: Account, lock_dir: str | None, slots: int = 1):
         self.acc = acc
-        seed = str(acc.home) if acc.home else "default"
-        if acc.provider != "openai":  # openai keeps the original lock names
-            seed = f"{acc.provider}:{seed}"
+        seed = account_key(acc)
         key = hashlib.sha256(seed.encode()).hexdigest()[:16]
         self._default_lock_dir = not lock_dir
         base = Path(lock_dir) if lock_dir else storage.home() / "locks"
@@ -439,7 +450,7 @@ class AccountLock:
         for path in self.paths:
             handle = path.open("a")
             try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                osutil.lock_nonblocking(handle)
             except BlockingIOError:
                 handle.close()
                 continue

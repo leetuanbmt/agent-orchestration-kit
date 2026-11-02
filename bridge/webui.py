@@ -1,10 +1,12 @@
 """Read-only localhost HTTP view of bridge progress."""
 
 import errno
+import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import re
+import secrets
 import sys
 import webbrowser
 
@@ -13,7 +15,8 @@ from . import progress
 STATIC = Path(__file__).parent / "static"
 
 
-def make_server(port: int = 8765, roots: list[str] | None = None) -> ThreadingHTTPServer:
+def make_server(port: int = 8765, roots: list[str] | None = None,
+                token: str | None = None) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
             return None
@@ -43,10 +46,16 @@ def make_server(port: int = 8765, roots: list[str] | None = None) -> ThreadingHT
             if len(hosts) != 1 or hosts[0] not in (f"127.0.0.1:{port}", f"localhost:{port}"):
                 self.respond(421, {"error": "bad host"})
                 return
+            path = self.path.split("?", 1)[0]
+            if token is not None and path.startswith("/api/"):
+                supplied = self.headers.get_all("X-Bridge-Token", [])
+                if len(supplied) != 1 or not hmac.compare_digest(
+                        supplied[0].encode("utf-8"), token.encode("utf-8")):
+                    self.respond(401, {"error": "token required"})
+                    return
             if self.command not in ("GET", "HEAD"):
                 self.respond(405, {"error": "method not allowed"}, allow=True)
                 return
-            path = self.path.split("?", 1)[0]
             if path == "/" or path in ("/static/app.css", "/static/app.js"):
                 name, mime = {
                     "/": ("index.html", "text/html; charset=utf-8"),
@@ -93,16 +102,18 @@ def make_server(port: int = 8765, roots: list[str] | None = None) -> ThreadingHT
 
 
 def serve(port: int = 8765, open_browser: bool = False) -> None:
+    token = secrets.token_urlsafe(32)
     try:
-        server = make_server(port)
+        server = make_server(port, token=token)
     except OSError as error:
         if error.errno != errno.EADDRINUSE:
             raise
         print(f"error: port {port} is in use; try --port 0", file=sys.stderr)
         raise SystemExit(1) from None
     try:
-        url = f"http://127.0.0.1:{server.server_address[1]}/"
+        url = f"http://127.0.0.1:{server.server_address[1]}/?token={token}"
         print(f"agent-bridge web: {url}", flush=True)
+        print("This link is the key to the dashboard; do not share it.", flush=True)
         if open_browser:
             webbrowser.open(url)
         server.serve_forever()

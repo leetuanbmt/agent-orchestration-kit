@@ -10,6 +10,8 @@ import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
 
+from . import osutil
+
 GLOB_CHARS = set("*?[")
 RULE_CHARS = set(",()\"'")
 
@@ -122,6 +124,8 @@ def clean_env(env: Mapping[str, str], deny: Iterable[str], allow: Iterable[str])
 def process_started(pid: int) -> str | None:
     """The process's start time as ps prints it; with the pid it identifies one process.
     Fixed locale and zone, so the CLI, the TUI and the MCP server print the same string."""
+    if osutil.WINDOWS:
+        return None
     try:
         ps = subprocess.run(["ps", "-o", "lstart=", "-p", str(int(pid))],
                             capture_output=True, text=True, check=False,

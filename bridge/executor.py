@@ -16,7 +16,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import tempfile
 from collections import deque
@@ -25,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import osutil
 from .accounts import Account, account_env, codex_overrides
 from .config import BridgeConfig, state_dir
 from .security import PathError, clean_env, process_started, redact, rule_unsafe
@@ -195,7 +195,10 @@ class Adapter:
 
     def __init__(self, cfg: BridgeConfig, root: Path):
         self.cfg, self.root = cfg, root
-        self.state_dir = state_dir(root)
+
+    @property
+    def state_dir(self) -> Path:
+        return state_dir(self.root)
 
     @property
     def binary(self) -> str:
@@ -247,7 +250,7 @@ class Adapter:
             env |= self.extra_env(req)
             env[AGENT_ENV] = "1"
             proc = await asyncio.create_subprocess_exec(
-                *argv, cwd=self.root, env=env, start_new_session=True,
+                *argv, cwd=self.root, env=env, **osutil.GROUP_KWARGS,
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024,
             )
@@ -333,9 +336,9 @@ class Adapter:
 class CodexAdapter(Adapter):
     name, provider = "codex-cli", "openai"
 
-    def __init__(self, cfg: BridgeConfig, root: Path):
-        super().__init__(cfg, root)
-        self.schema_path = self.state_dir / "output_schema.json"
+    @property
+    def schema_path(self) -> Path:
+        return self.state_dir / "output_schema.json"
 
     @property
     def binary(self) -> str:
@@ -613,9 +616,9 @@ ADAPTERS: dict[str, type[Adapter]] = {"codex-cli": CodexAdapter, "claude-cli": C
 
 async def kill_group(proc: asyncio.subprocess.Process) -> None:
     """SIGTERM the whole process group (agents spawn shells), then SIGKILL after a grace period."""
-    for sig, wait in ((signal.SIGTERM, KILL_GRACE_S), (signal.SIGKILL, KILL_GRACE_S)):
+    for force, wait in ((False, KILL_GRACE_S), (True, KILL_GRACE_S)):
         with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(proc.pid, sig)
+            osutil.kill_group(proc.pid, force=force)
         try:
             await asyncio.wait_for(proc.wait(), timeout=wait)
             return
@@ -629,7 +632,7 @@ def kill_stale(pid: int | None, started: str | None) -> bool:
     if not pid or not started or process_started(pid) != started:
         return False
     with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(pid, signal.SIGTERM)
+        osutil.kill_group(pid, force=False)
     return True
 
 
