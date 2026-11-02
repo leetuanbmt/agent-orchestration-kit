@@ -20,7 +20,7 @@ Phạm vi đã đọc: `bridge/{config,state,install,accounts,service,executor,p
 - Migration là lệnh **tường minh** do người chạy: dry-run mặc định, rồi `--apply`.
   - Dữ liệu được copy bằng SQLite backup API và kiểm tra bằng hash từng bảng.
   - **Nguồn cũ không bị sửa hay xóa.** Rollback chỉ là đọc lại từ nguồn cũ.
-- Cần bạn quyết định 4 điểm ở §9. Điểm quan trọng nhất là D1: dùng `~/.agent-bridge` (khuyến nghị) hay `~/agents-bridge`.
+- 4 quyết định ở §9 đã được chốt; trạng thái triển khai ở §11.
 
 ---
 
@@ -301,6 +301,15 @@ PASS = mọi kết quả mong đợi đều đúng và có bằng chứng (test 
 | D3 | Có chuyển trạng thái account/quota thành toàn máy không (F7) | Để P2. Việc này đổi hành vi routing nên cần quyết định riêng |
 | D4 | Mặc định retention cho log | Tắt; chỉ chạy khi gọi `storage gc` |
 
+Đã chốt (2026-11-02):
+- D1: chọn `~/.agent-bridge`.
+- D2: migrate tường minh.
+- D3: có, áp dụng toàn máy. Khóa là danh tính account (provider + home, cùng seed với `AccountLock`), không dùng tên, vì hai project có thể đặt cùng một tên cho hai home khác nhau.
+- D4: tắt.
+- Thêm hai điểm:
+  - Windows: hỗ trợ theo kiểu best effort, chỉ kiểm thử bằng mô phỏng.
+  - Web dashboard: mỗi lần chạy sinh một token ngẫu nhiên, gửi qua header `X-Bridge-Token`. Không dùng cookie, vì cookie không tách biệt theo port.
+
 ---
 
 ## 10. Lộ trình và tiêu chí nghiệm thu
@@ -338,3 +347,23 @@ Mỗi mục P0/P1 là một task cho executor, dưới 400 dòng thay đổi, ch
 | P0-3 | N6, R4, G3 pass; web và `tasks` hiển thị đủ 8 root còn sống trước và sau migrate thật (người chạy `--apply`) | Có task biến mất khỏi bất kỳ client nào |
 | P1 | C5, R3, S4, G4 pass | Hiệu năng không đạt mục tiêu |
 | Migrate dữ liệu thật | Người chạy `--apply` sau khi đóng các session Claude; báo cáo 8/8 OK; health không có cảnh báo; legacy giữ nguyên ít nhất một chu kỳ dùng trước khi tính đến `cleanup-legacy` | Có source FAILED mà không có chẩn đoán |
+
+---
+
+## 11. Trạng thái triển khai (2026-11-02)
+
+| Mục | Trạng thái |
+|---|---|
+| P0-1, P0-2, P0-3 | Xong (PR #32). Đã migrate dữ liệu thật: người dùng chạy `--apply`, 11/11 store khớp fingerprint, legacy giữ nguyên. |
+| P1-1 reader, P1-2 lock, P1-4 rollback | Xong (PR #33) |
+| P1-3 | Xong. Quyền 0700/0600; `.claude/settings.json` chặn `storage ... --apply`, `storage rollback` và việc sửa `~/.agent-bridge/**`. |
+| P2 gc, cleanup-legacy, prune, relink | Xong (PR #33). `gc` chỉ xóa log, không xóa dòng nào, nên ràng buộc ID của F12 vẫn đúng. |
+| P2 D3 | Xong. `$AGENT_BRIDGE_HOME/accounts.db` (0600) dùng khóa `account_key`; account không resolve được thì chỉ lưu cục bộ. |
+| P2 Windows | Xong ở mức code: `bridge/osutil.py` (msvcrt, taskkill, OpenProcess, CIM). Chưa chạy trên máy Windows thật. |
+| Web token | Xong: `/api/*` trả 401 khi thiếu token. |
+| S3 probe | Đã chạy: sandbox Codex chặn ghi vào `~/.agent-bridge` (codex-cli 0.166). |
+
+Còn mở:
+- F4: `Bridge()` vẫn tạo state khi chạy lệnh chỉ đọc.
+- F3: ghi `projects.json` vẫn không có lock. Rủi ro đã giảm vì discovery giờ hợp cả `central_stores()`.
+- F14: không còn áp dụng cho state đã migrate, vì `~/.agent-bridge` nằm ngoài `~/Desktop` và `~/Documents`.

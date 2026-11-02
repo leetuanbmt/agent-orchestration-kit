@@ -217,7 +217,8 @@ agent-bridge web           # dashboard web chỉ đọc cho mọi project và wo
 #### Dashboard web
 
 Chạy `agent-bridge web [--port N] [--open]` để xem dashboard trên trình duyệt máy tính tại
-`http://127.0.0.1:8765/`. Cổng mặc định là 8765; `--port 0` chọn cổng trống,
+`http://127.0.0.1:8765/?token=…`. URL được in ra chứa token bí mật riêng cho mỗi lần khởi chạy;
+hãy mở đường dẫn đó và không chia sẻ. Cổng mặc định là 8765; `--port 0` chọn cổng trống,
 `--open` mở trình duyệt, và Ctrl+C dừng server.
 
 Dashboard hiển thị mọi project agent-bridge biết trên máy và các git worktree của chúng, bỏ qua
@@ -469,6 +470,8 @@ database cũ sau khi di chuyển (split-brain).
 
 ## Account
 
+Dấu trạng thái quota/xác thực và quota được báo cáo được chia sẻ giữa mọi dự án trên máy qua `$AGENT_BRIDGE_HOME/accounts.db`; `agent-bridge account-clear` xóa dấu trạng thái trên toàn máy.
+
 Account không có `home` dùng login global kế thừa của CLI (`~/.codex`, `~/.claude`), bridge chỉ
 đọc. Account có `home` là một phiên đăng nhập riêng: bridge đặt `CODEX_HOME` hoặc
 `CLAUDE_CONFIG_DIR` cho mọi lượt chạy trên nó. Home phải là đường dẫn tuyệt đối, nằm ngoài
@@ -636,6 +639,8 @@ trạng thái của bridge dưới `AGENT_BRIDGE_HOME` (mặc định `~/.agent-
 khi di chuyển. Gỡ tool: `uv tool uninstall agent-orchestration-kit`, rồi xoá thư mục clone.
 
 ## Hạn chế đã biết
+
+Hỗ trợ Windows đã được triển khai nhưng chưa được kiểm thử trên máy Windows thực tế. Các bảo đảm của sandbox hệ điều hành Codex chỉ được xác minh trên macOS.
 
 Xem `docs/REPORT.md` → *Limitations*.
 

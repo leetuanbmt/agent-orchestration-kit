@@ -18,8 +18,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from . import progress, storage
-from .accounts import HOME_ENV, Account, AccountLock, binary, discover, \
+from . import osutil, progress, storage
+from .accounts import HOME_ENV, Account, AccountLock, account_key, binary, discover, \
     load_registry, login_status, remember_project, resolve, resolve_profile
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
 from .executor import ADAPTERS, PLAN_SCHEMA, REVIEW_SCHEMA, Adapter, RunRequest, RunResult, \
@@ -40,15 +40,7 @@ REBINDABLE = {State.READY, State.REWORK, State.FAILED, State.PAUSED}
 
 
 def _alive(pid: int | None) -> bool:
-    if not pid:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    return osutil.alive(pid)
 
 
 def _attempt_log_path(root: Path, task_id: str, n: int) -> Path:
@@ -92,7 +84,7 @@ class Bridge:
                 source = Path(str(legacy) + suffix)
                 if source.exists():
                     os.replace(source, Path(str(database) + suffix))
-        self.store = Store(database)
+        self.store = Store(database, shared=storage.home() / "accounts.db")
         if migrated:
             self.store.log(None, "bridge", "state_migrated",
                            {"from": str(legacy), "to": str(database)})
@@ -112,6 +104,12 @@ class Bridge:
 
     def _account(self, name: str) -> Account:
         return resolve_account(self.orch, self.cfg, self.root, name)
+
+    def _key(self, name: str) -> str | None:
+        try:
+            return account_key(self._account(name))
+        except ValueError:
+            return None
 
     def _slots(self, account: str) -> int:
         profile = self.orch.accounts.get(account)
@@ -158,7 +156,7 @@ class Bridge:
             if found:
                 return found
         # Providers without readable rollouts: the limits the CLI reported on its last run.
-        stored = self.store.quota(name)
+        stored = self.store.quota(name, key=account_key(account))
         if stored is None:
             return "UNKNOWN"
         limits = stored["rate_limits"]
@@ -172,11 +170,12 @@ class Bridge:
 
     def _record_account(self, name: str, res: RunResult) -> None:
         if res.rate_limits:
-            self.store.save_quota(name, res.rate_limits)
+            self.store.save_quota(name, res.rate_limits, key=self._key(name))
         # Runs only start on an available account, so a mark seen after a successful run came from
         # another run meanwhile; only account-clear (the user) lifts it.
         if res.outcome in {"quota", "auth"}:
-            self.store.set_account_state(name, res.outcome, res.error, actor=Actor.BRIDGE)
+            self.store.set_account_state(name, res.outcome, res.error, actor=Actor.BRIDGE,
+                                         key=self._key(name))
 
     def _unavailable(self, name: str, need: str) -> str | None:
         """Why agent `name` cannot take work needing `need` right now; None when it can."""
@@ -193,7 +192,7 @@ class Bridge:
             account = self._account(agent.account or "")
         except ValueError as e:
             return str(e)
-        state = self.store.account_state(account.name)["state"]
+        state = self.store.account_state(account.name, key=account_key(account))["state"]
         if state != "available":
             return f"account {account.name} {state}"
         if self.store.active_on_account(account.name) >= self._slots(account.name):
@@ -234,7 +233,7 @@ class Bridge:
         registry = load_registry()
         for account in listing["accounts"]:
             account["quota"] = self._account_quota(account["name"])
-            state = self.store.account_state(account["name"])
+            state = self.store.account_state(account["name"], key=self._key(account["name"]))
             account.update(state=state["state"], last_error=state["last_error"],
                            max_concurrency=self._slots(account["name"]),
                            source="registry" if account["name"] in registry else "project")
@@ -283,8 +282,9 @@ class Bridge:
 
     def clear_account(self, name: str) -> dict[str, Any]:
         account = self._account(name)
-        self.store.set_account_state(account.name, "available", actor=Actor.CLIENT)
-        return self.store.account_state(account.name)
+        self.store.set_account_state(account.name, "available", actor=Actor.CLIENT,
+                                     key=account_key(account))
+        return self.store.account_state(account.name, key=account_key(account))
 
     def reassign_account(self, task_id: str, target: str) -> dict[str, Any]:
         """Human move of a task to another agent (or to the first executor on an account)."""
@@ -335,7 +335,7 @@ class Bridge:
         if current is None:
             return
         account = self.orch.agent(current).account or ""
-        state = self.store.account_state(account)["state"]
+        state = self.store.account_state(account, key=self._key(account))["state"]
         if state == "auth":
             return
         remaining = 0 if state == "quota" else self._remaining(account)
@@ -533,7 +533,7 @@ class Bridge:
             return self._summary(row)
         agent = self.orch.agent(self._agent_of(row) or "")
         account = self._account(agent.account or "")
-        availability = self.store.account_state(account.name)
+        availability = self.store.account_state(account.name, key=account_key(account))
         if availability["state"] != "available":
             raise ValueError(
                 f"account {account.name} unavailable ({availability['state']}: "

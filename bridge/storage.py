@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import re
-import fcntl
 import shutil
 import sqlite3
 import subprocess
@@ -16,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import install
+from . import install, osutil
 
 HOME_ENV = "AGENT_BRIDGE_HOME"
 Location = NamedTuple("Location", [("dir", Path), ("kind", str)])
@@ -200,19 +199,7 @@ def fingerprint(conn) -> dict:
 
 
 def running_processes() -> list[dict]:
-    try:
-        result = subprocess.run(["ps", "-axo", "pid=,ppid=,command="],
-                                capture_output=True, text=True, check=True)
-    except (OSError, subprocess.CalledProcessError):
-        return []
-    processes = {}
-    for line in result.stdout.splitlines():
-        parts = line.strip().split(None, 2)
-        if len(parts) == 3:
-            try:
-                processes[int(parts[0])] = (int(parts[1]), parts[2])
-            except ValueError:
-                continue
+    processes = osutil.list_processes()
     excluded = set()
     pid = os.getpid()
     while pid and pid not in excluded:
@@ -361,7 +348,7 @@ def _storage_guard():
     locks.chmod(0o700)
     with (locks / "migrate.lock").open("a") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            osutil.lock_nonblocking(lock)
         except BlockingIOError as exc:
             raise RuntimeError("another storage migration is running") from exc
         running = running_processes()

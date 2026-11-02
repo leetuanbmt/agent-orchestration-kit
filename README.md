@@ -216,7 +216,8 @@ CLIs, a fresh `HOME`, a demo project under `/tmp/agent-bridge-demo`). Regenerate
 #### Web dashboard
 
 Run `agent-bridge web [--port N] [--open]` for a desktop browser dashboard at
-`http://127.0.0.1:8765/`. The default port is 8765; `--port 0` picks a free port,
+`http://127.0.0.1:8765/?token=…`. The printed URL carries a per-launch secret token;
+open that link and do not share it. The default port is 8765; `--port 0` picks a free port,
 `--open` opens the browser, and Ctrl+C stops the server.
 
 It shows every project agent-bridge knows on this machine and their git worktrees, skipping
@@ -465,6 +466,8 @@ to the legacy database after migration (split-brain).
 
 ## Accounts
 
+Quota/auth marks and reported quota are shared by every project on the machine through `$AGENT_BRIDGE_HOME/accounts.db`; `agent-bridge account-clear` lifts a mark everywhere.
+
 An account without `home` uses the CLI's inherited global login (`~/.codex`, `~/.claude`),
 read-only from the bridge's point of view. An account with `home` is a separate login: the
 bridge sets `CODEX_HOME` or `CLAUDE_CONFIG_DIR` for every run on it. Homes must be absolute,
@@ -630,6 +633,8 @@ under `AGENT_BRIDGE_HOME` (default `~/.agent-bridge`), or its legacy location un
 The tool: `uv tool uninstall agent-orchestration-kit`, then delete the checkout.
 
 ## Known limitations
+
+Windows support is implemented but untested on a real Windows machine. The Codex OS sandbox guarantees were only verified on macOS.
 
 See `docs/REPORT.md` → *Limitations*.
 
