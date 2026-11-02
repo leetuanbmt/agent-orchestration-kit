@@ -10,7 +10,7 @@ import shutil
 import sqlite3
 import subprocess
 import time
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
@@ -367,18 +367,19 @@ def prune(apply: bool = False) -> dict:
 def _prune(apply: bool) -> dict:
     from . import accounts
 
-    roots = accounts.known_projects()
-    removed = [root for root in roots if not Path(root).is_dir()]
-    kept = [root for root in roots if root not in removed]
-    if apply:
-        base = accounts.registry_dir()
-        base.mkdir(mode=0o700, parents=True, exist_ok=True)
-        temporary = base / f"projects.json.{os.getpid()}.tmp"
-        try:
-            temporary.write_text(json.dumps(sorted(kept), indent=2) + "\n")
-            os.replace(temporary, base / "projects.json")
-        finally:
-            temporary.unlink(missing_ok=True)
+    with accounts._projects_lock() if apply else nullcontext():
+        roots = accounts.known_projects()
+        removed = [root for root in roots if not Path(root).is_dir()]
+        kept = [root for root in roots if root not in removed]
+        if apply:
+            base = accounts.registry_dir()
+            base.mkdir(mode=0o700, parents=True, exist_ok=True)
+            temporary = base / f"projects.json.{os.getpid()}.tmp"
+            try:
+                temporary.write_text(json.dumps(sorted(kept), indent=2) + "\n")
+                os.replace(temporary, base / "projects.json")
+            finally:
+                temporary.unlink(missing_ok=True)
     return {"applied": apply, "removed": removed, "kept": len(kept)}
 
 

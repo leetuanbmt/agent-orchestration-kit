@@ -2,7 +2,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -68,6 +68,26 @@ def test_windows_kill(monkeypatch):
     run.return_value.returncode = 128
     with pytest.raises(ProcessLookupError):
         osutil.kill_group(42)
+
+
+# @pt.id T0042-windows-lock
+# @pt.item Blocking Windows lock
+# @pt.condition Windows region locking succeeds or fails
+# @pt.expected Seek before LK_LOCK of one byte and propagate OSError
+# @pt.target bridge.osutil.lock
+# @pt.method unit
+# @pt.legacy None
+def test_windows_blocking_lock(monkeypatch):
+    calls = Mock()
+    handle = calls.handle
+    handle.fileno.return_value = 42
+    monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(LK_LOCK=1, locking=calls.locking))
+    monkeypatch.setattr(osutil, "WINDOWS", True)
+    osutil.lock(handle)
+    assert calls.mock_calls == [call.handle.seek(0), call.handle.fileno(), call.locking(42, 1, 1)]
+    calls.locking.side_effect = OSError("busy")
+    with pytest.raises(OSError, match="busy"):
+        osutil.lock(handle)
 
 
 # @pt.id T0041-alive

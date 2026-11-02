@@ -214,14 +214,23 @@ def known_projects() -> list[str]:
     return []
 
 
+@contextlib.contextmanager
+def _projects_lock():
+    base = registry_dir()
+    base.mkdir(mode=0o700, exist_ok=True)
+    with (base / "projects.lock").open("a") as handle:
+        osutil.lock(handle)
+        yield
+
+
 def remember_project(root: Path) -> None:
     """Add a project to the machine-wide list `agent-bridge tasks` reads; best effort."""
     projects = known_projects()
     if str(root) in projects:
         return
-    with contextlib.suppress(OSError):
+    with contextlib.suppress(OSError), _projects_lock():
+        projects = known_projects()
         base = registry_dir()
-        base.mkdir(mode=0o700, exist_ok=True)
         tmp = base / f"projects.json.{os.getpid()}.tmp"
         tmp.write_text(json.dumps(sorted({*projects, str(root)}), indent=2) + "\n")
         os.replace(tmp, base / "projects.json")

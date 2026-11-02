@@ -13,6 +13,18 @@ GROUP_KWARGS = ({"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP"
                 if WINDOWS else {"start_new_session": True})
 
 
+def lock(handle):
+    if WINDOWS:
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle, fcntl.LOCK_EX)
+
+
 def lock_nonblocking(handle):
     if WINDOWS:
         import msvcrt
