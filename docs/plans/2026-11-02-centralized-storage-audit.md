@@ -374,4 +374,6 @@ Kiểm chứng cuối (HEAD `9332ace`):
   - B chạy `clear_account`; sau đó A thấy account khả dụng.
   - `accounts.db` có quyền 0600; mỗi repo có store trung tâm riêng.
 
-Còn bị chặn: chưa chạy được trên Windows thật, vì máy này là macOS và repo không có CI. Đường Windows hiện chỉ được kiểm bằng test mô phỏng. Muốn kiểm thật cần một runner Windows (ví dụ GitHub Actions `windows-latest`). Thêm workflow CI là thay đổi trên đường dẫn nhạy cảm nên cần người duyệt.
+Windows: người dùng chấp nhận mức kiểm thử mô phỏng (2026-11-02). Hỗ trợ ở mức best effort; README ghi rõ chưa được kiểm thử trên máy Windows thật. Nếu sau này có runner Windows, thêm vào CI qua bước duyệt của người.
+
+Mọi hạng mục của audit đã hoàn tất.
