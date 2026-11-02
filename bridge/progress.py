@@ -141,7 +141,7 @@ def _command(tid: str, state: str, needs_human: bool) -> str | None:
         return f"agent-bridge approve {tid}"
     if state in {"REVIEW", "FAILED", "BLOCKED"}:
         return f"agent-bridge result {tid}"
-    if state == "PAUSED":
+    if state in {"PAUSED", "REWORK"}:
         return f"agent-bridge resume {tid}"
     return None
 
@@ -220,7 +220,7 @@ def _timeout(root, agent):
 def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
     now = time.time() if now is None else now
     result = {"generated_at": now, "projects": [], "attention": [], "running": [],
-              "activity": {"done_24h": 0, "per_hour": [0] * 24, "latest": None}, "requests": []}
+              "activity": {"done_24h": 0, "per_hour": [0] * 24, "latest": None}, "requests": [], "tasks": []}
     request_ranks = {}
     for root in dict.fromkeys(discover_roots() if roots is None else roots):
         pid = project_id(root)
@@ -229,7 +229,8 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
         if shown == home or shown.startswith(home + "/"):
             shown = "~" + shown[len(home):]
         project = {"pid": pid, "name": path.name, "root": shown, "worktree_of": None,
-                   "root_missing": not path.is_dir(), "error": None, "counts": {}, "percent": None, "badge": None}
+                   "root_missing": not path.is_dir(), "error": None, "counts": {}, "percent": None, "badge": None,
+                   "branch": None, "updated_at": None}
         try:
             data = _read(root)
         except FileNotFoundError:
@@ -240,6 +241,12 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
             continue
         result["projects"].append(project)
         tasks = _tasks(data)
+        result["tasks"].extend({"pid": pid,
+                                "reason": pause_reason(t["failure"]) if t["state"] == "PAUSED" else None,
+                                **{k: t[k] for k in (
+            "task_id", "objective", "state", "stage", "exception", "needs_human",
+            "updated_at", "agent", "account", "workflow_id", "command")}} for t in tasks)
+        project["updated_at"] = max((t["updated_at"] for t in tasks), default=None)
         project["counts"] = _counts(tasks)
         project["percent"] = percent(project["counts"])
         trees = []
@@ -248,6 +255,17 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
                                  capture_output=True, text=True, check=False)
             trees = list(dict.fromkeys(line.removeprefix("worktree ") for line in out.stdout.splitlines()
                                        if line.startswith("worktree ")))
+            current_tree = None
+            for line in out.stdout.splitlines():
+                if line.startswith("worktree "):
+                    current_tree = line.removeprefix("worktree ")
+                elif not line:
+                    current_tree = None
+                elif current_tree == root:
+                    if line.startswith("branch refs/heads/"):
+                        project["branch"] = line.removeprefix("branch refs/heads/")
+                    elif line == "detached":
+                        project["branch"] = "HEAD"
         if root in trees and trees[0] != root:
             project["worktree_of"] = project_id(trees[0])
         result["requests"].extend(_requests(data, tasks, pid))
@@ -299,6 +317,8 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
     result["requests"].sort(key=lambda r: (*request_ranks.get((r["pid"], r["id"]), _rank(None)),
                                           -r["updated_at"]))
     result["requests"] = result["requests"][:50]
+    result["tasks"].sort(key=lambda t: t["updated_at"], reverse=True)
+    result["tasks"] = result["tasks"][:1000]
     return result
 
 

@@ -10,22 +10,28 @@
 <body>
   <header class="topbar">
     <strong id="brand"></strong>
-    <nav id="filters" class="pills"></nav>
+    <nav id="views" class="pills" aria-label="Views"></nav>
     <span id="live" class="pill live" role="status"></span>
     <div id="languages" class="pills"></div>
   </header>
   <main id="content">
-    <section id="tiles" class="tiles"></section>
-    <section class="requests">
-      <h2 id="requests-heading"></h2>
-      <div class="table-scroll">
-        <table aria-labelledby="requests-heading">
-          <thead><tr id="columns"></tr></thead>
-          <tbody id="request-rows"></tbody>
-        </table>
+    <section id="tasks-view">
+      <div class="filter-bar">
+        <label><span id="search-label"></span><input id="search" type="search"></label>
+        <label><span id="project-label"></span><select id="project"></select></label>
+        <label><span id="worktree-label"></span><select id="worktree"></select></label>
+        <button id="group-worktree" type="button" aria-pressed="false"></button>
+        <button id="clear" type="button" hidden></button>
       </div>
-      <p id="requests-empty" class="muted" hidden></p>
+      <div id="statuses" class="pills"></div>
+      <p id="task-count"></p>
+      <table aria-labelledby="task-count">
+        <thead><tr id="columns"></tr></thead>
+        <tbody id="task-rows"></tbody>
+      </table>
+      <div id="tasks-empty" class="empty" hidden><p id="empty-message"></p><button id="empty-clear" type="button"></button></div>
     </section>
+    <section id="projects-view" hidden><div id="project-cards"></div><p id="projects-empty"></p></section>
   </main>
   <footer id="footer"></footer>
   <aside id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>

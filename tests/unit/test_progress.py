@@ -564,3 +564,92 @@ def test_large_snapshot_first_load(repo, store):
     elapsed = time.perf_counter() - started
     assert snap["projects"][0]["counts"] == {"review": 1000}
     assert elapsed < 2
+
+
+# @pt.id T0045-tasks
+# @pt.item Flat task projection and project metadata
+# @pt.condition Multiple tasks across main checkout and linked worktree
+# @pt.expected All tasks sorted by update with exact fields and per-root metadata
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_tasks_and_worktree_metadata(repo, store):
+    older = add(store, updated=100)
+    newer = add(store, "FAILED", failure="private failure", updated=300)
+    branch = subprocess.run(["git", "-C", str(repo), "branch", "--show-current"],
+                            check=True, capture_output=True, text=True).stdout.strip()
+    tree = repo.parent / "task-feature"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b", "task-feature", str(tree)],
+                   check=True, capture_output=True)
+    other = Store(progress.install.git_dir(tree) / "agent-bridge/bridge.db")
+    try:
+        roots = [str(repo), str(tree)]
+        empty = progress.snapshot(roots)["projects"][1]
+        assert empty["updated_at"] is None
+        assert empty["branch"] == "task-feature"
+        assert empty["worktree_of"] == progress.project_id(str(repo))
+        middle = add(other, updated=200)
+        snap = progress.snapshot(roots)
+        assert [(t["pid"], t["task_id"], t["updated_at"]) for t in snap["tasks"]] == [
+            (progress.project_id(str(repo)), newer, 300),
+            (progress.project_id(str(tree)), middle, 200),
+            (progress.project_id(str(repo)), older, 100)]
+        expected = {"pid", "task_id", "objective", "state", "stage", "exception", "needs_human",
+                    "updated_at", "agent", "account", "reason", "workflow_id", "command"}
+        assert all(set(task) == expected for task in snap["tasks"])
+        assert snap["projects"][0]["branch"] == branch
+        assert [p["updated_at"] for p in snap["projects"]] == [300, 200]
+    finally:
+        other.db.close()
+
+
+# @pt.id T0047-task-actions
+# @pt.item Task account, pause reason and rework command
+# @pt.condition Legacy account and paused or rework tasks
+# @pt.expected Account retained, reason only for pause, fixed resume command
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_task_account_reason_and_rework_command(repo, store):
+    paused = add(store, "PAUSED", failure="QUOTA: detail")
+    rework = add(store, "REWORK")
+    store.db.execute("UPDATE tasks SET account=? WHERE id=?", ("legacy", paused))
+    tasks = {t["task_id"]: t for t in progress.snapshot([str(repo)])["tasks"]}
+    assert tasks[paused]["account"] == "legacy"
+    assert tasks[paused]["reason"] == "QUOTA"
+    assert tasks[rework]["reason"] is None
+    assert tasks[rework]["command"] == f"agent-bridge resume {rework}"
+
+
+# @pt.id T0045-task-limit
+# @pt.item Flat task limit
+# @pt.condition More than one thousand tasks with distinct update timestamps
+# @pt.expected Newest thousand tasks retained in descending order
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_tasks_limit(repo, store):
+    tid = add(store, updated=0)
+    template = dict(store.db.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone())
+    columns = list(template)
+    rows = [dict(template, id=f"T{index + 1:04d}", updated_at=index) for index in range(1, 1002)]
+    store.db.executemany(
+        f"INSERT INTO tasks ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+        [tuple(row[column] for column in columns) for row in rows])
+    snap = progress.snapshot([str(repo)])
+    assert [t["updated_at"] for t in snap["tasks"]] == list(range(1001, 1, -1))
+
+
+# @pt.id T0045-detached
+# @pt.item Detached branch metadata
+# @pt.condition Readable repository checked out at detached HEAD
+# @pt.expected Project branch is HEAD and empty update is None
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_detached_branch(repo, store):
+    subprocess.run(["git", "-C", str(repo), "checkout", "--detach", "-q"],
+                   check=True, capture_output=True)
+    project = progress.snapshot([str(repo)])["projects"][0]
+    assert project["branch"] == "HEAD"
+    assert project["updated_at"] is None

@@ -55,7 +55,7 @@ def test_overview_shape(server, repo, monkeypatch):
     status, headers, body = request(server)
     assert status == 200
     assert headers["Content-Type"] == "application/json; charset=utf-8"
-    assert set(json.loads(body)) == {"generated_at", "projects", "attention", "running", "activity", "requests"}
+    assert set(json.loads(body)) == {"generated_at", "projects", "attention", "running", "activity", "requests", "tasks"}
     pid = progress.project_id(str(repo))
     for kind in ("tasks", "requests"):
         assert request(server, f"/api/projects/{pid}/{kind}/T0001")[0] == 200
