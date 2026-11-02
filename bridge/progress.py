@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import accounts, config, install, orchestrator, quota
+from . import accounts, config, install, orchestrator, quota, storage
 from .security import redact
 
 TASK_ID = re.compile(r"^T\d{4,}$")
@@ -77,12 +77,9 @@ def _json(value):
 
 def _read(root):
     try:
-        gdir = install.git_dir(Path(root))
+        path = storage.store_dir(Path(root), create=False) / "bridge.db"
     except (OSError, subprocess.CalledProcessError) as exc:
         raise FileNotFoundError(root) from exc
-    # bridge_dir may migrate legacy directories; a dashboard must never trigger that write.
-    directory = install.bridge_dir(gdir) if (gdir / install.NAME).exists() else gdir / install.NAME
-    path = directory / "bridge.db"
     if not path.exists():
         raise FileNotFoundError(path)
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)

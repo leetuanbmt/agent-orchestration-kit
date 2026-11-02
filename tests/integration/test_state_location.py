@@ -1,12 +1,15 @@
 """State isolation and protected project configuration regressions."""
 
-import subprocess
+from pathlib import Path
+
+from bridge import storage
+from bridge.state import Store
 
 import pytest
 
 from bridge.accounts import Account, AccountLock
 from bridge.config import ensure_ai_dir
-from bridge.models import State
+from bridge.models import State, TaskSpec
 from bridge.state import ConflictError
 from tests.conftest import run, spec
 
@@ -14,15 +17,14 @@ from tests.conftest import run, spec
 # @pt.id KIT-STATE-001-location
 # @pt.item Mutable state is outside the workspace
 # @pt.condition A bridge executes a task in a git repository
-# @pt.expected Database, schema and health paths use the private git state directory
+# @pt.expected Database, schema and health paths use the private central state directory
 # @pt.target Bridge.__init__, Bridge.health, CodexAdapter.run
 # @pt.method integration
 # @pt.legacy none (new kit)
 def test_state_location(make_bridge, repo, monkeypatch, fake_codex):
     b = make_bridge()
-    git_dir = subprocess.check_output(
-        ["git", "-C", str(repo), "rev-parse", "--absolute-git-dir"], text=True).strip()
-    assert str(b.store.path) == git_dir + "/agent-bridge/bridge.db"
+    assert b.store.path == storage.store_dir(repo) / "bridge.db"
+    assert b.state_dir.is_relative_to(Path.home() / ".agent-bridge/projects")
     assert b.state_dir.stat().st_mode & 0o777 == 0o700
     monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n")
     tid = run(b.create_task(spec()))["task_id"]
@@ -37,6 +39,29 @@ def test_state_location(make_bridge, repo, monkeypatch, fake_codex):
     health = run(b.health())
     assert health["database"] == str(b.store.path)
     assert health["state_dir"] == str(b.state_dir)
+    assert health["storage"] == "central"
+
+
+# @pt.id T0029-legacy-state
+# @pt.item Existing state location
+# @pt.condition A git-dir database already exists
+# @pt.expected Bridge keeps its location and tasks across startups
+# @pt.target Bridge.__init__, Bridge.health
+# @pt.method integration
+# @pt.legacy agent-bridge
+def test_existing_state(make_bridge, repo):
+    path = repo / ".git/agent-bridge/bridge.db"
+    old = Store(path)
+    task, _ = old.create(TaskSpec.model_validate(spec()), "existing-task")
+    tid = task["id"]
+    old.db.close()
+    b = make_bridge()
+    assert b.store.get(tid)["spec"]["objective"] == spec()["objective"]
+    b.store.db.close()
+    fresh = make_bridge()
+    assert fresh.store.path == path
+    assert fresh.store.get(tid)["spec"]["objective"] == spec()["objective"]
+    assert run(fresh.health())["storage"] == "legacy"
 
 
 # @pt.id KIT-STATE-002-migration

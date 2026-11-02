@@ -18,7 +18,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from . import install, progress
+from . import progress, storage
 from .accounts import HOME_ENV, Account, AccountLock, binary, discover, \
     load_registry, login_status, remember_project, resolve, resolve_profile
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
@@ -82,6 +82,7 @@ class Bridge:
         self.legacy = self.orch.source.startswith("legacy")
         ensure_ai_dir(self.root)
         self.state_dir = state_dir(self.root)
+        self.storage = storage.locate(self.root).kind
         database = self.state_dir / "bridge.db"
         legacy = self.root / AI_DIR / "bridge.db"
         migrated = legacy.exists() and not database.exists()
@@ -403,6 +404,7 @@ class Bridge:
             "project_root": str(self.root),
             "database": str(self.store.path),
             "state_dir": str(self.state_dir),
+            "storage": self.storage,
             "orchestrator": {"source": self.orch.source, "stages": self.orch.workflow.stages},
             "codex": codex,
             "adapters": adapters,
@@ -998,7 +1000,7 @@ def project_tasks(state: str | None = None, limit: int = 10,
     projects = []
     for root in roots:
         try:
-            db = install.bridge_dir(install.git_dir(Path(root))) / "bridge.db"
+            db = storage.store_dir(Path(root), create=False) / "bridge.db"
         except (OSError, subprocess.CalledProcessError):
             continue  # the project or worktree is gone
         if not db.exists():
