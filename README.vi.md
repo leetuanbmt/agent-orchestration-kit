@@ -375,6 +375,8 @@ terminal.
 | `web [--port N] [--open]` | Dashboard web chỉ đọc cho mọi project và worktree đã biết; chỉ trên localhost |
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Cài vào / gỡ khỏi một project |
 | `storage status` / `storage migrate [--apply]` | Xem nơi lưu trữ / xem trước hoặc thực hiện di chuyển |
+| `storage rollback <root> [--yes]` | Chuyển bản tập trung sang nơi lưu riêng (người dùng chạy) |
+| `storage cleanup-legacy [--apply]` | Xem trước hoặc sao lưu file cũ đã xác minh (người dùng chạy) |
 | `serve` | MCP stdio server (lệnh mà `.mcp.json` chạy) |
 | `config-init [example]` | Chỉ người dùng: ghi `.ai/orchestrator.yaml` từ một file mẫu đi kèm (từ chối nếu đã có); không có tên thì liệt kê file mẫu và đường dẫn `config.example.json` |
 | `config-check` | Kiểm tra `.ai/orchestrator.yaml` (hoặc cấu hình legacy) |
@@ -450,8 +452,9 @@ sau đó chạy `agent-bridge storage migrate --apply`. Không có `--apply` th�
 Quá trình di chuyển dùng SQLite backup (bao gồm WAL), kiểm tra tính toàn vẹn database, số dòng
 và mã băm từng bảng, đồng thời sao chép log và kiểm tra SHA-256. Nguồn được kiểm tra để bảo đảm
 không thay đổi trước khi công bố bản tập trung. Các file cũ được giữ nguyên.
-Để quay lại, dùng phiên bản kit cũ đọc các file cũ đó; thay đổi trong kho tập trung sau khi di
-chuyển sẽ không xuất hiện ở bản cũ. Health cảnh báo nếu tiến trình cũ ghi thêm sự kiện vào
+`agent-bridge storage rollback <root>` chuyển bản tập trung sang nơi lưu riêng; thêm `--yes` để chấp nhận ẩn các sự kiện mới hơn.
+`agent-bridge storage cleanup-legacy --apply` chuyển các file cũ đã xác minh vào `~/.agent-bridge/backups`; không xóa dữ liệu.
+Health cảnh báo nếu tiến trình cũ ghi thêm sự kiện vào
 database cũ sau khi di chuyển (split-brain).
 
 

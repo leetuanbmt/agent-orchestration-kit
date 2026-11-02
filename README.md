@@ -371,6 +371,8 @@ secrets), stops at `APPROVED` until a human runs `agent-bridge approve TASK_ID` 
 | `web [--port N] [--open]` | Read-only web dashboard for all known projects and worktrees; localhost only |
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Install into / remove from a project |
 | `storage status` / `storage migrate [--apply]` | Inspect storage / preview or apply migration |
+| `storage rollback <root> [--yes]` | Move a migrated central store aside (human operation) |
+| `storage cleanup-legacy [--apply]` | Preview or back up verified legacy files (human operation) |
 | `serve` | MCP stdio server (what `.mcp.json` runs) |
 | `config-init [example]` | Human only: write `.ai/orchestrator.yaml` from a shipped example (refuses if it exists); without one, list the examples and the `config.example.json` path |
 | `config-check` | Validate `.ai/orchestrator.yaml` (or the legacy config) |
@@ -446,8 +448,9 @@ inspect the plan, then `agent-bridge storage migrate --apply`. Without `--apply`
 only previews the plan. Migration uses SQLite backup (including WAL), checks database integrity,
 table counts and row hashes, and copies logs with SHA-256 verification. It checks that the
 source has not changed before publishing the central store. Legacy files are left untouched.
-To roll back, use an older kit version, which reads those legacy files; changes made in central
-storage after migration will not appear there. Health warns if an old process writes new events
+`agent-bridge storage rollback <root>` moves the central copy aside; pass `--yes` to accept hiding newer central events.
+`agent-bridge storage cleanup-legacy --apply` moves verified legacy files to `~/.agent-bridge/backups`; nothing is deleted.
+Health warns if an old process writes new events
 to the legacy database after migration (split-brain).
 
 

@@ -10,7 +10,7 @@ import fcntl
 import shutil
 import sqlite3
 import subprocess
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
@@ -294,6 +294,17 @@ def migrate(here: Path | None = None, apply: bool = False) -> dict:
     if not apply:
         return {"applied": False, "home": str(base), "running": running_processes(),
                 "sources": plan(here)}
+    with _storage_guard() as running:
+        entries = plan(here)
+        for entry in entries:
+            if entry["status"] == "ready":
+                _migrate_entry(entry)
+        return {"applied": True, "home": str(base), "running": running, "sources": entries}
+
+
+@contextmanager
+def _storage_guard():
+    base = home()
     base.mkdir(mode=0o700, parents=True, exist_ok=True)
     locks = base / "locks"
     locks.mkdir(mode=0o700, exist_ok=True)
@@ -306,8 +317,83 @@ def migrate(here: Path | None = None, apply: bool = False) -> dict:
         running = running_processes()
         if running:
             raise RuntimeError("bridge processes are running: " + ", ".join(str(p["pid"]) for p in running))
-        entries = plan(here)
-        for entry in entries:
-            if entry["status"] == "ready":
-                _migrate_entry(entry)
-        return {"applied": True, "home": str(base), "running": running, "sources": entries}
+        yield running
+
+
+def _archive_dir(kind: str, central: Path) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    destination = home() / kind / stamp / central.parent.parent.name / central.name
+    for directory in reversed([destination, *destination.parents]):
+        if directory.is_relative_to(home()):
+            directory.mkdir(mode=0o700, exist_ok=True)
+            directory.chmod(0o700)
+    return destination
+
+
+def rollback(root: Path, yes: bool = False) -> dict:
+    root = root.resolve()
+    with _storage_guard():
+        central = central_stores().get(str(root))
+        if central is None and root.exists():
+            central = _paths(root)[2]
+        if central is None or not (central / "migration.json").is_file():
+            raise RuntimeError("only migrated stores can be rolled back")
+        metadata = json.loads((central / "migration.json").read_text())
+        if not Path(metadata["source"]).is_file():
+            raise RuntimeError("legacy source no longer exists")
+        with closing(_readonly(central / "bridge.db")) as conn:
+            has_events = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone()
+            hidden = conn.execute("SELECT count(*) FROM events WHERE id > ?",
+                                  (metadata["source_max_event_id"],)).fetchone()[0] if has_events else 0
+        if hidden and not yes:
+            raise RuntimeError(f"{hidden} events would be hidden; pass --yes to roll back")
+        destination = _archive_dir("rollback", central)
+        os.replace(central, destination)
+        return {"root": str(root), "moved_to": str(destination), "hidden_events": hidden}
+
+
+def cleanup_legacy(apply: bool = False) -> dict:
+    if not apply:
+        return _cleanup_legacy(False)
+    with _storage_guard():
+        return _cleanup_legacy(True)
+
+
+def _cleanup_legacy(apply: bool) -> dict:
+    entries = []
+    for root, central in central_stores().items():
+        manifest = central / "migration.json"
+        if not manifest.is_file():
+            continue
+        entry = {"root": root, "source": None, "status": "changed", "error": None}
+        entries.append(entry)
+        try:
+            metadata = json.loads(manifest.read_text())
+            source = Path(metadata["source"])
+            entry["source"] = str(source)
+            if not source.exists():
+                entry["status"] = "gone"
+                continue
+            with closing(_readonly(source)) as conn:
+                current = fingerprint(conn)
+            recorded = metadata["fingerprint"]
+            if (current["integrity"] != "ok" or current["tables"] != recorded["tables"]
+                    or current["max_event_id"] != recorded["max_event_id"]):
+                entry["error"] = "legacy database changed since migration"
+                continue
+            entry["status"] = "ready"
+            if apply:
+                destination = _archive_dir("backups", central)
+                files = [source, Path(str(source) + "-wal"), Path(str(source) + "-shm")]
+                git_dir = Path(json.loads((central / "worktree.json").read_text())["git_dir"])
+                if source.parent in (git_dir / "agent-bridge", git_dir / "codex-bridge"):
+                    files.append(source.parent / "logs")
+                if any((destination / path.name).exists() for path in files):
+                    raise RuntimeError("backup destination already exists")
+                for path in files:
+                    if path.exists():
+                        shutil.move(str(path), str(destination / path.name))
+                entry["status"] = "moved"
+        except (OSError, ValueError, KeyError, sqlite3.Error, RuntimeError) as exc:
+            entry.update(status="changed", error=str(exc))
+    return {"applied": apply, "entries": entries}

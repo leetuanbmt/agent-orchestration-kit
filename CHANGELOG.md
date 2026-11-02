@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Human-run `storage rollback <root> [--yes]` archives migrated central stores, and
+  `storage cleanup-legacy [--apply]` moves verified legacy state into backups without deleting files.
 - New repositories keep bridge state under `~/.agent-bridge/projects/<project>/worktrees/<worktree>/`
   (`AGENT_BRIDGE_HOME` overrides), so history survives deleting the worktree. `storage status` and
   `storage migrate [--apply]` copy existing git-dir state there; `health` flags legacy storage and
