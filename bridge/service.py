@@ -31,7 +31,7 @@ from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .review import diff, parse_command, run_verification, scope_violations, snapshot, \
     touches_sensitive
-from .security import PathError, process_started, redact, rule_unsafe, validate_pattern
+from .security import hook_settings_error, PathError, process_started, redact, rule_unsafe, validate_pattern
 from .state import ConflictError, Store, overview
 
 # Outcomes that mean "the environment, not the code": park the task, never auto-retry.
@@ -533,6 +533,14 @@ class Bridge:
         return await self._start(task_id, "resume", prompt, row["session_id"], expect, wait,
                                  actor)
 
+    def _hook_settings(self, agent: AgentConfig) -> str | None:
+        if agent.adapter == "claude-cli" and self.cfg.claude_hook_settings:
+            path = self.cfg.claude_hook_settings
+            if error := hook_settings_error(path, self.root):
+                raise ValueError(f"claude_hook_settings: {error}")
+            return path
+        return None
+
     async def _start(self, task_id: str, kind: str, prompt: str, session: str | None,
                      expect: set[State], wait: bool, actor: Actor) -> dict[str, Any]:
         row = self.store.get(task_id)
@@ -555,6 +563,7 @@ class Bridge:
                 f"claude-cli cannot scope writes to {bad}: Claude permission rules cannot hold "
                 "',', '(', ')', quotes or whitespace. Rename the paths, or ask the user to "
                 f"run: agent-bridge reassign {task_id} <codex agent>")
+        self._hook_settings(agent)
         used = row["attempts"] + 1  # budget counter; environment failures give it back
         seq = len(self.store.attempts(task_id)) + 1  # attempt row number, never reused
         slots = self._slots(account.name)
@@ -634,6 +643,8 @@ class Bridge:
                 res: RunResult = await adapter.run(
                     RunRequest(prompt, account, sandbox, self._timeout(agent, spec.get("timeout_s")),
                                session_id=session, model=agent.model, allow_bash=agent.allow_bash,
+                               hook_settings=self.cfg.claude_hook_settings
+                               if agent.adapter == "claude-cli" else None,
                                write_paths=spec["allowed_paths"],
                                deny_paths=[*spec.get("excluded_paths", []),
                                            *self.cfg.protected_paths]),
@@ -715,6 +726,7 @@ class Bridge:
                        task_id: str | None, cancel: Callable[[], bool]) -> RunResult | None:
         """One read-only run of a planner or reviewer agent; None when its account is busy."""
         agent = self.orch.agents[name]
+        hook_settings = self._hook_settings(agent)
         account = self._account(agent.account or "")
         lock = AccountLock(account, self.cfg.lock_dir, self._slots(account.name))
         try:
@@ -726,7 +738,7 @@ class Bridge:
         try:
             res = await self._adapter(agent.adapter).run(
                 RunRequest(prompt, account, "read-only", self._timeout(agent, None),
-                           schema=schema, model=agent.model),
+                           schema=schema, model=agent.model, hook_settings=hook_settings),
                 should_cancel=cancel)
         finally:
             lock.release()

@@ -421,6 +421,7 @@ key `accounts` / `auto_switch` bên dưới chỉ dành cho cấu hình legacy.
 |---|---|---|
 | `sandbox` | `workspace-write` | hoặc `read-only`; không chấp nhận `danger-full-access` |
 | `codex_bin` / `claude_bin` / `opencode_bin` / `agy_bin` | `codex` / `claude` / `opencode` / `agy` | file chạy của CLI |
+| `claude_hook_settings` | `null` | đường dẫn tuyệt đối tới file JSON ngoài project, chỉ chứa object `hooks`; truyền cho mọi lượt chạy Claude qua `--settings`. Là mã được tin cậy, chạy không có sandbox |
 | `default_timeout_s` / `max_timeout_s` | 1800 / 7200 | giới hạn mỗi lượt chạy |
 | `max_attempts` | 3 | chỉ cho cấu hình legacy; có `orchestrator.yaml` thì dùng `workflow.max_rework` |
 | `network_retries` / `retry_backoff_s` | 1 / 10 | retry có giới hạn, chỉ cho lỗi network |
@@ -545,13 +546,18 @@ là sự cho phép của user; block `auto_switch` legacy trong `config.json` đ
    không ghi được, bỏ qua `~/.codex/config.toml` của user, prompt qua stdin. Lượt plan và review
    chạy `read-only`.
 2. **Claude CLI:** không có OS sandbox, nên bridge thu hẹp nó: `--strict-mcp-config` (không MCP
-   server nào, nên không thể điều phối đệ quy), `--setting-sources ""` (không nạp file settings nào: không allow rule hay hook của user lẫn project; các deny `Read(...)` chặn file credential của kit được truyền bằng `--disallowedTools` ở mọi lần chạy),
+   server nào, nên không thể điều phối đệ quy), `--setting-sources ""` (không nạp settings, allow rule hay hook của user lẫn project; các deny `Read(...)` chặn file credential của kit được truyền bằng `--disallowedTools` ở mọi lần chạy),
    `--permission-mode dontAsk` với allowlist tool: Read/Glob/Grep; khi `allow_write: true` thì
    có thêm Edit/Write giới hạn theo `allowed_paths` của task (`Edit(./src/**)`), còn path bị
    loại trừ và path protected bị chặn. Probe cho thấy Write không giới hạn ghi được file ngoài
    worktree, còn rule theo path thì bị từ chối. **Mức cô lập vẫn yếu hơn Codex**: tool đọc đọc
    được mọi thứ user đọc được, và Bash (`allow_bash: true`) hoàn toàn không bị giới hạn path.
    Nên dùng Codex làm executor; không bao giờ bật `allow_bash` cho việc không đáng tin cậy.
+   Tùy chọn `claude_hook_settings` mặc định tắt, chỉ do con người đặt trong
+   `.ai/config.json`, bổ sung `--settings <file>`. File phải là JSON thông thường,
+   có đường dẫn tuyệt đối ngoài project và chỉ chứa object `hooks`. Các hook này là
+   mã được tin cậy, chạy không có sandbox.
+
 3. **opencode và agy:** chỉ đọc (planner / reviewer); config từ chối `allow_write`. opencode
    chạy với `OPENCODE_CONFIG_CONTENT` cấm edit, bash, webfetch và thư mục ngoài, tắt config của
    project; probe không ghi file nào. Rule edit giới hạn theo path cũng không ghi được gì, nên

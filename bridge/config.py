@@ -41,6 +41,8 @@ class BridgeConfig(BaseModel):
 
     codex_bin: str = "codex"
     claude_bin: str = "claude"
+    # Owner-supplied hooks-only file: trusted code runs without a sandbox.
+    claude_hook_settings: str | None = None
     opencode_bin: str = "opencode"
     agy_bin: str = "agy"
     model: str | None = None
