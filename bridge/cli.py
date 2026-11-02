@@ -244,7 +244,7 @@ def main(argv: list[str] | None = None) -> None:
     i.add_argument("--force", action="store_true", help="overwrite conflicting kit files")
     u = sub.add_parser("uninstall", help="remove the kit from a project, keeping user edits")
     u.add_argument("dir", nargs="?", default=".")
-    u.add_argument("--purge", action="store_true", help="also delete .ai/ (task history)")
+    u.add_argument("--purge", action="store_true", help="also delete .ai/ (config); task history stays in the bridge state directory")
     sub.add_parser("tui", help="interactive dashboard (the default without a subcommand)")
     web = sub.add_parser("web", help="localhost progress dashboard")
     web.add_argument("--port", type=int, default=8765)

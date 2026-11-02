@@ -400,11 +400,30 @@ class Bridge:
         for name in self.orch.accounts:
             remaining = self._remaining(name)
             quota[name] = remaining if remaining is not None else "UNKNOWN"
+        storage_notice = None
+        if self.storage == "legacy":
+            storage_notice = ("legacy storage: run `agent-bridge storage status`, then "
+                              "`agent-bridge storage migrate --apply` after closing Claude sessions")
+        else:
+            try:
+                migration = json.loads((self.state_dir / "migration.json").read_text())
+                source = Path(migration["source"])
+                if source.exists():
+                    with contextlib.closing(sqlite3.connect(
+                            f"file:{source}?mode=ro", uri=True)) as legacy:
+                        maximum = legacy.execute("SELECT max(id) FROM events").fetchone()[0] or 0
+                    count = maximum - (migration["source_max_event_id"] or 0)
+                    if count > 0:
+                        storage_notice = (f"legacy database {source} has {count} events written after "
+                                          "migration (an old agent-bridge process is still running?)")
+            except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
+                pass
         return {
             "project_root": str(self.root),
             "database": str(self.store.path),
             "state_dir": str(self.state_dir),
             "storage": self.storage,
+            "storage_notice": storage_notice,
             "orchestrator": {"source": self.orch.source, "stages": self.orch.workflow.stages},
             "codex": codex,
             "adapters": adapters,
@@ -1000,9 +1019,9 @@ def project_tasks(state: str | None = None, limit: int = 10,
     projects = []
     for root in roots:
         try:
-            db = storage.store_dir(Path(root), create=False) / "bridge.db"
-        except (OSError, subprocess.CalledProcessError):
-            continue  # the project or worktree is gone
+            db = storage.find_store(root)
+        except (OSError, subprocess.CalledProcessError, ValueError):
+            continue  # The store cannot be resolved.
         if not db.exists():
             continue
         try:
@@ -1011,7 +1030,8 @@ def project_tasks(state: str | None = None, limit: int = 10,
             continue  # locked mid-migration or not a bridge database
         if not data["counts"]:
             continue
-        projects.append({"project": Path(root).name, "root": root, "counts": data["counts"],
+        projects.append({"project": Path(root).name, "root": root, "root_missing": not Path(root).is_dir(),
+                         "counts": data["counts"],
                          "tasks": [{"task_id": t["id"], "state": t["state"],
                                     "agent": t.get("agent") or t.get("account"),
                                     "objective": (t.get("spec") or {}).get("objective", ""),

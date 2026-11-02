@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- New repositories keep bridge state under `~/.agent-bridge/projects/<project>/worktrees/<worktree>/`
+  (`AGENT_BRIDGE_HOME` overrides), so history survives deleting the worktree. `storage status` and
+  `storage migrate [--apply]` copy existing git-dir state there; `health` flags legacy storage and
+  writes to a legacy database after migration.
 - `agent-bridge web [--port N] [--open]`: read-only localhost dashboard for known projects
   and worktrees, with progress, tasks needing attention, activity and request details in VI/EN.
 - Agent executions append redacted stdout and stderr lines to per-attempt JSONL logs and report

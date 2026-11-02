@@ -159,3 +159,30 @@ def test_keys(tmp_path, name):
         assert re.fullmatch(r"[a-z0-9._-]+", key)
         assert 1 <= len(slug) <= 40
         assert digest == hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:length]
+
+
+# @pt.id T0032-discovery
+# @pt.item Read-only central discovery
+# @pt.condition Complete stores beside partial and missing metadata directories
+# @pt.expected Only complete stores resolve and absent home stays absent
+# @pt.target bridge.storage.central_stores, bridge.storage.find_store
+# @pt.method unit
+# @pt.legacy None
+def test_central_discovery(repo, tmp_path):
+    assert storage.central_stores() == {}
+    assert not storage.home().exists()
+    directory = storage.store_dir(repo, create=True)
+    (directory / "bridge.db").touch()
+    for name in ("other.partial-1", "no-metadata"):
+        sibling = directory.parent / name
+        sibling.mkdir()
+        (sibling / "bridge.db").touch()
+        if ".partial-" in name:
+            (sibling / "worktree.json").write_text(json.dumps({"root": str(tmp_path / name)}))
+    assert storage.central_stores() == {str(repo): directory}
+    assert storage.find_store(repo) == directory / "bridge.db"
+    missing = tmp_path / "deleted"
+    (directory / "worktree.json").write_text(json.dumps({"root": str(missing)}))
+    assert storage.find_store(missing) == directory / "bridge.db"
+    with pytest.raises(FileNotFoundError):
+        storage.find_store(tmp_path / "unknown")

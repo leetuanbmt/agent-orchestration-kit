@@ -10,6 +10,7 @@ const I18N = {
     needs: 'Needs you', blocked: 'Blocked', failed: 'Failed', paused: 'Paused', review_wait: 'Waiting for review',
     QUOTA: 'out of quota', AUTH: 'login needed', NETWORK: 'network down', INTERRUPTED: 'interrupted',
     MISSING_BINARY: 'CLI missing', OTHER: 'other',
+    rootMissing: 'folder deleted, history kept',
     noProjects: 'No project yet. Run `agent-bridge init` in a project.', unreadable: 'Cannot read right now',
     nothing: 'Nothing is waiting.', noRunning: 'No task running.', noRequests: 'No requests yet.',
     noActivity: 'No activity in the last 24 hours.', viewOnly: 'View only', unknown: 'unknown', dash: '–',
@@ -39,6 +40,7 @@ const I18N = {
     needs: 'Cần bạn', blocked: 'Bị chặn', failed: 'Lỗi', paused: 'Tạm dừng', review_wait: 'Chờ duyệt',
     QUOTA: 'hết quota', AUTH: 'lỗi đăng nhập', NETWORK: 'mất mạng', INTERRUPTED: 'bị ngắt',
     MISSING_BINARY: 'thiếu CLI', OTHER: 'khác',
+    rootMissing: 'thư mục đã xoá, lịch sử vẫn còn',
     noProjects: 'Chưa có dự án nào. Chạy `agent-bridge init` trong một dự án.', unreadable: 'Không đọc được lúc này',
     nothing: 'Không có gì đang chờ.', noRunning: 'Không có tác vụ đang chạy.', noRequests: 'Chưa có yêu cầu.',
     noActivity: 'Không có hoạt động trong 24 giờ qua.', viewOnly: 'Chỉ xem', unknown: 'chưa rõ', dash: '–',
@@ -237,6 +239,7 @@ function projectTile(node, project) {
     const label = badge.kind === 'worktrees' ? tr('worktrees', {n: badge.count}) : tr(badge.text_key || badge.kind);
     node.append(badge.ref ? button(label, () => openItem(project.pid, badge.ref), `badge ${badge.kind}`) : el('span', label, 'badge'));
   }
+  if (project.root_missing) node.append(el('footer', tr('rootMissing')));
   if (project.worktree_of) node.append(el('footer', projectName(project.worktree_of)));
 }
 function activityTile(node, activity) {

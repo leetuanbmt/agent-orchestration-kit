@@ -40,6 +40,7 @@ def test_state_location(make_bridge, repo, monkeypatch, fake_codex):
     assert health["database"] == str(b.store.path)
     assert health["state_dir"] == str(b.state_dir)
     assert health["storage"] == "central"
+    assert health["storage_notice"] is None
 
 
 # @pt.id T0029-legacy-state
@@ -62,6 +63,9 @@ def test_existing_state(make_bridge, repo):
     assert fresh.store.path == path
     assert fresh.store.get(tid)["spec"]["objective"] == spec()["objective"]
     assert run(fresh.health())["storage"] == "legacy"
+    assert run(fresh.health())["storage_notice"] == (
+        "legacy storage: run `agent-bridge storage status`, then "
+        "`agent-bridge storage migrate --apply` after closing Claude sessions")
 
 
 # @pt.id KIT-STATE-002-migration
@@ -146,3 +150,30 @@ def test_child_lock_isolation(workflow, make_bridge, fake_codex, repo, monkeypat
             test_full_lifecycle_over_mcp(repo, fake_codex, monkeypatch)
     finally:
         lock.release()
+
+
+# @pt.id T0032-split-brain
+# @pt.item Legacy writes after migration
+# @pt.condition Legacy event appended after migration
+# @pt.expected Health warns with source and event delta without changing ok
+# @pt.target Bridge.health
+# @pt.method integration
+# @pt.legacy agent-bridge
+def test_split_brain_notice(make_bridge, repo, monkeypatch):
+    import sqlite3
+    source = repo / ".git/agent-bridge/bridge.db"
+    old = Store(source)
+    old.create(TaskSpec.model_validate(spec()), "before-migration")
+    old.db.close()
+    monkeypatch.setattr(storage, "running_processes", lambda: [])
+    storage.migrate(repo, apply=True)
+    bridge = make_bridge()
+    before = run(bridge.health())
+    assert before["storage_notice"] is None
+    with sqlite3.connect(source) as db:
+        db.execute("INSERT INTO events(ts,actor,kind) VALUES (2,'system','late')")
+    after = run(bridge.health())
+    assert after["ok"] == before["ok"]
+    assert after["storage_notice"] == (
+        f"legacy database {source} has 1 events written after migration "
+        "(an old agent-bridge process is still running?)")

@@ -36,6 +36,10 @@ def discover_roots(here: Path | None = None) -> list[str]:
                                         for line in out.stdout.splitlines()
                                         if line.startswith("worktree ")
                                         and Path(line.removeprefix("worktree ")).is_dir())])
+    try:
+        roots |= dict.fromkeys(storage.central_stores())
+    except (OSError, ValueError):
+        pass
     return list(roots)
 
 
@@ -77,7 +81,7 @@ def _json(value):
 
 def _read(root):
     try:
-        path = storage.store_dir(Path(root), create=False) / "bridge.db"
+        path = storage.find_store(root)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise FileNotFoundError(root) from exc
     if not path.exists():
@@ -188,12 +192,12 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
         if shown == home or shown.startswith(home + "/"):
             shown = "~" + shown[len(home):]
         project = {"pid": pid, "name": path.name, "root": shown, "worktree_of": None,
-                   "error": None, "counts": {}, "percent": None, "badge": None}
+                   "root_missing": not path.is_dir(), "error": None, "counts": {}, "percent": None, "badge": None}
         try:
             data = _read(root)
         except FileNotFoundError:
             continue
-        except (OSError, subprocess.CalledProcessError, sqlite3.Error):
+        except (OSError, subprocess.CalledProcessError, sqlite3.Error, ValueError):
             project["error"] = "unreadable"
             result["projects"].append(project)
             continue
@@ -201,10 +205,12 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
         tasks = _tasks(data)
         project["counts"] = _counts(tasks)
         project["percent"] = percent(project["counts"])
-        out = subprocess.run(["git", "-C", root, "worktree", "list", "--porcelain"],
-                             capture_output=True, text=True, check=False)
-        trees = list(dict.fromkeys(line.removeprefix("worktree ") for line in out.stdout.splitlines()
-                                   if line.startswith("worktree ")))
+        trees = []
+        if not project["root_missing"]:
+            out = subprocess.run(["git", "-C", root, "worktree", "list", "--porcelain"],
+                                 capture_output=True, text=True, check=False)
+            trees = list(dict.fromkeys(line.removeprefix("worktree ") for line in out.stdout.splitlines()
+                                       if line.startswith("worktree ")))
         if root in trees and trees[0] != root:
             project["worktree_of"] = project_id(trees[0])
         result["requests"].extend(_requests(data, tasks, pid))
@@ -263,7 +269,7 @@ def _detail_data(pid, roots):
         if project_id(root) == pid:
             try:
                 return _read(root)
-            except (OSError, subprocess.CalledProcessError, sqlite3.Error):
+            except (OSError, subprocess.CalledProcessError, sqlite3.Error, ValueError):
                 return None
     return None
 

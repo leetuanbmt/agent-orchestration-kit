@@ -370,6 +370,7 @@ secrets), stops at `APPROVED` until a human runs `agent-bridge approve TASK_ID` 
 | *(none)* / `tui` | Dashboard for the project in the current directory |
 | `web [--port N] [--open]` | Read-only web dashboard for all known projects and worktrees; localhost only |
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Install into / remove from a project |
+| `storage status` / `storage migrate [--apply]` | Inspect storage / preview or apply migration |
 | `serve` | MCP stdio server (what `.mcp.json` runs) |
 | `config-init [example]` | Human only: write `.ai/orchestrator.yaml` from a shipped example (refuses if it exists); without one, list the examples and the `config.example.json` path |
 | `config-check` | Validate `.ai/orchestrator.yaml` (or the legacy config) |
@@ -427,11 +428,26 @@ Unknown keys are rejected. Accounts belong in `orchestrator.yaml` or `account-ad
 |---|---|---|
 | `.ai/config.json` | yes | bridge config; any change by an agent is a scope violation |
 | `.ai/orchestrator.yaml` | no (machine-specific homes) | roles, agents, accounts, workflow |
-| `$(git rev-parse --absolute-git-dir)/agent-bridge/` | never | `bridge.db` (tasks, attempts, workflows, quota snapshots, audit log), per-run temp files, `install-manifest.json` (setup) |
+| `$AGENT_BRIDGE_HOME/projects/<project>/worktrees/<worktree>/` | never | `bridge.db`, `logs/`, per-run temp files, `worktree.json`, and `migration.json` after migration |
+| `$(git rev-parse --absolute-git-dir)/agent-bridge/install-manifest.json` | never | setup manifest, kept in the git directory |
 
-State lives in the git directory because Codex's `workspace-write` sandbox can write anywhere in
-the worktree, including git-ignored files, but not under `.git/` (verified on codex-cli 0.163).
-Older databases gain the new columns and tables on the first start.
+`AGENT_BRIDGE_HOME` defaults to `~/.agent-bridge` and must be an absolute directory outside
+the worktree. Central state lives outside the worktree so Codex's `workspace-write` sandbox
+cannot write there. Existing legacy databases in the git directory continue to be used until
+migration. Older databases gain new columns and tables on the first start. Central history
+remains readable even when the worktree folder is deleted.
+
+#### Migrating existing state
+
+Close Claude sessions, the TUI, and the web server. Run `agent-bridge storage status` to
+inspect the plan, then `agent-bridge storage migrate --apply`. Without `--apply`, migration
+only previews the plan. Migration uses SQLite backup (including WAL), checks database integrity,
+table counts and row hashes, and copies logs with SHA-256 verification. It checks that the
+source has not changed before publishing the central store. Legacy files are left untouched.
+To roll back, use an older kit version, which reads those legacy files; changes made in central
+storage after migration will not appear there. Health warns if an old process writes new events
+to the legacy database after migration (split-brain).
+
 
 ---
 
@@ -597,9 +613,9 @@ validation, account isolation, concurrency slots, legacy mapping, schema upgrade
 
 ## Uninstall
 
-In a project: `agent-bridge uninstall` (add `--purge` to drop `.ai/`). The bridge database in
-`.git/agent-bridge/` can be deleted by hand. The tool: `uv tool uninstall agent-orchestration-kit`,
-then delete the checkout; nothing outside it (and account homes you created yourself) is used.
+In a project: `agent-bridge uninstall` (add `--purge` to drop `.ai/`). Task history stays in the bridge state directory
+under `AGENT_BRIDGE_HOME` (default `~/.agent-bridge`), or its legacy location until migration.
+The tool: `uv tool uninstall agent-orchestration-kit`, then delete the checkout.
 
 ## Known limitations
 

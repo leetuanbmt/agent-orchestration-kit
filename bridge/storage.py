@@ -102,6 +102,33 @@ def store_dir(root: Path, create: bool = False) -> Path:
     return locate(root, create=create).dir
 
 
+def central_stores() -> dict[str, Path]:
+    stores = {}
+    for directory in sorted((home() / "projects").glob("*/worktrees/*")):
+        if ".partial-" in directory.name or not directory.is_dir():
+            continue
+        if not (directory / "bridge.db").is_file():
+            continue
+        try:
+            metadata = json.loads((directory / "worktree.json").read_text())
+            root = metadata.get("root") if isinstance(metadata, dict) else None
+            if isinstance(root, str):
+                stores[str(Path(root).resolve())] = directory
+        except (OSError, ValueError):
+            continue
+    return stores
+
+
+def find_store(root: str | Path) -> Path:
+    path = Path(root)
+    if path.is_dir():
+        return store_dir(path, create=False) / "bridge.db"
+    directory = central_stores().get(str(path.resolve()))
+    if directory is None:
+        raise FileNotFoundError(root)
+    return directory / "bridge.db"
+
+
 TABLES = ("tasks", "attempts", "events", "workflows", "accounts", "account_quota")
 
 

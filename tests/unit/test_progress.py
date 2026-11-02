@@ -439,3 +439,45 @@ def test_requests_limit_and_severity(repo, store):
     assert len(snap["requests"]) == 50
     assert [r["id"] for r in snap["requests"][:2]] == [auth, quota]
     assert snap["requests"][2]["updated_at"] == 51
+
+
+# @pt.id T0032-deleted
+# @pt.item Retained migrated history
+# @pt.condition Repository removed after migration
+# @pt.expected Snapshot details and CLI projects retain tasks with root_missing
+# @pt.target bridge.progress, bridge.service.project_tasks
+# @pt.method integration
+# @pt.legacy agent-bridge
+def test_deleted_migrated_root(repo, store, monkeypatch, tmp_path):
+    from bridge import accounts, storage
+    from bridge.service import project_tasks
+    tid = add(store)
+    store.db.commit()
+    monkeypatch.setattr(storage, "running_processes", lambda: [])
+    storage.migrate(repo, apply=True)
+    store.db.close()
+    repo.rename(tmp_path / "removed")
+    monkeypatch.setattr(accounts, "known_projects", lambda: [])
+    snapshot = progress.snapshot()
+    project = next(p for p in snapshot["projects"] if p["pid"] == progress.project_id(str(repo)))
+    assert project["root_missing"] is True
+    assert project["counts"]["queue"] == 1
+    assert progress.task_detail(project["pid"], tid)["objective"] == "Implement change"
+    listed = project_tasks()["projects"]
+    assert listed[0]["root_missing"] is True
+    assert listed[0]["tasks"][0]["task_id"] == tid
+
+
+# @pt.id T0032-invalid-home
+# @pt.item Invalid home read errors
+# @pt.condition Home override is relative
+# @pt.expected Snapshot reports unreadable and CLI skips without raising
+# @pt.target bridge.progress.snapshot, bridge.service.project_tasks
+# @pt.method unit
+# @pt.legacy None
+def test_invalid_home_readers(repo, store, monkeypatch):
+    from bridge import storage
+    from bridge.service import project_tasks
+    monkeypatch.setenv(storage.HOME_ENV, "relative")
+    assert progress.snapshot([str(repo)])["projects"][0]["error"] == "unreadable"
+    assert project_tasks(here=repo)["projects"] == []
