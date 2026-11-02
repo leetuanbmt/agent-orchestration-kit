@@ -8,77 +8,72 @@ if (launchParams.has("token")) {
 
 const I18N = {
   en: {
+    views: 'Views', open: 'Open', needsYou: 'Needs you', waiting: 'Waiting', status: 'Status', task: 'Task', location: 'Location',
+    search: 'Search', searchPlaceholder: 'Task ID or objective', worktree: 'Worktree', branch: 'Branch', main: 'main',
+    allProjects: 'All projects', allWorktrees: 'All worktrees', clear: 'Clear filters', noMatches: 'No task matches these filters',
+    viewTasks: 'View tasks', projectCounts: 'Needs you {needs} · Open {open} · Done {done}',
+    showWorktrees: 'Show {n} worktrees without open tasks', hideWorktrees: 'Hide {n} worktrees without open tasks',
     tokenRequired: "Open the link printed by agent-bridge web.",
     brand: 'agent-bridge', vi: 'VI', en: 'EN', all: 'All', projects: 'Projects', language: 'Language',
     live: 'Live · every 3 s', offline: 'Disconnected · retrying in 5 s', loading: 'Loading…',
-    attention: 'Needs attention', progress: 'Progress', running: 'Running now', activity: 'Last 24 hours',
-    requests: 'Requests', request: 'Request', project: 'Project', stage: 'Stage', updated: 'Updated', id: 'ID',
-    queue: 'Queued', build: 'Building', check: 'Checking', review: 'Review', done: 'Done', cancelled: 'Cancelled',
+    running: 'Running', project: 'Project', updated: 'Updated', done: 'Done', cancelled: 'Cancelled',
     needs: 'Needs you', blocked: 'Blocked', failed: 'Failed', paused: 'Paused', review_wait: 'Waiting for review',
     QUOTA: 'out of quota', AUTH: 'login needed', NETWORK: 'network down', INTERRUPTED: 'interrupted',
     MISSING_BINARY: 'CLI missing', OTHER: 'other',
     rootMissing: 'folder deleted, history kept',
     noProjects: 'No project yet. Run `agent-bridge init` in a project.', unreadable: 'Cannot read right now',
-    nothing: 'Nothing is waiting.', noRunning: 'No task running.', noRequests: 'No requests yet.',
-    noActivity: 'No activity in the last 24 hours.', viewOnly: 'View only', unknown: 'unknown', dash: '–',
-    taskCount: '{done}/{total} tasks', requestCount: '{n} requests', agentCount: '{n} agents',
-    worktrees: '+{n} worktree', quota: 'Quota left: {value}', elapsed: '{elapsed} / {timeout}',
-    seconds: '{n}s', minutes: '{n}m', hours: '{n}h', days: '{n}d', ago: '{time} ago', now: 'just now',
-    event: '{id} · {stage} · {time}', pauseEvent: '{id} paused: {reason} · {time}',
+    viewOnly: 'View only', unknown: 'unknown', dash: '–',
+    taskCount: '{n} tasks', taskCountOne: '{n} task', seconds: '{n}s', minutes: '{n}m', hours: '{n}h', days: '{n}d', ago: '{time} ago', now: 'just now',
     copy: 'Copy command', copied: 'Copied', select: 'Command selected; copy it manually.',
     close: 'Close', closeSymbol: '×', notFound: 'Not found', detailError: 'Cannot load details. Try again.', retry: 'Retry',
-    summary: 'Summary', tasks: 'Tasks', technical: 'Technical details', command: 'Suggested command',
+    tasks: 'Tasks', technical: 'Technical details', command: 'Suggested command',
     state: 'Raw state', needs_human: 'Needs human approval', risk_level: 'Risk level', agent: 'Agent', account: 'Account',
     attempts: 'Attempts', run: 'run {n}/{max}', checks: 'Verification checks', scope_violations: 'Scope violations',
     head_changed: 'HEAD changed', files: 'Changed files', stat: 'Diff statistics', reviews: 'Reviews', final: 'Final summary',
     failure: 'Diagnosis', yes: 'Yes', no: 'No', none: 'None', passed: 'Passed', started_at: 'Started', ended_at: 'Ended',
     exit_code: 'Exit code', kind: 'Kind', outcome: 'Outcome', decision: 'Decision', notes: 'Notes', actor: 'Actor', n: 'Run', error: 'Error',
-    chart: 'Stage counts: {values}', hourly: 'Events per hour: {values}',
     BACKLOG: 'Backlog', READY: 'Ready', RUNNING: 'Running', REWORK: 'Rework', VERIFYING: 'Verifying',
     REVIEW: 'Review', APPROVED: 'Approved', DONE: 'Done', CANCELLED: 'Cancelled', PAUSED: 'Paused',
     FAILED: 'Failed', BLOCKED: 'Blocked', low: 'Low', medium: 'Medium', high: 'High'
   },
   vi: {
+    views: 'Chế độ xem', open: 'Đang mở', needsYou: 'Cần bạn', waiting: 'Đang chờ', status: 'Trạng thái', task: 'Tác vụ', location: 'Vị trí',
+    search: 'Tìm kiếm', searchPlaceholder: 'Mã tác vụ hoặc mục tiêu', worktree: 'Worktree', branch: 'Nhánh', main: 'chính',
+    allProjects: 'Tất cả dự án', allWorktrees: 'Tất cả worktree', clear: 'Xóa bộ lọc', noMatches: 'Không có tác vụ khớp với bộ lọc này',
+    viewTasks: 'Xem tác vụ', projectCounts: 'Cần bạn {needs} · Đang mở {open} · Xong {done}',
+    showWorktrees: 'Hiện {n} worktree không có tác vụ mở', hideWorktrees: 'Ẩn {n} worktree không có tác vụ mở',
     tokenRequired: "Mở đường dẫn do agent-bridge web in ra.",
     brand: 'agent-bridge', vi: 'VI', en: 'EN', all: 'Tất cả', projects: 'Dự án', language: 'Ngôn ngữ',
     live: 'Trực tiếp · mỗi 3 giây', offline: 'Mất kết nối · thử lại sau 5 giây', loading: 'Đang tải…',
-    attention: 'Cần chú ý', progress: 'Tiến độ', running: 'Đang chạy', activity: '24 giờ qua',
-    requests: 'Yêu cầu', request: 'Yêu cầu', project: 'Dự án', stage: 'Giai đoạn', updated: 'Cập nhật', id: 'ID',
-    queue: 'Chờ', build: 'Đang làm', check: 'Kiểm tra', review: 'Duyệt', done: 'Xong', cancelled: 'Đã hủy',
+    running: 'Đang chạy', project: 'Dự án', updated: 'Cập nhật', done: 'Xong', cancelled: 'Đã hủy',
     needs: 'Cần bạn', blocked: 'Bị chặn', failed: 'Lỗi', paused: 'Tạm dừng', review_wait: 'Chờ duyệt',
     QUOTA: 'hết quota', AUTH: 'lỗi đăng nhập', NETWORK: 'mất mạng', INTERRUPTED: 'bị ngắt',
     MISSING_BINARY: 'thiếu CLI', OTHER: 'khác',
     rootMissing: 'thư mục đã xoá, lịch sử vẫn còn',
     noProjects: 'Chưa có dự án nào. Chạy `agent-bridge init` trong một dự án.', unreadable: 'Không đọc được lúc này',
-    nothing: 'Không có gì đang chờ.', noRunning: 'Không có tác vụ đang chạy.', noRequests: 'Chưa có yêu cầu.',
-    noActivity: 'Không có hoạt động trong 24 giờ qua.', viewOnly: 'Chỉ xem', unknown: 'chưa rõ', dash: '–',
-    taskCount: '{done}/{total} tác vụ', requestCount: '{n} yêu cầu', agentCount: '{n} agent',
-    worktrees: '+{n} worktree', quota: 'Quota còn lại: {value}', elapsed: '{elapsed} / {timeout}',
-    seconds: '{n} giây', minutes: '{n} phút', hours: '{n} giờ', days: '{n} ngày', ago: '{time} trước', now: 'vừa xong',
-    event: '{id} · {stage} · {time}', pauseEvent: '{id} tạm dừng: {reason} · {time}',
+    viewOnly: 'Chỉ xem', unknown: 'chưa rõ', dash: '–',
+    taskCount: '{n} tác vụ', taskCountOne: '{n} tác vụ', seconds: '{n} giây', minutes: '{n} phút', hours: '{n} giờ', days: '{n} ngày', ago: '{time} trước', now: 'vừa xong',
     copy: 'Sao chép lệnh', copied: 'Đã sao chép', select: 'Đã chọn lệnh; hãy sao chép thủ công.',
     close: 'Đóng', closeSymbol: '×', notFound: 'Không tìm thấy', detailError: 'Không tải được chi tiết. Hãy thử lại.', retry: 'Thử lại',
-    summary: 'Tóm tắt', tasks: 'Tác vụ', technical: 'Chi tiết kỹ thuật', command: 'Lệnh gợi ý',
+    tasks: 'Tác vụ', technical: 'Chi tiết kỹ thuật', command: 'Lệnh gợi ý',
     state: 'Trạng thái gốc', needs_human: 'Cần người phê duyệt', risk_level: 'Mức rủi ro', agent: 'Agent', account: 'Tài khoản',
     attempts: 'Lần chạy', run: 'lần chạy {n}/{max}', checks: 'Kiểm tra xác minh', scope_violations: 'Vi phạm phạm vi',
     head_changed: 'HEAD thay đổi', files: 'Tệp thay đổi', stat: 'Thống kê thay đổi', reviews: 'Đánh giá', final: 'Tóm tắt cuối',
     failure: 'Chẩn đoán', yes: 'Có', no: 'Không', none: 'Không có', passed: 'Đạt', started_at: 'Bắt đầu', ended_at: 'Kết thúc',
     exit_code: 'Mã thoát', kind: 'Loại', outcome: 'Kết quả', decision: 'Quyết định', notes: 'Ghi chú', actor: 'Người đánh giá', n: 'Lần chạy', error: 'Lỗi',
-    chart: 'Số tác vụ theo giai đoạn: {values}', hourly: 'Sự kiện mỗi giờ: {values}',
     BACKLOG: 'Tồn đọng', READY: 'Sẵn sàng', RUNNING: 'Đang chạy', REWORK: 'Làm lại', VERIFYING: 'Đang xác minh',
     REVIEW: 'Duyệt', APPROVED: 'Đã duyệt', DONE: 'Xong', CANCELLED: 'Đã hủy', PAUSED: 'Tạm dừng',
     FAILED: 'Lỗi', BLOCKED: 'Bị chặn', low: 'Thấp', medium: 'Trung bình', high: 'Cao'
   }
 };
-const STAGES = ['queue', 'build', 'check', 'review', 'done'];
-// Build the namespace without an external resource reference.
-const SVG_NS = ['http:', '', 'www.w3.org', '2000', 'svg'].join('/');
 const $ = id => document.getElementById(id);
+const GROUPS = ['open', 'needsYou', 'running', 'waiting', 'done', 'cancelled', 'all'];
+const expanded = new Set();
 let language = navigator.language.toLowerCase().startsWith('vi') ? 'vi' : 'en';
 try { const saved = localStorage.getItem('dashboard-language'); if (['vi', 'en'].includes(saved)) language = saved; } catch {}
-let state = {p: '', lang: language, r: '', t: ''};
+let state = {view: 'tasks', p: '', w: '', s: 'open', q: '', t: '', lang: language};
 let overview = null, timer = null, inFlight = false, disconnected = false, tokenRequired = false;
-let detailVersion = 0, requestData = null, taskData = null, detailError = '', returnFocus = null;
+let detailVersion = 0, taskData = null, detailError = '', returnFocus = null;
 const tr = (key, values = {}) => {
   let value = I18N[state.lang][key] ?? key;
   for (const [name, replacement] of Object.entries(values)) value = value.replaceAll(`{${name}}`, String(replacement));
@@ -92,11 +87,6 @@ function el(tag, text, className) {
 }
 function attr(node, key, value) { if (node.getAttribute(key) !== String(value)) node.setAttribute(key, String(value)); }
 function text(node, value) { if (node.textContent !== String(value)) node.textContent = String(value); }
-function svg(tag, attributes) {
-  const node = document.createElementNS(SVG_NS, tag);
-  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
-  return node;
-}
 function button(label, action, className) {
   const node = el('button', label, className); node.type = 'button'; node.onclick = action; return node;
 }
@@ -130,7 +120,7 @@ function patch(parent, items, keyOf, signatureOf, render) {
   let cursor = parent.firstElementChild;
   for (const item of items) {
     const key = String(keyOf(item)); let node = existing.get(key);
-    if (!node) { node = el(parent.tagName === 'TBODY' ? 'tr' : parent.id === 'columns' ? 'th' : 'div'); attr(node, 'data-key', key); }
+    if (!node) { node = el(parent.tagName === 'TBODY' ? 'tr' : 'div'); attr(node, 'data-key', key); }
     existing.delete(key);
     const signature = JSON.stringify([state.lang, signatureOf(item)]);
     if (node._signature !== signature) {
@@ -150,33 +140,6 @@ function duration(seconds) {
   return tr('days', {n: Math.floor(n / 86400)});
 }
 function relative(ts) { return ts == null ? tr('unknown') : Date.now() / 1000 - ts < 5 ? tr('now') : tr('ago', {time: duration(Date.now() / 1000 - ts)}); }
-const percent = (done, total) => total ? `${Math.floor(100 * done / total)}%` : tr('dash');
-const totalOf = counts => STAGES.reduce((n, stage) => n + (counts[stage] || 0), 0);
-const stageText = item => tr(item.stage || 'cancelled') + (item.exception ? ` · ${tr(item.exception)}` : '');
-function chartLabel(counts) { return tr('chart', {values: STAGES.map(stage => `${tr(stage)} ${counts[stage] || 0}`).join(', ')}); }
-function meter(value, label) {
-  const node = el('div', undefined, 'meter'); attr(node, 'role', 'img'); attr(node, 'aria-label', label);
-  const fill = el('span'); fill.style.width = `${Math.min(100, Math.max(0, value || 0))}%`; node.append(fill); return node;
-}
-function stageBar(counts) {
-  const node = el('div', undefined, 'stage-bar'); attr(node, 'role', 'img'); attr(node, 'aria-label', chartLabel(counts));
-  const total = totalOf(counts);
-  for (const stage of STAGES) { const part = el('span', undefined, `segment ${stage}`); part.style.width = `${total ? 100 * (counts[stage] || 0) / total : 0}%`; node.append(part); }
-  return node;
-}
-function heading(key) {
-  const node = el('h2'); const icon = svg('svg', {viewBox: '0 0 16 16', class: 'icon', 'aria-hidden': 'true'});
-  icon.append(svg('path', {d: 'M2 12V8m4 4V4m4 8V6m4 6V2'})); node.append(icon, el('span', tr(key))); return node;
-}
-function legend(counts) {
-  const node = el('div', undefined, 'legend');
-  for (const stage of STAGES) node.append(el('span', `${tr(stage)} ${counts[stage] || 0}`)); return node;
-}
-function projectName(pid) { return overview?.projects.find(p => p.pid === pid)?.name || tr('unknown'); }
-function openItem(pid, rid, tid = '') {
-  returnFocus = document.activeElement;
-  setState({p: pid, r: rid, t: tid});
-}
 async function copyCommand(command, trigger, field) {
   try { await navigator.clipboard.writeText(command); text(trigger, tr('copied')); }
   catch {
@@ -185,147 +148,140 @@ async function copyCommand(command, trigger, field) {
     input.focus(); input.select(); text(trigger, tr('select'));
   }
 }
-function attentionTile(node, items) {
-  node.replaceChildren(heading('attention'), el('div', items.length, 'value'));
-  if (!items.length) { node.append(el('p', tr('nothing'), 'muted')); return; }
-  const list = el('div'); node.append(list);
-  for (const item of items.slice(0, 5)) {
-    const row = el('div', undefined, 'item'); attr(row, 'data-key', `${item.pid}:${item.task_id}`); const line = el('div', undefined, 'item-line');
-    line.append(button(`${item.task_id} · ${tr(item.kind)}${item.reason ? ` · ${tr(item.reason)}` : ''}`, () => openAttention(item), `open ${item.kind}`));
-    if (item.command) { const copy = button(tr('copy'), event => copyCommand(item.command, event.currentTarget)); line.append(copy); }
-    row.append(line, el('p', item.objective), el('span', `${projectName(item.pid)} · ${relative(item.since)}`, 'muted')); list.append(row);
+function projectGroups() {
+  const projects = overview?.projects || [], ids = new Set(projects.map(p => p.pid));
+  return projects.filter(p => !p.worktree_of || !ids.has(p.worktree_of)).map(project => ({
+    project, members: [project, ...projects.filter(p => p.worktree_of === project.pid)]
+  }));
+}
+function matches(task, group) {
+  if (group === 'open') return !['DONE', 'CANCELLED'].includes(task.state);
+  if (group === 'needsYou') return task.exception != null;
+  if (group === 'running') return ['RUNNING', 'VERIFYING'].includes(task.state);
+  if (group === 'waiting') return ['BACKLOG', 'READY', 'REWORK'].includes(task.state) || task.state === 'APPROVED' && !task.needs_human;
+  if (group === 'done') return task.state === 'DONE';
+  if (group === 'cancelled') return task.state === 'CANCELLED';
+  return true;
+}
+function totals(members) {
+  const ids = new Set(members.map(p => p.pid)), tasks = (overview?.tasks || []).filter(t => ids.has(t.pid));
+  return {needs: tasks.filter(t => matches(t, 'needsYou')).length, open: tasks.filter(t => matches(t, 'open')).length,
+    done: tasks.filter(t => matches(t, 'done')).length};
+}
+function activate(row, action) {
+  attr(row, 'tabindex', '0'); row.onclick = action;
+  row.onkeydown = event => {
+    if (event.target === row && ['Enter', ' '].includes(event.key)) { event.preventDefault(); action(); }
+  };
+}
+function timeCell(ts) {
+  const cell = el('td', relative(ts));
+  if (ts != null) attr(cell, 'title', new Date(ts * 1000).toLocaleString(state.lang));
+  return cell;
+}
+function headers(row, keys) {
+  const signature = JSON.stringify([state.lang, keys]);
+  if (row._signature === signature) return;
+  row._signature = signature;
+  row.replaceChildren(...keys.map(key => { const cell = el('th', tr(key)); attr(cell, 'scope', 'col'); return cell; }));
+}
+function selectOptions(select, options, value) {
+  const signature = JSON.stringify(options);
+  if (select._signature !== signature) {
+    select.replaceChildren(...options.map(([id, label]) => { const option = el('option', label); option.value = id; return option; }));
+    select._signature = signature;
   }
+  if (select.value !== value) select.value = value;
 }
-async function openAttention(item) {
-  const request = overview.requests.find(r => r.pid === item.pid && r.id === item.task_id);
-  openItem(item.pid, request?.id || '', item.task_id);
-  if (request) return;
-  for (const candidate of overview.requests.filter(r => r.pid === item.pid && r.id.startsWith('W'))) {
-    try {
-      const detail = await getJSON(`/api/projects/${encodeURIComponent(item.pid)}/requests/${encodeURIComponent(candidate.id)}`);
-      if (detail.tasks.some(task => task.task_id === item.task_id)) {
-        if (state.p === item.pid && state.t === item.task_id && !state.r) setState({r: candidate.id});
-        return;
-      }
-    } catch { /* The task detail remains available when its request cannot be read. */ }
-  }
-}
-function progressTile(node, data) {
-  const {counts, requests} = data, total = totalOf(counts), done = counts.done || 0;
-  const ring = svg('svg', {viewBox: '0 0 108 108', class: 'ring', role: 'img', 'aria-label': chartLabel(counts)});
-  ring.append(svg('circle', {cx: 54, cy: 54, r: 40, class: 'track'}));
-  let offset = 0; const circumference = 2 * Math.PI * 40;
-  for (const stage of STAGES) {
-    const length = total ? circumference * (counts[stage] || 0) / total : 0;
-    ring.append(svg('circle', {cx: 54, cy: 54, r: 40, class: `segment ${stage}`, 'stroke-dasharray': `${length} ${circumference - length}`, 'stroke-dashoffset': -offset})); offset += length;
-  }
-  const layout = el('div', undefined, 'ring-layout'), figures = el('div');
-  figures.append(el('div', percent(done, total), 'value'), el('div', tr('taskCount', {done, total}), 'muted'));
-  layout.append(ring, figures); node.replaceChildren(heading('progress'), layout, legend(counts), el('footer', tr('requestCount', {n: requests.length}), 'badge'));
-}
-function runningTile(node, items) {
-  const agents = [...new Set(items.map(item => item.agent).filter(Boolean))];
-  node.replaceChildren(heading('running'), el('div', items.length, 'value'), el('span', agents.length === 1 ? agents[0] : tr('agentCount', {n: agents.length}), 'badge'));
-  if (!items.length) node.append(el('p', tr('noRunning'), 'muted'));
-  for (const item of items) {
-    const row = el('div', undefined, 'item');
-    const elapsed = item.started_at == null ? null : Math.max(0, Date.now() / 1000 - item.started_at);
-    const timing = tr('elapsed', {elapsed: elapsed == null ? tr('unknown') : duration(elapsed), timeout: duration(item.timeout_s)});
-    row.append(button(`${item.task_id} · ${tr(item.stage)} · ${item.agent || tr('unknown')}`, () => openItem(item.pid, '', item.task_id), 'open'));
-    row.append(el('div', timing, 'muted'), meter(elapsed == null ? 0 : 100 * elapsed / item.timeout_s, timing),
-      el('footer', tr('quota', {value: item.quota_left == null ? tr('unknown') : `${Math.floor(item.quota_left)}%`})));
-    node.append(row);
-  }
-}
-function projectTile(node, project) {
-  const title = el('h2', project.name);
-  node.replaceChildren(title, el('p', project.root, 'muted'));
-  if (project.error) { node.append(el('p', tr('unreadable'))); return; }
-  node.append(el('div', project.percent == null ? tr('dash') : `${project.percent}%`, 'value'), stageBar(project.counts), legend(project.counts));
-  if (project.badge) {
-    const badge = project.badge;
-    const label = badge.kind === 'worktrees' ? tr('worktrees', {n: badge.count}) : tr(badge.text_key || badge.kind);
-    node.append(badge.ref ? button(label, () => openItem(project.pid, badge.ref), `badge ${badge.kind}`) : el('span', label, 'badge'));
-  }
-  if (project.root_missing) node.append(el('footer', tr('rootMissing')));
-  if (project.worktree_of) node.append(el('footer', projectName(project.worktree_of)));
-}
-function activityTile(node, activity) {
-  node.replaceChildren(heading('activity'), el('div', activity.done_24h, 'value'), el('span', tr('done'), 'muted'));
-  const values = activity.per_hour, max = Math.max(1, ...values);
-  const chart = svg('svg', {viewBox: '0 0 276 60', class: 'sparkline', role: 'img', 'aria-label': tr('hourly', {values: values.join(', ')})});
-  chart.append(svg('polyline', {points: values.map((v, i) => `${i * 12},${55 - v / max * 50}`).join(' ')})); node.append(chart);
-  const latest = activity.latest;
-  node.append(el('footer', latest ? tr(latest.kind === 'paused' ? 'pauseEvent' : 'event', {
-    id: latest.task_id, stage: tr(latest.kind || 'cancelled'), reason: tr(latest.reason || 'OTHER'), time: relative(latest.ts)
-  }) : tr('noActivity')));
-}
+function clearFilters() { setState({p: '', w: '', s: 'open', q: ''}); }
+function openItem(pid, tid) { returnFocus = document.activeElement; setState({t: `${pid}:${tid}`}); }
 function renderOverview() {
-  document.documentElement.lang = state.lang;
-  document.title = tr('brand');
-  text($('brand'), tr('brand')); text($('live'), tr(tokenRequired ? "tokenRequired" : disconnected ? 'offline' : overview ? 'live' : 'loading'));
-  attr($('live'), 'class', `pill live${disconnected ? ' offline' : ''}`);
-  $('content').classList.toggle('disconnected', disconnected);
-  text($('requests-heading'), tr('requests')); text($('footer'), tr('viewOnly'));
-  text($('requests-empty'), tr('noRequests'));
-  attr($('filters'), 'aria-label', tr('projects')); attr($('languages'), 'aria-label', tr('language'));
-  patch($('languages'), ['vi', 'en'], x => x, x => [x, state.lang], (node, lang) => {
-    node.replaceChildren(button(tr(lang), () => setState({lang})));
-    attr(node.firstChild, 'aria-pressed', lang === state.lang);
+  document.documentElement.lang = state.lang; document.title = tr('brand'); text($('brand'), tr('brand'));
+  text($('live'), tr(tokenRequired ? 'tokenRequired' : disconnected ? 'offline' : overview ? 'live' : 'loading'));
+  attr($('live'), 'class', disconnected ? 'live offline' : 'live'); $('content').classList.toggle('disconnected', disconnected);
+  text($('footer'), tr('viewOnly')); attr($('languages'), 'aria-label', tr('language')); attr($('views'), 'aria-label', tr('views'));
+  patch($('languages'), ['en', 'vi'], x => x, x => [x, state.lang], (node, lang) => {
+    node.replaceChildren(button(tr(lang), () => setState({lang}))); attr(node.firstChild, 'aria-pressed', lang === state.lang);
   });
-  patch($('columns'), ['request', 'project', 'stage', 'progress', 'updated', 'id'], x => x, x => x, (node, key) => {
-    attr(node, 'scope', 'col'); text(node, tr(key));
+  const groups = projectGroups(), tasks = overview?.tasks || [];
+  patch($('views'), ['tasks', 'projects'], x => x, x => [state.view, tasks.filter(t => matches(t, 'open')).length, groups.length], (node, view) => {
+    const tab = button(`${tr(view)} (${view === 'tasks' ? tasks.filter(t => matches(t, 'open')).length : groups.length})`, () => setState({view}));
+    attr(tab, 'aria-pressed', state.view === view); node.replaceChildren(tab);
   });
-  if (!overview) return;
-  patch($('filters'), [{pid: '', name: tr('all')}, ...overview.projects], p => p.pid, p => [p.name, state.p], (node, p) => {
-    node.replaceChildren(button(p.name, () => setState({p: p.pid, r: '', t: ''})));
-    attr(node.firstChild, 'aria-pressed', p.pid === state.p);
+  $('tasks-view').hidden = state.view !== 'tasks'; $('projects-view').hidden = state.view !== 'projects';
+  text($('search-label'), tr('search')); text($('project-label'), tr('project')); text($('worktree-label'), tr('worktree'));
+  attr($('search'), 'placeholder', tr('searchPlaceholder'));
+  if ($('search').value !== state.q) $('search').value = state.q;
+  const selected = groups.find(g => g.project.pid === state.p);
+  selectOptions($('project'), [['', tr('allProjects')], ...groups.map(g => [g.project.pid, g.project.name])], state.p);
+  selectOptions($('worktree'), [['', tr('allWorktrees')], ...(selected?.members || []).map((p, i) => [p.pid, i === 0 ? `${p.name} (${tr('main')})` : `${p.name} · ${p.branch || tr('dash')}`])], state.w);
+  $('worktree').disabled = !selected; text($('clear'), tr('clear'));
+  $('clear').hidden = !state.p && !state.w && !state.q && state.s === 'open';
+  const ids = selected ? new Set(selected.members.map(p => p.pid)) : null;
+  const filtered = tasks.filter(t => (!state.p || ids?.has(t.pid)) && (!state.w || t.pid === state.w) &&
+    `${t.task_id} ${t.objective}`.toLocaleLowerCase().includes(state.q.toLocaleLowerCase()));
+  patch($('statuses'), GROUPS, x => x, x => [state.s, filtered.filter(t => matches(t, x)).length], (node, group) => {
+    const chip = button(`${tr(group)} (${filtered.filter(t => matches(t, group)).length})`, () => setState({s: group}));
+    attr(chip, 'aria-pressed', state.s === group); node.replaceChildren(chip);
   });
-  const belongs = item => !state.p || item.pid === state.p;
-  const projects = overview.projects.filter(p => !state.p || p.pid === state.p);
-  const requests = overview.requests.filter(belongs), attention = overview.attention.filter(belongs), running = overview.running.filter(belongs);
-  const counts = Object.fromEntries(STAGES.map(stage => [stage, projects.reduce((n, p) => n + (p.counts[stage] || 0), 0)]));
-  const time = Math.floor(Date.now() / 1000);
-  const tiles = overview.projects.length ? [
-    {key: 'attention', data: attention, render: attentionTile, time, names: overview.projects.map(p => p.name)},
-    {key: 'progress', data: {counts, requests}, render: progressTile},
-    {key: 'running', data: running, render: runningTile, time},
-    ...projects.map(p => ({key: p.pid, data: p, render: projectTile})),
-    {key: 'activity', data: overview.activity, render: activityTile, time}
-  ] : [{key: 'empty', data: null, render: node => node.replaceChildren(el('p', tr('noProjects')))}];
-  patch($('tiles'), tiles, t => t.key, t => [t.data, t.time, t.names], (node, tile) => {
-    attr(node, 'class', `tile ${tile.key === 'attention' ? `attention${attention.length ? ' has-attention' : ''}` : ''}`);
-    tile.render(node, tile.data);
+  const shown = filtered.filter(t => matches(t, state.s)).sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+  text($('task-count'), tr(shown.length === 1 ? 'taskCountOne' : 'taskCount', {n: shown.length})); headers($('columns'), ['status', 'task', 'location', 'agent', 'updated', 'copy']);
+  patch($('task-rows'), shown, t => `${t.pid}:${t.task_id}`, t => [t, overview.projects, overview.attention, relative(t.updated_at)], (row, task) => {
+    activate(row, () => openItem(task.pid, task.task_id));
+    const reason = overview.attention?.find(a => a.pid === task.pid && a.task_id === task.task_id)?.reason;
+    const label = task.exception === 'needs' ? `${tr(task.state)} · ${tr('needs')}`
+      : `${tr(task.exception || task.state)}${task.exception === 'paused' && reason ? ` · ${tr(reason)}` : ''}`;
+    const status = el('td'); status.append(el('span', label, `badge status-${task.exception || (matches(task, 'running') ? 'running' : task.state.toLowerCase())}`));
+    const name = el('td', undefined, 'task-cell'), objective = el('div', (task.objective || '').split('\n')[0], 'objective');
+    attr(objective, 'title', task.objective || ''); name.append(el('code', task.task_id), objective);
+    const group = groups.find(g => g.members.some(p => p.pid === task.pid)), checkout = group?.members.find(p => p.pid === task.pid);
+    const place = el('td', group ? group.project.name + (checkout.pid !== group.project.pid ? ` › ${checkout.name}` : '') : tr('unknown'));
+    if (checkout?.branch) place.append(el('div', checkout.branch, 'muted'));
+    const copy = el('td');
+    if (task.command) copy.append(button(tr('copy'), event => { event.stopPropagation(); copyCommand(task.command, event.currentTarget); }));
+    row.replaceChildren(status, name, place, el('td', task.agent || tr('dash')), timeCell(task.updated_at), copy);
   });
-  patch($('request-rows'), requests, r => `${r.pid}:${r.id}`, r => [r, relative(r.updated_at), projectName(r.pid)], (row, request) => {
-    attr(row, 'tabindex', '0'); attr(row, 'class', request.exception || '');
-    row.onclick = () => openItem(request.pid, request.id);
-    row.onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); openItem(request.pid, request.id); } };
-    const progress = el('td');
-    progress.append(meter(request.total ? request.done / request.total * 100 : 0, tr('taskCount', request)), el('span', request.total ? `${request.done}/${request.total}` : tr('dash')));
-    const stage = el('td'); stage.append(el('span', stageText(request), request.exception || ''));
-    row.replaceChildren(el('td', request.name), el('td', projectName(request.pid)), stage, progress, el('td', relative(request.updated_at)), el('td', request.id));
+  $('tasks-empty').hidden = shown.length > 0; text($('empty-message'), tr('noMatches')); text($('empty-clear'), tr('clear'));
+  groups.sort((a, b) => totals(b.members).needs - totals(a.members).needs || Math.max(...b.members.map(p => p.updated_at || 0)) - Math.max(...a.members.map(p => p.updated_at || 0)));
+  patch($('project-cards'), groups, g => g.project.pid, g => [g, tasks, expanded.has(g.project.pid), Math.floor(Date.now() / 1000)], (card, group) => {
+    attr(card, 'class', 'project-card'); const project = group.project, count = totals(group.members);
+    const head = el('div', undefined, 'card-header'), title = el('div');
+    title.append(el('h2', project.name), el('div', project.root, 'muted root'), el('p', tr('projectCounts', count)));
+    head.append(title, button(tr('viewTasks'), () => setState({view: 'tasks', p: project.pid, w: '', s: 'open', q: ''}))); card.append(head);
+    if (project.root_missing) card.append(el('p', tr('rootMissing'), 'muted'));
+    if (project.error) card.append(el('p', tr('unreadable'), 'muted'));
+    const scroll = el('div', undefined, 'table-scroll'), table = el('table'), thead = el('thead'), columns = el('tr');
+    headers(columns, ['worktree', 'branch', 'needsYou', 'open', 'done', 'updated']); thead.append(columns);
+    const body = el('tbody');
+    for (const [i, member] of group.members.entries()) {
+      const counts = totals([member]);
+      if (!counts.open && !expanded.has(project.pid)) continue;
+      const row = el('tr'); attr(row, 'data-key', member.pid); if (!counts.open) attr(row, 'class', 'muted');
+      activate(row, () => setState({view: 'tasks', p: project.pid, w: member.pid, s: 'open', q: ''}));
+      row.append(el('td', `${member.name}${i === 0 ? ` (${tr('main')})` : ''}`), el('td', member.branch || tr('dash')), el('td', counts.needs), el('td', counts.open), el('td', counts.done), timeCell(member.updated_at)); body.append(row);
+    }
+    table.append(thead, body); scroll.append(table); card.append(scroll);
+    const closed = group.members.filter(p => !totals([p]).open).length;
+    if (closed) card.append(button(tr(expanded.has(project.pid) ? 'hideWorktrees' : 'showWorktrees', {n: closed}), () => {
+      if (expanded.has(project.pid)) expanded.delete(project.pid); else expanded.add(project.pid); renderOverview();
+    }, 'toggle-worktrees'));
   });
-  $('requests-empty').hidden = requests.length > 0;
+  text($('projects-empty'), tr('noProjects')); $('projects-empty').hidden = !overview || groups.length > 0;
 }
-function setState(change) {
-  const next = {...state, ...change};
-  const params = new URLSearchParams();
-  for (const key of ['p', 'lang', 'r', 't']) params.set(key, next[key]);
-  const hash = `#${params}`;
-  if (location.hash === hash) return;
-  location.hash = hash;
+function setState(change, replace = false) {
+  const next = {...state, ...change}, hash = `#${new URLSearchParams(next)}`;
+  if (replace) { history.replaceState(null, '', hash); readState(); }
+  else if (location.hash !== hash) { location.hash = hash; readState(); }
 }
 function readState() {
-  const params = new URLSearchParams(location.hash.slice(1));
-  const previous = state;
-  state = {p: params.get('p') || '', lang: ['vi', 'en'].includes(params.get('lang')) ? params.get('lang') : state.lang,
-    r: params.get('r') || '', t: params.get('t') || ''};
+  const params = new URLSearchParams(location.hash.slice(1)), previous = state;
+  state = {view: params.get('view') === 'projects' ? 'projects' : 'tasks', p: params.get('p') || '', w: params.get('w') || '',
+    s: GROUPS.includes(params.get('s')) ? params.get('s') : 'open', q: params.get('q') || '', t: params.get('t') || '',
+    lang: ['vi', 'en'].includes(params.get('lang')) ? params.get('lang') : state.lang};
   try { localStorage.setItem('dashboard-language', state.lang); } catch {}
-  renderOverview();
-  if (['p', 'r', 't'].some(key => previous[key] !== state[key])) loadDetail(); else renderDetail();
+  renderOverview(); if (previous.t !== state.t) loadDetail(); else renderDetail();
 }
-function closeDrawer() { setState({r: '', t: ''}); }
+function closeDrawer() { setState({t: ''}); }
 async function getJSON(url) {
   const response = await fetch(url, {headers: {"X-Bridge-Token": sessionStorage.getItem("agent-bridge-token") || ""}, cache: 'no-store'});
   tokenRequired = response.status === 401;
@@ -335,18 +291,15 @@ async function getJSON(url) {
 }
 async function loadDetail(preserve = false) {
   const version = ++detailVersion;
-  if (preserve !== true) { requestData = null; taskData = null; }
+  if (preserve !== true) taskData = null;
   detailError = '';
   renderDetail();
-  if (!state.p || (!state.r && !state.t)) return;
-  const base = `/api/projects/${encodeURIComponent(state.p)}`;
+  if (!state.t) return;
+  const [pid, tid] = state.t.split(":");
   try {
-    const [request, task] = await Promise.all([
-      state.r ? getJSON(`${base}/requests/${encodeURIComponent(state.r)}`) : null,
-      state.t ? getJSON(`${base}/tasks/${encodeURIComponent(state.t)}`) : null
-    ]);
+    const task = await getJSON(`/api/projects/${encodeURIComponent(pid)}/tasks/${encodeURIComponent(tid)}`);
     if (version !== detailVersion) return;
-    requestData = request; taskData = task; renderDetail();
+    taskData = task; renderDetail();
   } catch (error) {
     if (version !== detailVersion) return;
     detailError = error.status === 401 ? "tokenRequired" : error.status === 404 ? 'notFound' : 'detailError'; renderDetail();
@@ -369,32 +322,17 @@ function records(parent, key, records, fields) {
 }
 function renderDetail() {
   const drawer = $('drawer'), wasHidden = drawer.hidden;
-  drawer.hidden = !state.p || (!state.r && !state.t);
+  drawer.hidden = !state.t;
   text($('close'), tr('closeSymbol')); attr($('close'), 'aria-label', tr('close'));
   if (drawer.hidden) { if (!wasHidden && returnFocus?.isConnected) returnFocus.focus(); return; }
   if (wasHidden) $('close').focus();
-  text($('drawer-title'), requestData?.name || taskData?.objective || state.r || state.t);
+  text($('drawer-title'), taskData?.objective || state.t.split(':').pop());
   const body = $('drawer-body');
-  const signature = JSON.stringify([state.lang, requestData, taskData, detailError]);
+  const signature = JSON.stringify([state.lang, taskData, detailError]);
   if (body._signature === signature) return;
   body._signature = signature; body.replaceChildren();
   if (detailError) { body.append(el('p', tr(detailError)), button(tr('retry'), () => loadDetail())); return; }
-  if (!requestData && !taskData) { body.append(el('p', tr('loading'))); return; }
-  if (requestData) {
-    body.append(el('h3', tr('summary')), el('p', tr('taskCount', requestData)), legend(requestData.summary.counts));
-    const exceptions = el('div', undefined, 'legend');
-    for (const [kind, count] of Object.entries(requestData.summary.exceptions)) exceptions.append(el('span', `${tr(kind)} ${count}`, kind));
-    body.append(exceptions);
-    const steps = el('ol', undefined, 'stepper');
-    for (const stage of STAGES) steps.append(el('li', tr(stage), STAGES.indexOf(stage) <= STAGES.indexOf(requestData.stage) ? 'current' : ''));
-    body.append(steps, el('h3', tr('tasks')));
-    const tasks = el('div', undefined, 'task-list'); body.append(tasks);
-    for (const task of requestData.tasks) {
-      const item = button(`${task.task_id} · ${task.objective} · ${stageText(task)}`, () => setState({t: task.task_id}));
-      attr(item, 'data-key', task.task_id); attr(item, 'aria-pressed', state.t === task.task_id); tasks.append(item);
-    }
-  }
-  if (!taskData) return;
+  if (!taskData) { body.append(el('p', tr('loading'))); return; }
   const task = taskData;
   body.append(el('h3', tr('technical')), el('p', `${task.task_id} · ${task.objective}`));
   if (task.exception) body.append(el('p', `${tr(task.exception)}${task.state === 'PAUSED' ? ` · ${tr((task.failure || '').split(':')[0] in I18N.en ? task.failure.split(':')[0] : 'OTHER')}` : ''}`, task.exception));
@@ -424,8 +362,8 @@ async function poll() {
   try {
     const previous = overview;
     overview = await getJSON('/api/overview'); disconnected = false;
-    if (previous && state.p && (state.r || state.t)) {
-      const relevant = data => JSON.stringify(data.requests.filter(r => r.pid === state.p));
+    if (previous && state.t) {
+      const relevant = data => JSON.stringify(data.tasks.find(t => `${t.pid}:${t.task_id}` === state.t));
       if (relevant(previous) !== relevant(overview)) loadDetail(true);
     }
   }
@@ -435,6 +373,10 @@ async function poll() {
     if (!document.hidden) timer = setTimeout(poll, disconnected ? 5000 : 3000);
   }
 }
+$('search').addEventListener('input', event => setState({q: event.target.value}, true));
+$('project').onchange = event => setState({p: event.target.value, w: ''});
+$('worktree').onchange = event => setState({w: event.target.value});
+$('clear').onclick = clearFilters; $('empty-clear').onclick = clearFilters;
 $('close').addEventListener('click', closeDrawer);
 document.addEventListener('keydown', event => {
   if ($('drawer').hidden) return;
