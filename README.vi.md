@@ -374,6 +374,7 @@ terminal.
 | *(không có)* / `tui` | Dashboard cho project ở thư mục hiện tại |
 | `web [--port N] [--open]` | Dashboard web chỉ đọc cho mọi project và worktree đã biết; chỉ trên localhost |
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Cài vào / gỡ khỏi một project |
+| `storage status` / `storage migrate [--apply]` | Xem nơi lưu trữ / xem trước hoặc thực hiện di chuyển |
 | `serve` | MCP stdio server (lệnh mà `.mcp.json` chạy) |
 | `config-init [example]` | Chỉ người dùng: ghi `.ai/orchestrator.yaml` từ một file mẫu đi kèm (từ chối nếu đã có); không có tên thì liệt kê file mẫu và đường dẫn `config.example.json` |
 | `config-check` | Kiểm tra `.ai/orchestrator.yaml` (hoặc cấu hình legacy) |
@@ -431,11 +432,26 @@ key `accounts` / `auto_switch` bên dưới chỉ dành cho cấu hình legacy.
 |---|---|---|
 | `.ai/config.json` | có | cấu hình bridge; agent sửa file này là vi phạm scope |
 | `.ai/orchestrator.yaml` | không (home gắn với máy) | role, agent, account, workflow |
-| `$(git rev-parse --absolute-git-dir)/agent-bridge/` | không bao giờ | `bridge.db` (task, attempt, workflow, snapshot quota, audit log), file tạm mỗi lượt chạy, `install-manifest.json` (setup) |
+| `$AGENT_BRIDGE_HOME/projects/<project>/worktrees/<worktree>/` | không bao giờ | `bridge.db`, `logs/`, file tạm mỗi lượt chạy, `worktree.json` và `migration.json` sau khi di chuyển |
+| `$(git rev-parse --absolute-git-dir)/agent-bridge/install-manifest.json` | không bao giờ | bản kê cài đặt, vẫn nằm trong thư mục git |
 
-Trạng thái nằm trong git directory vì sandbox `workspace-write` của Codex ghi được mọi nơi trong
-worktree, kể cả file bị git-ignore, nhưng không ghi được dưới `.git/` (đã kiểm chứng trên
-codex-cli 0.163). Database cũ được thêm cột và bảng mới ở lần khởi động đầu tiên.
+`AGENT_BRIDGE_HOME` mặc định là `~/.agent-bridge`, phải là đường dẫn tuyệt đối bên ngoài
+worktree. Trạng thái tập trung nằm ngoài worktree để sandbox `workspace-write` của Codex
+không thể ghi vào đó. Database cũ trong thư mục git vẫn được sử dụng cho đến khi di chuyển.
+Database cũ được bổ sung cột và bảng ở lần khởi động đầu tiên. Lịch sử tập trung vẫn đọc được
+khi thư mục worktree đã bị xoá.
+
+#### Di chuyển trạng thái hiện có
+
+Đóng các phiên Claude, TUI và máy chủ web. Chạy `agent-bridge storage status` để xem kế hoạch,
+sau đó chạy `agent-bridge storage migrate --apply`. Không có `--apply` thì chỉ xem trước.
+Quá trình di chuyển dùng SQLite backup (bao gồm WAL), kiểm tra tính toàn vẹn database, số dòng
+và mã băm từng bảng, đồng thời sao chép log và kiểm tra SHA-256. Nguồn được kiểm tra để bảo đảm
+không thay đổi trước khi công bố bản tập trung. Các file cũ được giữ nguyên.
+Để quay lại, dùng phiên bản kit cũ đọc các file cũ đó; thay đổi trong kho tập trung sau khi di
+chuyển sẽ không xuất hiện ở bản cũ. Health cảnh báo nếu tiến trình cũ ghi thêm sự kiện vào
+database cũ sau khi di chuyển (split-brain).
+
 
 ---
 
@@ -603,9 +619,9 @@ cô lập account, slot chạy song song, ánh xạ legacy, nâng cấp schema, 
 
 ## Gỡ cài đặt
 
-Trong project: `agent-bridge uninstall` (thêm `--purge` để xoá `.ai/`). Database của bridge
-trong `.git/agent-bridge/` có thể xoá tay. Gỡ tool: `uv tool uninstall agent-orchestration-kit`,
-rồi xoá thư mục clone; không có gì bên ngoài nó được dùng (ngoài các account home bạn tự tạo).
+Trong project: `agent-bridge uninstall` (thêm `--purge` để xoá `.ai/`). Lịch sử task vẫn nằm trong thư mục
+trạng thái của bridge dưới `AGENT_BRIDGE_HOME` (mặc định `~/.agent-bridge`), hoặc vị trí cũ trước
+khi di chuyển. Gỡ tool: `uv tool uninstall agent-orchestration-kit`, rồi xoá thư mục clone.
 
 ## Hạn chế đã biết
 

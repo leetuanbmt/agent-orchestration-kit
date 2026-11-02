@@ -98,6 +98,13 @@ async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "uninstall":
         install.uninstall(Path(args.dir), args.purge)
         return None
+    if args.cmd == "storage":
+        from . import storage
+        try:
+            here = find_root()
+        except RuntimeError:
+            here = None
+        return storage.migrate(here, apply=getattr(args, "apply", False))
     if args.cmd == "tasks":  # works anywhere: reads every known project's tasks
         try:
             here = find_root()
@@ -237,7 +244,7 @@ def main(argv: list[str] | None = None) -> None:
     i.add_argument("--force", action="store_true", help="overwrite conflicting kit files")
     u = sub.add_parser("uninstall", help="remove the kit from a project, keeping user edits")
     u.add_argument("dir", nargs="?", default=".")
-    u.add_argument("--purge", action="store_true", help="also delete .ai/ (task history)")
+    u.add_argument("--purge", action="store_true", help="also delete .ai/ (config); task history stays in the bridge state directory")
     sub.add_parser("tui", help="interactive dashboard (the default without a subcommand)")
     web = sub.add_parser("web", help="localhost progress dashboard")
     web.add_argument("--port", type=int, default=8765)
@@ -285,6 +292,10 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("status")
     s.add_argument("task_id")
     s.add_argument("--wait", type=float, default=0)
+    st = sub.add_parser("storage").add_subparsers(dest="storage_cmd", required=True)
+    st.add_parser("status")
+    sm = st.add_parser("migrate", help="A human runs this after closing every Claude session, TUI and agent-bridge web")
+    sm.add_argument("--apply", action="store_true")
     tk = sub.add_parser("tasks", help="tasks of every project and worktree agent-bridge has "
                                       "run in, grouped by project")
     tk.add_argument("--state")
@@ -345,6 +356,8 @@ def main(argv: list[str] | None = None) -> None:
             console.print(getattr(render, view)(out, **extra))
         else:
             print(dumps(out))
+    if args.cmd == "storage" and any(e["status"] in ("failed", "corrupt") for e in out["sources"]):
+        raise SystemExit(1)
     if args.cmd == "health" and not out["ok"]:
         raise SystemExit(1)  # scripts and CI can gate on `agent-bridge health`
 

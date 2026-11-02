@@ -213,15 +213,14 @@ def test_login_guard(tmp_path, monkeypatch, capsys):
 # @pt.target bridge.cli._run, bridge.cli._print_accounts, bridge.server.bridge_list_accounts
 # @pt.method unit
 # @pt.legacy none (new kit)
-def test_list_surfaces(tmp_path, monkeypatch, capsys):
+def test_list_surfaces(tmp_path, repo, monkeypatch, capsys):
     cfg = BridgeConfig(codex_bin=str(tmp_path / "missing"))
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cli, "find_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "find_root", lambda: repo)
     monkeypatch.setattr(cli, "load_config", lambda root: cfg)
-    b = Bridge(tmp_path, cfg)
+    b = Bridge(repo, cfg)
     monkeypatch.setattr(server, "bridge", lambda: b)
     monkeypatch.setattr("bridge.service.shutil.which", lambda name: None)
-    expected = discover(cfg, tmp_path)
+    expected = discover(cfg, repo)
     for account in expected["accounts"]:
         account.update(state="available", last_error=None, max_concurrency=1, source="project")
     expected["unconfigured"] = []
