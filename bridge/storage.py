@@ -6,6 +6,11 @@ import hashlib
 import json
 import os
 import re
+import fcntl
+import shutil
+import sqlite3
+import subprocess
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
@@ -60,13 +65,20 @@ def _metadata(path: Path, data: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def locate(root: Path, create: bool = False) -> Location:
+def _paths(root: Path) -> tuple[Path, Path, Path]:
     gdir = install.git_dir(root)
     commondir = gdir / "commondir"
     common = (gdir / commondir.read_text().strip()).resolve() if commondir.exists() else gdir
     base = home(root)
     project = base / "projects" / project_key(common)
     central = project / "worktrees" / worktree_key(root)
+    return gdir, common, central
+
+
+def locate(root: Path, create: bool = False) -> Location:
+    gdir, common, central = _paths(root)
+    base = home(root)
+    project = central.parent.parent
     if not (central / "bridge.db").exists():
         current, old = gdir / "agent-bridge", gdir / "codex-bridge"
         if any(path.exists() for path in (current / "bridge.db", old / "bridge.db",
@@ -88,3 +100,187 @@ def locate(root: Path, create: bool = False) -> Location:
 
 def store_dir(root: Path, create: bool = False) -> Path:
     return locate(root, create=create).dir
+
+
+TABLES = ("tasks", "attempts", "events", "workflows", "accounts", "account_quota")
+
+
+def fingerprint(conn) -> dict:
+    existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    tables = {}
+    for name in TABLES:
+        if name in existing:
+            digest = hashlib.sha256()
+            count = 0
+            for row in conn.execute(f"SELECT * FROM {name} ORDER BY rowid"):
+                digest.update(repr(tuple(row)).encode())
+                count += 1
+            tables[name] = {"count": count, "sha256": digest.hexdigest()}
+    return {"integrity": conn.execute("PRAGMA integrity_check").fetchone()[0],
+            "tables": tables, "max_event_id":
+            (conn.execute("SELECT max(id) FROM events").fetchone()[0] or 0)
+            if "events" in existing else 0}
+
+
+def running_processes() -> list[dict]:
+    try:
+        result = subprocess.run(["ps", "-axo", "pid=,ppid=,command="],
+                                capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    processes = {}
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) == 3:
+            try:
+                processes[int(parts[0])] = (int(parts[1]), parts[2])
+            except ValueError:
+                continue
+    excluded = set()
+    pid = os.getpid()
+    while pid and pid not in excluded:
+        excluded.add(pid)
+        pid = processes.get(pid, (0, ""))[0]
+    return [{"pid": pid, "command": cmd} for pid, (_, cmd) in processes.items()
+            if pid not in excluded and ("agent-bridge" in cmd or "-m bridge" in cmd)]
+
+
+def _readonly(path: Path):
+    # SQLite may create an empty WAL and create or update SHM even with mode=ro.
+    return sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+
+
+def plan(here: Path | None = None) -> list[dict]:
+    from . import accounts, config, progress
+    from .models import ACTIVE
+
+    roots = dict.fromkeys(str(Path(r).resolve()) for r in
+                          [*accounts.known_projects(), *progress.discover_roots(here)])
+    entries = []
+    for value in roots:
+        root = Path(value)
+        entry = dict(root=value, status="missing", source=None, target=None,
+                     bytes=0, active=0, error=None)
+        entries.append(entry)
+        if not root.is_dir():
+            continue
+        try:
+            top_level = config.find_root(root) == root.resolve()
+        except RuntimeError:
+            top_level = False
+        if not top_level:
+            entry.update(status="not_git", error="not a worktree top level")
+            continue
+        try:
+            gdir, _, target = _paths(root)
+        except (RuntimeError, OSError, ValueError, subprocess.CalledProcessError) as exc:
+            entry.update(status="not_git", error=str(exc))
+            continue
+        entry["target"] = str(target)
+        source = next((p for p in (gdir / "agent-bridge/bridge.db",
+                                   gdir / "codex-bridge/bridge.db", root / ".ai/bridge.db")
+                       if p.exists()), None)
+        entry["source"] = str(source) if source else None
+        if (target / "bridge.db").exists():
+            entry["status"] = "migrated"
+            continue
+        if source is None:
+            entry["status"] = "no_state"
+            continue
+        try:
+            files = [source, source.with_name(source.name + "-wal"),
+                     *source.parent.joinpath("logs").glob("*.jsonl")]
+            entry["bytes"] = sum(p.stat().st_size for p in files if p.is_file())
+            with closing(_readonly(source)) as conn:
+                fp = fingerprint(conn)
+                if fp["integrity"] != "ok":
+                    raise RuntimeError("integrity check failed")
+                if "tasks" in fp["tables"]:
+                    states = tuple(ACTIVE)
+                    marks = ",".join("?" for _ in states)
+                    entry["active"] = conn.execute(
+                        f"SELECT count(*) FROM tasks WHERE state IN ({marks})", states).fetchone()[0]
+            entry["status"] = "ready"
+        except (sqlite3.Error, OSError, RuntimeError) as exc:
+            entry.update(status="corrupt", error=str(exc))
+    return entries
+
+
+def _copy_logs(source: Path, partial: Path) -> dict:
+    logs = {}
+    for path in sorted((source.parent / "logs").glob("*.jsonl")):
+        directory = partial / "logs"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        dest = directory / path.name
+        shutil.copyfile(path, dest)
+        dest.chmod(0o600)
+        if hashlib.sha256(dest.read_bytes()).hexdigest() != digest:
+            raise RuntimeError("copy differs")
+        logs[path.name] = digest
+    return logs
+
+
+def _migrate_entry(entry: dict) -> None:
+    source, target = Path(entry["source"]), Path(entry["target"])
+    try:
+        for leftover in target.parent.glob(target.name + ".partial-*"):
+            shutil.rmtree(leftover)
+        if target.exists():
+            raise RuntimeError("target already exists")
+        partial = target.with_name(target.name + f".partial-{os.getpid()}")
+        for directory in reversed([partial, *partial.parents]):
+            if not directory.exists():
+                directory.mkdir(mode=0o700)
+            if directory.is_relative_to(home()):
+                directory.chmod(0o700)
+        gdir, common, _ = _paths(Path(entry["root"]))
+        created = datetime.now(timezone.utc).isoformat()
+        _metadata(target.parent.parent / "project.json", {
+            "name": _project_name(common.resolve()), "common_git_dir": str(common.resolve()),
+            "created_at": created})
+        with closing(_readonly(source)) as conn:
+            before = fingerprint(conn)
+            with closing(sqlite3.connect(partial / "bridge.db")) as dest:
+                conn.backup(dest)
+                logs = _copy_logs(source, partial)
+                copied = fingerprint(dest)
+            after = fingerprint(conn)
+        if any(fp["integrity"] != "ok" for fp in (before, after, copied)):
+            raise RuntimeError("integrity check failed")
+        if before != after:
+            raise RuntimeError("source changed during copy")
+        if before != copied:
+            raise RuntimeError("copy differs")
+        _metadata(partial / "worktree.json", {"root": str(Path(entry["root"]).resolve()),
+                  "git_dir": str(gdir.resolve()), "created_at": created})
+        _metadata(partial / "migration.json", {"source": str(source), "migrated_at": created,
+                  "fingerprint": before, "logs": logs, "source_max_event_id": before["max_event_id"]})
+        os.replace(partial, target)
+        entry["status"] = "migrated_now"
+    except Exception as exc:
+        entry.update(status="failed", error=str(exc))
+
+
+def migrate(here: Path | None = None, apply: bool = False) -> dict:
+    base = home()
+    if not apply:
+        return {"applied": False, "home": str(base), "running": running_processes(),
+                "sources": plan(here)}
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    locks = base / "locks"
+    locks.mkdir(mode=0o700, exist_ok=True)
+    locks.chmod(0o700)
+    with (locks / "migrate.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("another storage migration is running") from exc
+        running = running_processes()
+        if running:
+            raise RuntimeError("bridge processes are running: " + ", ".join(str(p["pid"]) for p in running))
+        entries = plan(here)
+        for entry in entries:
+            if entry["status"] == "ready":
+                _migrate_entry(entry)
+        return {"applied": True, "home": str(base), "running": running, "sources": entries}

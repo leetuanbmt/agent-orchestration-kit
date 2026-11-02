@@ -98,6 +98,13 @@ async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "uninstall":
         install.uninstall(Path(args.dir), args.purge)
         return None
+    if args.cmd == "storage":
+        from . import storage
+        try:
+            here = find_root()
+        except RuntimeError:
+            here = None
+        return storage.migrate(here, apply=getattr(args, "apply", False))
     if args.cmd == "tasks":  # works anywhere: reads every known project's tasks
         try:
             here = find_root()
@@ -285,6 +292,10 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("status")
     s.add_argument("task_id")
     s.add_argument("--wait", type=float, default=0)
+    st = sub.add_parser("storage").add_subparsers(dest="storage_cmd", required=True)
+    st.add_parser("status")
+    sm = st.add_parser("migrate", help="A human runs this after closing every Claude session, TUI and agent-bridge web")
+    sm.add_argument("--apply", action="store_true")
     tk = sub.add_parser("tasks", help="tasks of every project and worktree agent-bridge has "
                                       "run in, grouped by project")
     tk.add_argument("--state")
@@ -345,6 +356,8 @@ def main(argv: list[str] | None = None) -> None:
             console.print(getattr(render, view)(out, **extra))
         else:
             print(dumps(out))
+    if args.cmd == "storage" and any(e["status"] in ("failed", "corrupt") for e in out["sources"]):
+        raise SystemExit(1)
     if args.cmd == "health" and not out["ok"]:
         raise SystemExit(1)  # scripts and CI can gate on `agent-bridge health`
 
