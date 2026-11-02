@@ -373,6 +373,8 @@ secrets), stops at `APPROVED` until a human runs `agent-bridge approve TASK_ID` 
 | `storage status` / `storage migrate [--apply]` | Inspect storage / preview or apply migration |
 | `storage rollback <root> [--yes]` | Move a migrated central store aside (human operation) |
 | `storage cleanup-legacy [--apply]` | Preview or back up verified legacy files (human operation) |
+| `storage prune [--apply]` | Preview or remove registry entries for missing folders |
+| `storage gc --logs-older-than DAYS [--apply]` | Preview or delete old logs of finished tasks |
 | `serve` | MCP stdio server (what `.mcp.json` runs) |
 | `config-init [example]` | Human only: write `.ai/orchestrator.yaml` from a shipped example (refuses if it exists); without one, list the examples and the `config.example.json` path |
 | `config-check` | Validate `.ai/orchestrator.yaml` (or the legacy config) |
@@ -450,6 +452,8 @@ table counts and row hashes, and copies logs with SHA-256 verification. It check
 source has not changed before publishing the central store. Legacy files are left untouched.
 `agent-bridge storage rollback <root>` moves the central copy aside; pass `--yes` to accept hiding newer central events.
 `agent-bridge storage cleanup-legacy --apply` moves verified legacy files to `~/.agent-bridge/backups`; nothing is deleted.
+`agent-bridge storage prune [--apply]` removes registry entries for roots that are no longer directories; it previews changes by default.
+`agent-bridge storage gc --logs-older-than DAYS [--apply]` previews deletion of central attempt logs older than DAYS (at least 1) for DONE, CANCELLED or BLOCKED tasks; `--apply` deletes those logs and preserves all database rows.
 Health warns if an old process writes new events
 to the legacy database after migration (split-brain).
 

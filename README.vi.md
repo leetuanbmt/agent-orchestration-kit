@@ -377,6 +377,8 @@ terminal.
 | `storage status` / `storage migrate [--apply]` | Xem nơi lưu trữ / xem trước hoặc thực hiện di chuyển |
 | `storage rollback <root> [--yes]` | Chuyển bản tập trung sang nơi lưu riêng (người dùng chạy) |
 | `storage cleanup-legacy [--apply]` | Xem trước hoặc sao lưu file cũ đã xác minh (người dùng chạy) |
+| `storage prune [--apply]` | Xem trước hoặc xóa mục đăng ký của thư mục không còn tồn tại |
+| `storage gc --logs-older-than DAYS [--apply]` | Xem trước hoặc xóa nhật ký cũ của tác vụ đã kết thúc |
 | `serve` | MCP stdio server (lệnh mà `.mcp.json` chạy) |
 | `config-init [example]` | Chỉ người dùng: ghi `.ai/orchestrator.yaml` từ một file mẫu đi kèm (từ chối nếu đã có); không có tên thì liệt kê file mẫu và đường dẫn `config.example.json` |
 | `config-check` | Kiểm tra `.ai/orchestrator.yaml` (hoặc cấu hình legacy) |
@@ -454,6 +456,8 @@ và mã băm từng bảng, đồng thời sao chép log và kiểm tra SHA-256.
 không thay đổi trước khi công bố bản tập trung. Các file cũ được giữ nguyên.
 `agent-bridge storage rollback <root>` chuyển bản tập trung sang nơi lưu riêng; thêm `--yes` để chấp nhận ẩn các sự kiện mới hơn.
 `agent-bridge storage cleanup-legacy --apply` chuyển các file cũ đã xác minh vào `~/.agent-bridge/backups`; không xóa dữ liệu.
+`agent-bridge storage prune [--apply]` xóa mục đăng ký của đường dẫn không còn là thư mục; mặc định chỉ xem trước thay đổi.
+`agent-bridge storage gc --logs-older-than DAYS [--apply]` xem trước việc xóa nhật ký lần chạy trong kho tập trung cũ hơn DAYS ngày (tối thiểu 1) của tác vụ DONE, CANCELLED hoặc BLOCKED; thêm `--apply` để xóa các nhật ký đó và giữ nguyên mọi dòng trong cơ sở dữ liệu.
 Health cảnh báo nếu tiến trình cũ ghi thêm sự kiện vào
 database cũ sau khi di chuyển (split-brain).
 

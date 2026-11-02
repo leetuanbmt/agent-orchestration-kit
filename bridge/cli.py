@@ -100,6 +100,10 @@ async def _run(args: argparse.Namespace) -> Any:
         return None
     if args.cmd == "storage":
         from . import storage
+        if args.storage_cmd == "prune":
+            return storage.prune(apply=args.apply)
+        if args.storage_cmd == "gc":
+            return storage.gc(args.logs_older_than, apply=args.apply)
         if args.storage_cmd == "rollback":
             return storage.rollback(Path(args.root), yes=args.yes)
         if args.storage_cmd == "cleanup-legacy":
@@ -305,6 +309,11 @@ def main(argv: list[str] | None = None) -> None:
     sr.add_argument("--yes", action="store_true")
     sc = st.add_parser("cleanup-legacy", help="A human runs this to back up verified legacy files")
     sc.add_argument("--apply", action="store_true")
+    sp = st.add_parser("prune", help="Preview removal of missing project roots from the registry")
+    sp.add_argument("--apply", action="store_true")
+    sg = st.add_parser("gc", help="Preview deletion of old logs of finished tasks")
+    sg.add_argument("--logs-older-than", type=float, required=True)
+    sg.add_argument("--apply", action="store_true")
     tk = sub.add_parser("tasks", help="tasks of every project and worktree agent-bridge has "
                                       "run in, grouped by project")
     tk.add_argument("--state")

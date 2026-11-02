@@ -10,6 +10,7 @@ import fcntl
 import shutil
 import sqlite3
 import subprocess
+import time
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -318,6 +319,66 @@ def _storage_guard():
         if running:
             raise RuntimeError("bridge processes are running: " + ", ".join(str(p["pid"]) for p in running))
         yield running
+
+
+def prune(apply: bool = False) -> dict:
+    if apply:
+        with _storage_guard():
+            return _prune(True)
+    return _prune(False)
+
+
+def _prune(apply: bool) -> dict:
+    from . import accounts
+
+    roots = accounts.known_projects()
+    removed = [root for root in roots if not Path(root).is_dir()]
+    kept = [root for root in roots if root not in removed]
+    if apply:
+        base = accounts.registry_dir()
+        base.mkdir(mode=0o700, parents=True, exist_ok=True)
+        temporary = base / f"projects.json.{os.getpid()}.tmp"
+        try:
+            temporary.write_text(json.dumps(sorted(kept), indent=2) + "\n")
+            os.replace(temporary, base / "projects.json")
+        finally:
+            temporary.unlink(missing_ok=True)
+    return {"applied": apply, "removed": removed, "kept": len(kept)}
+
+
+def gc(days: float, apply: bool = False) -> dict:
+    if not days >= 1:
+        raise ValueError("days must be >= 1")
+    if apply:
+        with _storage_guard():
+            return _gc(days, True)
+    return _gc(days, False)
+
+
+def _gc(days: float, apply: bool) -> dict:
+    from .models import TERMINAL
+
+    cutoff = time.time() - days * 86400
+    files = []
+    total = 0
+    for central in central_stores().values():
+        with closing(_readonly(central / "bridge.db")) as conn:
+            terminal = {row[0] for row in conn.execute(
+                "SELECT id FROM tasks WHERE state IN (?, ?, ?)", tuple(TERMINAL))}
+        for path in sorted((central / "logs").glob("*.jsonl")):
+            task, separator, attempt = path.stem.rpartition("-")
+            if not separator or not attempt.isdecimal() or task not in terminal:
+                continue
+            if path.is_symlink() or not path.is_file():
+                continue
+            stat = path.stat()
+            if stat.st_mtime < cutoff:
+                files.append(str(path))
+                total += stat.st_size
+    if apply:
+        for path in files:
+            Path(path).unlink()
+    return {"applied": apply, "files": files, "bytes": total}
 
 
 def _archive_dir(kind: str, central: Path) -> Path:

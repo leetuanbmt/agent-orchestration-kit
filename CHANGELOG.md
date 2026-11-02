@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `storage prune [--apply]` removes missing roots from the project registry, and
+  `storage gc --logs-older-than DAYS [--apply]` deletes old central attempt logs of terminal tasks;
+  both preview changes by default and refuse to apply while bridge processes are running.
 - Human-run `storage rollback <root> [--yes]` archives migrated central stores, and
   `storage cleanup-legacy [--apply]` moves verified legacy state into backups without deleting files.
 - New repositories keep bridge state under `~/.agent-bridge/projects/<project>/worktrees/<worktree>/`
