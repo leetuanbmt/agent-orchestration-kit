@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `agent-bridge web [--port N] [--open]`: read-only localhost dashboard for known projects
+  and worktrees, with progress, tasks needing attention, activity and request details in VI/EN.
 - Agent executions append redacted stdout and stderr lines to per-attempt JSONL logs and report
   meaningful progress events on stderr.
 

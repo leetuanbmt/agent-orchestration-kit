@@ -239,6 +239,9 @@ def main(argv: list[str] | None = None) -> None:
     u.add_argument("dir", nargs="?", default=".")
     u.add_argument("--purge", action="store_true", help="also delete .ai/ (task history)")
     sub.add_parser("tui", help="interactive dashboard (the default without a subcommand)")
+    web = sub.add_parser("web", help="localhost progress dashboard")
+    web.add_argument("--port", type=int, default=8765)
+    web.add_argument("--open", action="store_true")
     sub.add_parser("serve", help="run the MCP stdio server")
     sub.add_parser("health", help="adapters, logins, quota and task counts; exit 1 when "
                               "not OK")
@@ -312,6 +315,11 @@ def main(argv: list[str] | None = None) -> None:
     if os.environ.get(AGENT_ENV):
         print("refused: the bridge cannot run inside an agent it started", file=sys.stderr)
         raise SystemExit(2)
+    if args.cmd == "web":
+        from . import webui
+
+        webui.serve(args.port, args.open)
+        return
     if args.cmd in (None, "tui"):
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
             p.print_help()

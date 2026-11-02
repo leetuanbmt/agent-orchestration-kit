@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title></title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <strong id="brand"></strong>
+    <nav id="filters" class="pills"></nav>
+    <span id="live" class="pill live" role="status"></span>
+    <div id="languages" class="pills"></div>
+  </header>
+  <main id="content">
+    <section id="tiles" class="tiles"></section>
+    <section class="requests">
+      <h2 id="requests-heading"></h2>
+      <div class="table-scroll">
+        <table aria-labelledby="requests-heading">
+          <thead><tr id="columns"></tr></thead>
+          <tbody id="request-rows"></tbody>
+        </table>
+      </div>
+      <p id="requests-empty" class="muted" hidden></p>
+    </section>
+  </main>
+  <footer id="footer"></footer>
+  <aside id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+    <button id="close" class="close" type="button"></button>
+    <h2 id="drawer-title"></h2>
+    <div id="drawer-body"></div>
+  </aside>
+</body>
+</html>
