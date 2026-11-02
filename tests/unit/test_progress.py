@@ -117,6 +117,29 @@ def test_snapshot_attention_order(repo, store):
     assert detail["stage"] == "check"
 
 
+# @pt.id T0028-command
+# @pt.item Runnable dashboard commands
+# @pt.condition Paused failure contains shell syntax and review or failed tasks exist
+# @pt.expected Attention and task detail commands contain only a fixed verb and task id
+# @pt.target bridge.progress.snapshot, bridge.progress.task_detail
+# @pt.method unit
+# @pt.legacy None
+def test_command_never_contains_free_text(repo, store):
+    paused = add(store, "PAUSED", failure="QUOTA: x; rm -rf ~ $(id)\nnext")
+    review = add(store, "REVIEW")
+    failed = add(store, "FAILED")
+    assert paused == "T0001"
+    expected = {paused: "agent-bridge resume T0001",
+                review: f"agent-bridge result {review}",
+                failed: f"agent-bridge result {failed}"}
+    roots = [str(repo)]
+    snap = progress.snapshot(roots, now=1000)
+    assert {a["task_id"]: a["command"] for a in snap["attention"]} == expected
+    for tid, command in expected.items():
+        detail = progress.task_detail(progress.project_id(str(repo)), tid, roots)
+        assert detail["command"] == command
+
+
 # @pt.id T0022-groups
 # @pt.item Workflow grouping
 # @pt.condition Three workflow tasks and one lone task

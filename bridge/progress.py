@@ -11,7 +11,6 @@ import time
 from pathlib import Path
 
 from . import accounts, config, install, orchestrator, quota
-from .render import _next_for
 from .security import redact
 
 TASK_ID = re.compile(r"^T\d{4,}$")
@@ -104,6 +103,16 @@ def _rank(kind, reason=None):
             {"AUTH": 0, "QUOTA": 1}.get(reason, 2) if kind == "paused" else 0)
 
 
+def _command(tid: str, state: str, needs_human: bool) -> str | None:
+    if state == "APPROVED" and needs_human:
+        return f"agent-bridge approve {tid}"
+    if state in {"REVIEW", "FAILED", "BLOCKED"}:
+        return f"agent-bridge result {tid}"
+    if state == "PAUSED":
+        return f"agent-bridge resume {tid}"
+    return None
+
+
 def _tasks(data):
     result = []
     for row in data["tasks"]:
@@ -122,8 +131,7 @@ def _tasks(data):
                 "needs_human": bool(row.get("needs_human")), "failure": failure,
                 "updated_at": row.get("updated_at", 0), "agent": row.get("agent"),
                 "account": row.get("account"), "workflow_id": row.get("workflow_id")}
-        task["command"] = _next_for({**task, "needs_human_approval": task["needs_human"],
-                                     "review_pending": False})
+        task["command"] = _command(tid, task["state"], task["needs_human"])
         result.append(task)
     return result
 
