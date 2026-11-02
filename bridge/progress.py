@@ -29,11 +29,14 @@ def project_id(root: str) -> str:
 def discover_roots(here: Path | None = None) -> list[str]:
     roots: dict[str, None] = {}
     for root in dict.fromkeys([*accounts.known_projects(), *([str(here)] if here else [])]):
+        if not Path(root).is_dir():
+            continue
         out = subprocess.run(["git", "-C", root, "worktree", "list", "--porcelain"],
                              capture_output=True, text=True, check=False)
         roots |= dict.fromkeys([root, *(line.removeprefix("worktree ")
                                         for line in out.stdout.splitlines()
-                                        if line.startswith("worktree "))])
+                                        if line.startswith("worktree ")
+                                        and Path(line.removeprefix("worktree ")).is_dir())])
     return list(roots)
 
 
@@ -74,7 +77,10 @@ def _json(value):
 
 
 def _read(root):
-    gdir = install.git_dir(Path(root))
+    try:
+        gdir = install.git_dir(Path(root))
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise FileNotFoundError(root) from exc
     # bridge_dir may migrate legacy directories; a dashboard must never trigger that write.
     directory = install.bridge_dir(gdir) if (gdir / install.NAME).exists() else gdir / install.NAME
     path = directory / "bridge.db"

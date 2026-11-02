@@ -253,6 +253,25 @@ def test_snapshot_skips_root_without_database(repo, store, tmp_path, monkeypatch
     assert list(empty.iterdir()) == []
 
 
+# @pt.id T0026-not-repository
+# @pt.item Roots that are not git repositories
+# @pt.condition Existing directory without a git repository and a missing root
+# @pt.expected Only the initialized project is listed without errors
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_skips_root_that_is_not_a_repository(repo, store, tmp_path, monkeypatch):
+    add(store)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    empty = tmp_path / "not-a-repository"
+    empty.mkdir()
+    roots = [str(repo), str(empty), str(tmp_path / "missing")]
+    snap = progress.snapshot(roots, now=1000)
+    assert [p["pid"] for p in snap["projects"]] == [progress.project_id(str(repo))]
+    assert snap["projects"][0]["error"] is None
+    assert snap["projects"][0]["counts"] == {"queue": 1}
+
+
 # @pt.id T0022-legacy
 # @pt.item Legacy database compatibility
 # @pt.condition No optional columns or auxiliary tables
@@ -349,6 +368,36 @@ def test_discover_roots_and_worktree_badge(repo, store, monkeypatch):
         assert snap["projects"][0]["worktree_of"] == progress.project_id(str(repo))
     finally:
         other.db.close()
+
+
+# @pt.id T0026-missing-directories
+# @pt.item Root discovery directory filtering
+# @pt.condition Missing known project and deleted worktree alongside existing roots
+# @pt.expected Existing roots retain order and deduplication; git runs only for existing roots
+# @pt.target bridge.progress.discover_roots
+# @pt.method unit
+# @pt.legacy None
+def test_discover_roots_drops_missing_directories(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    tree = tmp_path / "worktree"
+    here = tmp_path / "here"
+    for directory in (root, tree, here):
+        directory.mkdir()
+    missing = tmp_path / "missing-project"
+    deleted = tmp_path / "deleted-worktree"
+    monkeypatch.setattr(progress.accounts, "known_projects",
+                        lambda: [str(missing), str(root), str(root)])
+    calls = []
+
+    def worktrees(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(stdout=f"worktree {root}\n\nworktree {deleted}\n\nworktree {tree}\n")
+
+    monkeypatch.setattr(progress.subprocess, "run", worktrees)
+    assert progress.discover_roots(here) == [str(root), str(tree), str(here)]
+    assert calls == [["git", "-C", str(directory), "worktree", "list", "--porcelain"]
+                     for directory in (root, here)]
+    assert progress.discover_roots(missing) == [str(root), str(tree)]
 
 
 # @pt.id T0022-request-limit
