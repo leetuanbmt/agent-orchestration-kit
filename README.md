@@ -439,7 +439,8 @@ This default makes per-account limits hold across every project and process on t
 
 `AGENT_BRIDGE_HOME` defaults to `~/.agent-bridge` and must be an absolute directory outside
 the worktree. Central state lives outside the worktree so Codex's `workspace-write` sandbox
-cannot write there. Existing legacy databases in the git directory continue to be used until
+cannot write there (an agent's `touch` and Python write into it failed with "Operation not
+permitted" on codex-cli 0.166). Existing legacy databases in the git directory continue to be used until
 migration. Older databases gain new columns and tables on the first start. Central history
 remains readable even when the worktree folder is deleted.
 

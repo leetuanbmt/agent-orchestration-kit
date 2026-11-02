@@ -443,7 +443,8 @@ Mặc định này giúp giới hạn của từng tài khoản có hiệu lực
 
 `AGENT_BRIDGE_HOME` mặc định là `~/.agent-bridge`, phải là đường dẫn tuyệt đối bên ngoài
 worktree. Trạng thái tập trung nằm ngoài worktree để sandbox `workspace-write` của Codex
-không thể ghi vào đó. Database cũ trong thư mục git vẫn được sử dụng cho đến khi di chuyển.
+không thể ghi vào đó (đã kiểm chứng trên codex-cli 0.166: agent chạy `touch` và ghi bằng Python
+vào đó đều bị từ chối với "Operation not permitted"). Database cũ trong thư mục git vẫn được sử dụng cho đến khi di chuyển.
 Database cũ được bổ sung cột và bảng ở lần khởi động đầu tiên. Lịch sử tập trung vẫn đọc được
 khi thư mục worktree đã bị xoá.
 
