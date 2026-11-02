@@ -20,16 +20,15 @@
         <label><span id="search-label"></span><input id="search" type="search"></label>
         <label><span id="project-label"></span><select id="project"></select></label>
         <label><span id="worktree-label"></span><select id="worktree"></select></label>
+        <button id="group-worktree" type="button" aria-pressed="false"></button>
         <button id="clear" type="button" hidden></button>
       </div>
       <div id="statuses" class="pills"></div>
       <p id="task-count"></p>
-      <div class="table-scroll">
-        <table aria-labelledby="task-count">
-          <thead><tr id="columns"></tr></thead>
-          <tbody id="task-rows"></tbody>
-        </table>
-      </div>
+      <table aria-labelledby="task-count">
+        <thead><tr id="columns"></tr></thead>
+        <tbody id="task-rows"></tbody>
+      </table>
       <div id="tasks-empty" class="empty" hidden><p id="empty-message"></p><button id="empty-clear" type="button"></button></div>
     </section>
     <section id="projects-view" hidden><div id="project-cards"></div><p id="projects-empty"></p></section>

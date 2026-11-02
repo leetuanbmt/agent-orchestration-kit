@@ -141,7 +141,7 @@ def _command(tid: str, state: str, needs_human: bool) -> str | None:
         return f"agent-bridge approve {tid}"
     if state in {"REVIEW", "FAILED", "BLOCKED"}:
         return f"agent-bridge result {tid}"
-    if state == "PAUSED":
+    if state in {"PAUSED", "REWORK"}:
         return f"agent-bridge resume {tid}"
     return None
 
@@ -241,9 +241,11 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
             continue
         result["projects"].append(project)
         tasks = _tasks(data)
-        result["tasks"].extend({"pid": pid, **{k: t[k] for k in (
+        result["tasks"].extend({"pid": pid,
+                                "reason": pause_reason(t["failure"]) if t["state"] == "PAUSED" else None,
+                                **{k: t[k] for k in (
             "task_id", "objective", "state", "stage", "exception", "needs_human",
-            "updated_at", "agent", "workflow_id", "command")}} for t in tasks)
+            "updated_at", "agent", "account", "workflow_id", "command")}} for t in tasks)
         project["updated_at"] = max((t["updated_at"] for t in tasks), default=None)
         project["counts"] = _counts(tasks)
         project["percent"] = percent(project["counts"])

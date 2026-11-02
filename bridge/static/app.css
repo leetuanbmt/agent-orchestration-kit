@@ -28,15 +28,23 @@ input, select { font: inherit; color: var(--ink); background: var(--tile); borde
 select { max-width: 280px; }
 select:disabled { opacity: .5; }
 #task-count { color: var(--muted); font-size: 13px; margin: 20px 0 10px; }
-.table-scroll { overflow: auto; border: 1px solid var(--border); border-radius: 8px; max-height: 70vh; }
+.table-scroll { border: 1px solid var(--border); border-radius: 8px; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; text-align: left; }
 th { position: sticky; top: 0; z-index: 1; background: var(--tile); color: var(--muted); font-weight: 500; font-size: 12px; }
-td, th { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+td, th { padding: 7px 12px; border-bottom: 1px solid var(--border); }
 tbody tr { cursor: pointer; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:focus-visible { outline-offset: -2px; background: var(--tile); }
 .task-cell { width: 38%; min-width: 250px; max-width: 480px; }
-.objective { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: min(33vw, 450px); margin-top: 3px; }
+.objective { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: min(33vw, 450px); }
+.task-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.task-line code { flex-shrink: 0; }
+td { height: 40px; white-space: nowrap; }
+.next-step { white-space: nowrap; }
+.copy-icon { padding: 2px 5px; margin-left: 6px; width: 26px; height: 26px; overflow: hidden; }
+.stale { margin-left: 4px; }
+.worktree-header { cursor: default; }
+.worktree-header th { position: static; padding: 9px 12px; }
 code { font: 13px ui-monospace, monospace; }
 .muted { color: var(--muted); font-size: 12px; }
 .badge { display: inline-block; background: var(--queue); border-radius: 4px; padding: 3px 7px; font-size: 12px; max-width: 220px; }
@@ -56,7 +64,7 @@ code { font: 13px ui-monospace, monospace; }
 .disconnected { opacity: .75; }
 @media (max-width: 999px) {
   .topbar { gap: 12px; padding: 16px; flex-wrap: wrap; }
-  main { padding: 16px; overflow-x: auto; }
+  main { padding: 16px; }
   .filter-bar { min-width: 850px; }
   table { min-width: 900px; }
   #statuses { min-width: 750px; }

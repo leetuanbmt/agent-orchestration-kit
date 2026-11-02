@@ -8,6 +8,8 @@ if (launchParams.has("token")) {
 
 const I18N = {
   en: {
+    awaitingReview: 'Awaiting review', nextStep: 'Next step', approve: 'Approve', result: 'View result', resume: 'Resume',
+    groupWorktree: 'Group by worktree', stale: 'stale',
     views: 'Views', open: 'Open', needsYou: 'Needs you', waiting: 'Waiting', status: 'Status', task: 'Task', location: 'Location',
     search: 'Search', searchPlaceholder: 'Task ID or objective', worktree: 'Worktree', branch: 'Branch', main: 'main',
     allProjects: 'All projects', allWorktrees: 'All worktrees', clear: 'Clear filters', noMatches: 'No task matches these filters',
@@ -37,6 +39,8 @@ const I18N = {
     FAILED: 'Failed', BLOCKED: 'Blocked', low: 'Low', medium: 'Medium', high: 'High'
   },
   vi: {
+    awaitingReview: 'Chờ duyệt', nextStep: 'Việc tiếp theo', approve: 'Phê duyệt', result: 'Xem kết quả', resume: 'Tiếp tục',
+    groupWorktree: 'Gom theo worktree', stale: 'cũ',
     views: 'Chế độ xem', open: 'Đang mở', needsYou: 'Cần bạn', waiting: 'Đang chờ', status: 'Trạng thái', task: 'Tác vụ', location: 'Vị trí',
     search: 'Tìm kiếm', searchPlaceholder: 'Mã tác vụ hoặc mục tiêu', worktree: 'Worktree', branch: 'Nhánh', main: 'chính',
     allProjects: 'Tất cả dự án', allWorktrees: 'Tất cả worktree', clear: 'Xóa bộ lọc', noMatches: 'Không có tác vụ khớp với bộ lọc này',
@@ -67,11 +71,11 @@ const I18N = {
   }
 };
 const $ = id => document.getElementById(id);
-const GROUPS = ['open', 'needsYou', 'running', 'waiting', 'done', 'cancelled', 'all'];
+const GROUPS = ['open', 'needsYou', 'awaitingReview', 'running', 'waiting', 'done', 'cancelled', 'all'];
 const expanded = new Set();
 let language = navigator.language.toLowerCase().startsWith('vi') ? 'vi' : 'en';
 try { const saved = localStorage.getItem('dashboard-language'); if (['vi', 'en'].includes(saved)) language = saved; } catch {}
-let state = {view: 'tasks', p: '', w: '', s: 'open', q: '', t: '', lang: language};
+let state = {view: 'tasks', p: '', w: '', s: 'open', q: '', t: '', g: '', lang: language};
 let overview = null, timer = null, inFlight = false, disconnected = false, tokenRequired = false;
 let detailVersion = 0, taskData = null, detailError = '', returnFocus = null;
 const tr = (key, values = {}) => {
@@ -156,7 +160,8 @@ function projectGroups() {
 }
 function matches(task, group) {
   if (group === 'open') return !['DONE', 'CANCELLED'].includes(task.state);
-  if (group === 'needsYou') return task.exception != null;
+  if (group === 'needsYou') return ['needs', 'failed', 'blocked', 'paused'].includes(task.exception);
+  if (group === 'awaitingReview') return task.exception === 'review_wait';
   if (group === 'running') return ['RUNNING', 'VERIFYING'].includes(task.state);
   if (group === 'waiting') return ['BACKLOG', 'READY', 'REWORK'].includes(task.state) || task.state === 'APPROVED' && !task.needs_human;
   if (group === 'done') return task.state === 'DONE';
@@ -195,6 +200,17 @@ function selectOptions(select, options, value) {
 }
 function clearFilters() { setState({p: '', w: '', s: 'open', q: ''}); }
 function openItem(pid, tid) { returnFocus = document.activeElement; setState({t: `${pid}:${tid}`}); }
+function statusLabel(task) {
+  return task.exception === 'needs' ? `${tr(task.state)} · ${tr('needs')}`
+    : `${tr(task.exception || task.state)}${task.exception === 'paused' && task.reason ? ` · ${tr(task.reason)}` : ''}`;
+}
+function taskLocation(task, full = false) {
+  const group = projectGroups().find(g => g.members.some(p => p.pid === task.pid));
+  const checkout = group?.members.find(p => p.pid === task.pid);
+  const worktree = checkout ? checkout.pid === group.project.pid ? 'main' : checkout.name : tr('unknown');
+  return {label: group && (full || !state.p && state.g !== '1') ? `${group.project.name} › ${worktree}` : worktree,
+    branch: checkout?.branch || tr('dash')};
+}
 function renderOverview() {
   document.documentElement.lang = state.lang; document.title = tr('brand'); text($('brand'), tr('brand'));
   text($('live'), tr(tokenRequired ? 'tokenRequired' : disconnected ? 'offline' : overview ? 'live' : 'loading'));
@@ -211,6 +227,7 @@ function renderOverview() {
   $('tasks-view').hidden = state.view !== 'tasks'; $('projects-view').hidden = state.view !== 'projects';
   text($('search-label'), tr('search')); text($('project-label'), tr('project')); text($('worktree-label'), tr('worktree'));
   attr($('search'), 'placeholder', tr('searchPlaceholder'));
+  text($('group-worktree'), tr('groupWorktree')); attr($('group-worktree'), 'aria-pressed', state.g === '1');
   if ($('search').value !== state.q) $('search').value = state.q;
   const selected = groups.find(g => g.project.pid === state.p);
   selectOptions($('project'), [['', tr('allProjects')], ...groups.map(g => [g.project.pid, g.project.name])], state.p);
@@ -225,21 +242,39 @@ function renderOverview() {
     attr(chip, 'aria-pressed', state.s === group); node.replaceChildren(chip);
   });
   const shown = filtered.filter(t => matches(t, state.s)).sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
-  text($('task-count'), tr(shown.length === 1 ? 'taskCountOne' : 'taskCount', {n: shown.length})); headers($('columns'), ['status', 'task', 'location', 'agent', 'updated', 'copy']);
-  patch($('task-rows'), shown, t => `${t.pid}:${t.task_id}`, t => [t, overview.projects, overview.attention, relative(t.updated_at)], (row, task) => {
+  text($('task-count'), tr(shown.length === 1 ? 'taskCountOne' : 'taskCount', {n: shown.length})); headers($('columns'), ['status', 'task', 'location', 'agent', 'updated', 'nextStep']);
+  let rows = shown;
+  if (state.g === '1') {
+    const worktrees = new Map();
+    for (const task of shown) {
+      if (!worktrees.has(task.pid)) worktrees.set(task.pid, []);
+      worktrees.get(task.pid).push(task);
+    }
+    rows = Array.from(worktrees, ([pid, tasks]) => [{pid, groupHeader: true, count: tasks.length}, ...tasks]).flat();
+  }
+  patch($('task-rows'), rows, t => t.groupHeader ? `group:${t.pid}` : `${t.pid}:${t.task_id}`, t => [t, overview?.projects, state.p, state.g, relative(t.updated_at), Date.now() / 1000 - t.updated_at > 7 * 86400], (row, task) => {
+    if (task.groupHeader) {
+      const location = taskLocation(task, true), cell = el('th', `${location.label} · ${location.branch} (${task.count})`);
+      attr(cell, 'colspan', '6'); attr(cell, 'scope', 'rowgroup'); attr(row, 'class', 'worktree-header'); row.append(cell); return;
+    }
     activate(row, () => openItem(task.pid, task.task_id));
-    const reason = overview.attention?.find(a => a.pid === task.pid && a.task_id === task.task_id)?.reason;
-    const label = task.exception === 'needs' ? `${tr(task.state)} · ${tr('needs')}`
-      : `${tr(task.exception || task.state)}${task.exception === 'paused' && reason ? ` · ${tr(reason)}` : ''}`;
+    const label = statusLabel(task);
     const status = el('td'); status.append(el('span', label, `badge status-${task.exception || (matches(task, 'running') ? 'running' : task.state.toLowerCase())}`));
-    const name = el('td', undefined, 'task-cell'), objective = el('div', (task.objective || '').split('\n')[0], 'objective');
-    attr(objective, 'title', task.objective || ''); name.append(el('code', task.task_id), objective);
-    const group = groups.find(g => g.members.some(p => p.pid === task.pid)), checkout = group?.members.find(p => p.pid === task.pid);
-    const place = el('td', group ? group.project.name + (checkout.pid !== group.project.pid ? ` › ${checkout.name}` : '') : tr('unknown'));
-    if (checkout?.branch) place.append(el('div', checkout.branch, 'muted'));
-    const copy = el('td');
-    if (task.command) copy.append(button(tr('copy'), event => { event.stopPropagation(); copyCommand(task.command, event.currentTarget); }));
-    row.replaceChildren(status, name, place, el('td', task.agent || tr('dash')), timeCell(task.updated_at), copy);
+    const name = el('td', undefined, 'task-cell'), line = el('div', undefined, 'task-line');
+    const objective = el('span', (task.objective || '').split('\n')[0], 'objective');
+    attr(objective, 'title', task.objective || ''); line.append(el('code', task.task_id), objective); name.append(line);
+    const location = taskLocation(task), place = el('td', location.label); attr(place, 'title', location.branch);
+    const next = el('td', undefined, 'next-step');
+    if (task.command) {
+      const copy = button('⧉', event => { event.stopPropagation(); copyCommand(task.command, event.currentTarget); }, 'copy-icon');
+      attr(copy, 'aria-label', 'Copy command'); attr(copy, 'title', task.command);
+      next.append(el('span', tr(task.command.split(' ')[1])), copy);
+    }
+    const updated = timeCell(task.updated_at), age = Date.now() / 1000 - task.updated_at;
+    if (matches(task, 'open') && task.updated_at != null && age > 7 * 86400) {
+      const stale = el('span', tr('stale'), 'muted stale'); attr(stale, 'title', `No update for ${Math.floor(age / 86400)} days`); updated.append(' ', stale);
+    }
+    row.replaceChildren(status, name, place, el('td', task.agent ?? task.account ?? tr('dash')), updated, next);
   });
   $('tasks-empty').hidden = shown.length > 0; text($('empty-message'), tr('noMatches')); text($('empty-clear'), tr('clear'));
   groups.sort((a, b) => totals(b.members).needs - totals(a.members).needs || Math.max(...b.members.map(p => p.updated_at || 0)) - Math.max(...a.members.map(p => p.updated_at || 0)));
@@ -276,7 +311,7 @@ function setState(change, replace = false) {
 function readState() {
   const params = new URLSearchParams(location.hash.slice(1)), previous = state;
   state = {view: params.get('view') === 'projects' ? 'projects' : 'tasks', p: params.get('p') || '', w: params.get('w') || '',
-    s: GROUPS.includes(params.get('s')) ? params.get('s') : 'open', q: params.get('q') || '', t: params.get('t') || '',
+    s: GROUPS.includes(params.get('s')) ? params.get('s') : 'open', q: params.get('q') || '', t: params.get('t') || '', g: params.get('g') === '1' ? '1' : '',
     lang: ['vi', 'en'].includes(params.get('lang')) ? params.get('lang') : state.lang};
   try { localStorage.setItem('dashboard-language', state.lang); } catch {}
   renderOverview(); if (previous.t !== state.t) loadDetail(); else renderDetail();
@@ -291,7 +326,10 @@ async function getJSON(url) {
 }
 async function loadDetail(preserve = false) {
   const version = ++detailVersion;
-  if (preserve !== true) taskData = null;
+  if (preserve !== true) {
+    const known = overview?.tasks.find(t => `${t.pid}:${t.task_id}` === state.t);
+    taskData = known ? {...known, preview: true} : null;
+  }
   detailError = '';
   renderDetail();
   if (!state.t) return;
@@ -334,6 +372,14 @@ function renderDetail() {
   if (detailError) { body.append(el('p', tr(detailError)), button(tr('retry'), () => loadDetail())); return; }
   if (!taskData) { body.append(el('p', tr('loading'))); return; }
   const task = taskData;
+  if (task.preview) {
+    const details = el('dl');
+    labeled(details, 'task', task.task_id); labeled(details, 'status', statusLabel(task));
+    labeled(details, 'location', taskLocation(task, true).label);
+    labeled(details, 'agent', task.agent ?? task.account ?? tr('dash'));
+    labeled(details, 'updated', task.updated_at == null ? null : new Date(task.updated_at * 1000).toLocaleString(state.lang));
+    body.append(details, el('p', tr('loading'))); return;
+  }
   body.append(el('h3', tr('technical')), el('p', `${task.task_id} · ${task.objective}`));
   if (task.exception) body.append(el('p', `${tr(task.exception)}${task.state === 'PAUSED' ? ` · ${tr((task.failure || '').split(':')[0] in I18N.en ? task.failure.split(':')[0] : 'OTHER')}` : ''}`, task.exception));
   const details = el('dl');
@@ -376,6 +422,7 @@ async function poll() {
 $('search').addEventListener('input', event => setState({q: event.target.value}, true));
 $('project').onchange = event => setState({p: event.target.value, w: ''});
 $('worktree').onchange = event => setState({w: event.target.value});
+$('group-worktree').onclick = () => setState({g: state.g === '1' ? '' : '1'});
 $('clear').onclick = clearFilters; $('empty-clear').onclick = clearFilters;
 $('close').addEventListener('click', closeDrawer);
 document.addEventListener('keydown', event => {

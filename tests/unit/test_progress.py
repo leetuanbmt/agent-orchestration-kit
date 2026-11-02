@@ -595,12 +595,30 @@ def test_snapshot_tasks_and_worktree_metadata(repo, store):
             (progress.project_id(str(tree)), middle, 200),
             (progress.project_id(str(repo)), older, 100)]
         expected = {"pid", "task_id", "objective", "state", "stage", "exception", "needs_human",
-                    "updated_at", "agent", "workflow_id", "command"}
+                    "updated_at", "agent", "account", "reason", "workflow_id", "command"}
         assert all(set(task) == expected for task in snap["tasks"])
         assert snap["projects"][0]["branch"] == branch
         assert [p["updated_at"] for p in snap["projects"]] == [300, 200]
     finally:
         other.db.close()
+
+
+# @pt.id T0047-task-actions
+# @pt.item Task account, pause reason and rework command
+# @pt.condition Legacy account and paused or rework tasks
+# @pt.expected Account retained, reason only for pause, fixed resume command
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_task_account_reason_and_rework_command(repo, store):
+    paused = add(store, "PAUSED", failure="QUOTA: detail")
+    rework = add(store, "REWORK")
+    store.db.execute("UPDATE tasks SET account=? WHERE id=?", ("legacy", paused))
+    tasks = {t["task_id"]: t for t in progress.snapshot([str(repo)])["tasks"]}
+    assert tasks[paused]["account"] == "legacy"
+    assert tasks[paused]["reason"] == "QUOTA"
+    assert tasks[rework]["reason"] is None
+    assert tasks[rework]["command"] == f"agent-bridge resume {rework}"
 
 
 # @pt.id T0045-task-limit
