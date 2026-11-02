@@ -204,6 +204,7 @@ agent-bridge health        # adapter, quota còn lại theo account, số task
 agent-bridge account-list  # account, trạng thái đăng nhập, codex-switch / claude-switch, CLI chưa dùng
 agent-bridge list          # task, mới nhất trước
 agent-bridge tasks         # task của mọi project và worktree trên máy, nhóm theo project
+agent-bridge web           # dashboard web chỉ đọc cho mọi project và worktree
 ```
 
 <img alt="agent-bridge list" src="docs/images/cli-list.svg" width="900">
@@ -212,6 +213,24 @@ agent-bridge tasks         # task của mọi project và worktree trên máy, n
 Ảnh chụp lấy từ một lần chạy end-to-end bằng bản tool đã cài, trên dữ liệu giả (CLI agent giả,
 `HOME` mới, project demo trong `/tmp/agent-bridge-demo`). Tạo lại bằng
 `"$(uv tool dir)/agent-orchestration-kit/bin/python" scripts/screenshots.py docs/images`.
+
+#### Dashboard web
+
+Chạy `agent-bridge web [--port N] [--open]` để xem dashboard trên trình duyệt máy tính tại
+`http://127.0.0.1:8765/`. Cổng mặc định là 8765; `--port 0` chọn cổng trống,
+`--open` mở trình duyệt, và Ctrl+C dừng server.
+
+Dashboard hiển thị mọi project agent-bridge biết trên máy và các git worktree của chúng, bỏ qua
+thư mục đã xoá hoặc không còn là repository: yêu cầu duyệt kèm lệnh chính xác, task bị chặn hoặc
+thất bại, task tạm dừng kèm lý do, task chờ review, tiến độ tổng thể, task đang chạy kèm thời gian
+đã chạy so với timeout, một ô cho mỗi project, hoạt động trong 24 giờ qua và bảng yêu cầu.
+Bấm vào một yêu cầu để mở ngăn chi tiết với các giai đoạn, task và thông tin kỹ thuật (không có
+patch). Dùng nút VI/EN để đổi ngôn ngữ.
+
+Dashboard chỉ đọc: mở từng `bridge.db` bằng SQLite `mode=ro`, không ghi dữ liệu, không khởi chạy
+agent và không thực hiện thao tác dành cho người dùng. Server chỉ lắng nghe trên `127.0.0.1`
+và từ chối Host header khác. Như các lệnh bridge khác, lệnh này từ chối chạy trong agent do
+bridge khởi chạy.
 
 ---
 
@@ -353,6 +372,7 @@ terminal.
 | Lệnh | Mô tả |
 |---|---|
 | *(không có)* / `tui` | Dashboard cho project ở thư mục hiện tại |
+| `web [--port N] [--open]` | Dashboard web chỉ đọc cho mọi project và worktree đã biết; chỉ trên localhost |
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Cài vào / gỡ khỏi một project |
 | `serve` | MCP stdio server (lệnh mà `.mcp.json` chạy) |
 | `config-init [example]` | Chỉ người dùng: ghi `.ai/orchestrator.yaml` từ một file mẫu đi kèm (từ chối nếu đã có); không có tên thì liệt kê file mẫu và đường dẫn `config.example.json` |

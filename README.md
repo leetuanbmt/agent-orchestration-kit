@@ -203,6 +203,7 @@ agent-bridge health        # adapters, remaining quota per account, task counts
 agent-bridge account-list  # accounts, login state, codex-switch / claude-switch, unused CLIs
 agent-bridge list          # tasks, newest first
 agent-bridge tasks         # tasks of every project and worktree on this machine, by project
+agent-bridge web           # read-only web dashboard for every project and worktree
 ```
 
 <img alt="agent-bridge list" src="docs/images/cli-list.svg" width="900">
@@ -211,6 +212,23 @@ agent-bridge tasks         # tasks of every project and worktree on this machine
 The screenshots come from an end-to-end run of the installed tool on invented data (fake agent
 CLIs, a fresh `HOME`, a demo project under `/tmp/agent-bridge-demo`). Regenerate them with
 `"$(uv tool dir)/agent-orchestration-kit/bin/python" scripts/screenshots.py docs/images`.
+
+#### Web dashboard
+
+Run `agent-bridge web [--port N] [--open]` for a desktop browser dashboard at
+`http://127.0.0.1:8765/`. The default port is 8765; `--port 0` picks a free port,
+`--open` opens the browser, and Ctrl+C stops the server.
+
+It shows every project agent-bridge knows on this machine and their git worktrees, skipping
+deleted or non-repository roots: approvals with the exact command, blocked and failed tasks,
+paused tasks with a reason, tasks waiting for review, overall progress, running tasks with
+elapsed time versus timeout, one tile per project, activity in the last 24 hours, and a requests
+table. Click a request for a drawer with stages, tasks and technical detail (no patch).
+Use the VI/EN toggle to switch languages.
+
+The dashboard is read-only: it opens each `bridge.db` with SQLite `mode=ro`, writes nothing,
+starts no agent and performs no human action. It listens on `127.0.0.1` only and rejects other
+Host headers. Like other bridge commands, it refuses to run inside an agent it started.
 
 ---
 
@@ -350,6 +368,7 @@ secrets), stops at `APPROVED` until a human runs `agent-bridge approve TASK_ID` 
 | Command | Description |
 |---|---|
 | *(none)* / `tui` | Dashboard for the project in the current directory |
+| `web [--port N] [--open]` | Read-only web dashboard for all known projects and worktrees; localhost only |
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Install into / remove from a project |
 | `serve` | MCP stdio server (what `.mcp.json` runs) |
 | `config-init [example]` | Human only: write `.ai/orchestrator.yaml` from a shipped example (refuses if it exists); without one, list the examples and the `config.example.json` path |
