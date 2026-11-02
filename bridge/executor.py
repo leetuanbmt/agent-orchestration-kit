@@ -171,6 +171,7 @@ class RunRequest:
     schema: dict[str, Any] = field(default_factory=lambda: OUTPUT_SCHEMA)
     model: str | None = None
     allow_bash: bool = False
+    hook_settings: str | None = None
     # Project-relative globs a writing run may change, and globs it must never change.
     write_paths: list[str] = field(default_factory=list)
     deny_paths: list[str] = field(default_factory=list)
@@ -431,11 +432,12 @@ class ClaudeAdapter(Adapter):
             denied += [f"{t}(./{p})" for p in req.deny_paths for t in _CLAUDE_WRITE_TOOLS]
         if req.allow_bash:
             tools.append("Bash")
-        # No settings files at all: their permissions.allow rules extend --allowedTools and their
-        # hooks run shell commands, so the target project could widen a read-only agent.
+        # No user/project settings files; only the owner-configured hooks-only file is loaded.
         a = [self.binary, "-p", "--output-format", "stream-json", "--verbose",
-             "--strict-mcp-config", "--setting-sources", "",
-             "--permission-mode", "dontAsk", "--allowedTools", ",".join(tools),
+             "--strict-mcp-config", "--setting-sources", ""]
+        if req.hook_settings:
+            a += ["--settings", req.hook_settings]
+        a += ["--permission-mode", "dontAsk", "--allowedTools", ",".join(tools),
              "--json-schema", json.dumps(req.schema)]
         a += ["--disallowedTools", ",".join(denied)]
         if req.model:

@@ -4,7 +4,7 @@
   and `$TMPDIR` not writable, user `~/.codex/config.toml` ignored. `danger-full-access` is not
   configurable.
 - **Claude CLI** has no OS sandbox. The bridge limits it instead: `--strict-mcp-config` (no MCP
-  servers, so no recursive orchestration), `--setting-sources ""` (no settings files, so no user or project allow rules or hooks; the
+  servers, so no recursive orchestration), `--setting-sources ""` (no user/project settings, allow rules or hooks; the
   kit's credential `Read(...)` denies go in `--disallowedTools` on every run),
   `--permission-mode dontAsk` with an allowlist of Read/Glob/Grep. An agent with
   `allow_write: true` also gets Edit/Write scoped to the task's `allowed_paths`
@@ -12,7 +12,9 @@
   probe to reach files outside the worktree, scoped rules refused them. Read tools can read
   anything the user can. Bash (`allow_bash: true`) is not path-confined at all. This is weaker
   than Codex's OS sandbox: prefer Codex as the executor, never combine `allow_bash` with
-  untrusted work.
+  untrusted work. Optional `claude_hook_settings`, set only by a human in `.ai/config.json`,
+  adds `--settings <file>`: an absolute regular JSON file outside the project with only a
+  `hooks` object. It is off by default; these hooks are trusted code running unsandboxed.
 - **opencode** and **agy** are read-only adapters (planner/reviewer only; the config refuses
   writing). opencode runs with edit, bash, webfetch and external directories denied through
   `OPENCODE_CONFIG_CONTENT` and project config disabled; agy runs `--mode plan --sandbox` and

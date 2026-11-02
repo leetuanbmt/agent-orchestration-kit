@@ -417,6 +417,7 @@ Unknown keys are rejected. Accounts belong in `orchestrator.yaml` or `account-ad
 |---|---|---|
 | `sandbox` | `workspace-write` | or `read-only`; `danger-full-access` is not accepted |
 | `codex_bin` / `claude_bin` / `opencode_bin` / `agy_bin` | `codex` / `claude` / `opencode` / `agy` | CLI executables |
+| `claude_hook_settings` | `null` | absolute path to a JSON file outside the project with only a `hooks` object; passed to every Claude run as `--settings`. Trusted code, runs unsandboxed |
 | `default_timeout_s` / `max_timeout_s` | 1800 / 7200 | per-run limits |
 | `max_attempts` | 3 | legacy setup only; with `orchestrator.yaml` use `workflow.max_rework` |
 | `network_retries` / `retry_backoff_s` | 1 / 10 | bounded retry for network errors only |
@@ -541,13 +542,17 @@ the user's authorisation; the legacy `auto_switch` block in `config.json` maps o
    writable, user `~/.codex/config.toml` ignored, prompt on stdin. Planner and reviewer runs are
    `read-only`.
 2. **Claude CLI:** no OS sandbox, so the bridge narrows it: `--strict-mcp-config` (no MCP servers,
-   so no recursive orchestration), `--setting-sources ""` (no settings file: neither user nor project allow rules or hooks; the kit's credential `Read(...)` denies are passed with `--disallowedTools` on every run), `--permission-mode
+   so no recursive orchestration), `--setting-sources ""` (no user/project settings, allow rules or hooks; the kit's credential `Read(...)` denies are passed with `--disallowedTools` on every run), `--permission-mode
    dontAsk` with a tool allowlist: Read/Glob/Grep; with `allow_write: true`, Edit/Write scoped to
    the task's `allowed_paths` (`Edit(./src/**)`) while excluded and protected paths are denied.
    A probe showed unscoped Write reaching files outside the worktree and scoped rules refusing
    them. **This is still weaker isolation than Codex**: read tools can read anything the user
    can, and Bash (`allow_bash: true`) is not path-confined at all. Prefer Codex as executor;
    never combine `allow_bash` with untrusted work.
+   Optional `claude_hook_settings`, set only by a human in `.ai/config.json`, adds
+   `--settings <file>`: an absolute regular JSON file outside the project with only a
+   `hooks` object. It is off by default; these hooks are trusted code running unsandboxed.
+
 3. **opencode and agy:** read-only only (planner / reviewer); config refuses `allow_write`.
    opencode runs with `OPENCODE_CONFIG_CONTENT` denying edit, bash, webfetch and external
    directories, and project config disabled; a probe wrote nothing. A path-scoped edit rule
