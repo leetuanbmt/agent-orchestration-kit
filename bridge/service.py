@@ -18,8 +18,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from . import install
-from .accounts import HOME_ENV, Account, AccountLock, binary, discover, known_projects, \
+from . import install, progress
+from .accounts import HOME_ENV, Account, AccountLock, binary, discover, \
     load_registry, login_status, remember_project, resolve, resolve_profile
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
 from .executor import ADAPTERS, PLAN_SCHEMA, REVIEW_SCHEMA, Adapter, RunRequest, RunResult, \
@@ -994,13 +994,7 @@ def project_tasks(state: str | None = None, limit: int = 10,
                   here: Path | None = None) -> dict[str, Any]:
     """Tasks of every project agent-bridge has run in (and `here`), and of their git worktrees
     (each keeps its own tasks), most recently active project first."""
-    roots: dict[str, None] = {}
-    for root in dict.fromkeys([*known_projects(), *([str(here)] if here else [])]):
-        out = subprocess.run(["git", "-C", root, "worktree", "list", "--porcelain"],
-                             capture_output=True, text=True, check=False)
-        roots |= dict.fromkeys([root, *(line.removeprefix("worktree ")
-                                        for line in out.stdout.splitlines()
-                                        if line.startswith("worktree "))])
+    roots = progress.discover_roots(here)
     projects = []
     for root in roots:
         try:
