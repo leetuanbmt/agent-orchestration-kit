@@ -420,7 +420,9 @@ Unknown keys are rejected. Accounts belong in `orchestrator.yaml` or `account-ad
 | `sensitive_paths` | migrations, auth, deploy, CI, secrets | change ⇒ human approval |
 | `env_deny` / `env_allow` | `*_API_KEY`, `*_TOKEN`, … | scrubbed from agent/verify env |
 | `accounts` / `default_account` / `auto_switch` | — | legacy setup only; with `orchestrator.yaml`, `accounts` or an enabled `auto_switch` here is an error |
-| `lock_dir` | system temp | cross-process account locks |
+| `lock_dir` | `~/.agent-bridge/locks` (`$AGENT_BRIDGE_HOME/locks`) | cross-process account locks |
+
+This default makes per-account limits hold across every project and process on the machine.
 
 ### State and files
 

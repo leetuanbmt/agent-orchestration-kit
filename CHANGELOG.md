@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   meaningful progress events on stderr.
 
 ### Changed
+- Account slot locks default to `~/.agent-bridge/locks` (`$AGENT_BRIDGE_HOME/locks`)
+  across projects and processes; bridge databases and WAL/SHM sidecars use private 0600 permissions.
 - Licensed under MIT (`LICENSE`, © leetuanbmt); the wheel carries it and declares
   `License-Expression: MIT`.
 - One account name can be reused across providers: the second `account-add work` for another

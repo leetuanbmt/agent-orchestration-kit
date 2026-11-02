@@ -119,8 +119,14 @@ class Store:
         self.db = sqlite3.connect(path, timeout=10, isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
+        path.chmod(0o600)
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(SCHEMA)
+        for suffix in ("-wal", "-shm"):
+            try:
+                Path(str(path) + suffix).chmod(0o600)
+            except OSError:
+                pass
         columns = {r["name"] for r in self.db.execute("PRAGMA table_info(tasks)")}
         for column in ("account", "agent", "workflow_id", "codex_started"):  # databases from older versions
             if column not in columns:

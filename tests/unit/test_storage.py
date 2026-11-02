@@ -3,12 +3,41 @@
 import hashlib
 import json
 import re
+import os
 from pathlib import Path
 
 import pytest
 
 from bridge import install, storage
+from bridge.state import Store
 from tests.conftest import git
+
+
+# @pt.id T0033-database-permissions
+# @pt.item Private database files
+# @pt.condition New or existing database opened under a permissive umask
+# @pt.expected Database and existing WAL/SHM files have mode 0600
+# @pt.target Store.__init__
+# @pt.method unit
+# @pt.legacy None
+@pytest.mark.parametrize("existing", [False, True])
+def test_database_permissions(tmp_path, existing):
+    path = tmp_path / "bridge.db"
+    previous_umask = os.umask(0)
+    store = None
+    try:
+        if existing:
+            path.touch(mode=0o644)
+        store = Store(path)
+        assert path.stat().st_mode & 0o777 == 0o600
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(str(path) + suffix)
+            assert sidecar.exists()
+            assert sidecar.stat().st_mode & 0o777 == 0o600
+    finally:
+        if store is not None:
+            store.db.close()
+        os.umask(previous_umask)
 
 
 # @pt.id T0029-central

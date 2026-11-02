@@ -424,7 +424,9 @@ key `accounts` / `auto_switch` bên dưới chỉ dành cho cấu hình legacy.
 | `sensitive_paths` | migrations, auth, deploy, CI, secrets | thay đổi ⇒ cần người duyệt |
 | `env_deny` / `env_allow` | `*_API_KEY`, `*_TOKEN`, … | bị xoá khỏi env của agent/verify |
 | `accounts` / `default_account` / `auto_switch` | — | chỉ cho cấu hình legacy; khi có `orchestrator.yaml`, đặt `accounts` hoặc bật `auto_switch` ở đây là lỗi |
-| `lock_dir` | thư mục temp hệ thống | lock account giữa các process |
+| `lock_dir` | `~/.agent-bridge/locks` (`$AGENT_BRIDGE_HOME/locks`) | lock account giữa các process |
+
+Mặc định này giúp giới hạn của từng tài khoản có hiệu lực trên mọi dự án và tiến trình trên máy.
 
 ### Trạng thái và file
 
