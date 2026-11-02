@@ -13,6 +13,36 @@ from bridge.service import Bridge
 from tests.conftest import git, run, spec
 
 
+# @pt.id T0024-help
+# @pt.item Web command help
+# @pt.condition web --help
+# @pt.expected Exit 0 with port and open options
+# @pt.target bridge.cli.main
+# @pt.method integration
+# @pt.legacy none
+def test_web_help(capsys):
+    with pytest.raises(SystemExit) as exited:
+        cli.main(["web", "--help"])
+    assert exited.value.code == 0
+    out = capsys.readouterr().out
+    assert "--port" in out and "--open" in out
+
+
+# @pt.id T0024-agent-guard
+# @pt.item Web refuses nested agent invocation
+# @pt.condition AGENT_BRIDGE_AGENT=1
+# @pt.expected Exit 2 with refused message before serving
+# @pt.target bridge.cli.main
+# @pt.method integration
+# @pt.legacy none
+def test_web_refused_inside_agent(monkeypatch, capsys):
+    monkeypatch.setenv("AGENT_BRIDGE_AGENT", "1")
+    with pytest.raises(SystemExit) as exited:
+        cli.main(["web"])
+    assert exited.value.code == 2
+    assert "refused" in capsys.readouterr().err
+
+
 @pytest.fixture
 def project(make_bridge, repo, monkeypatch, capsys):
     monkeypatch.setenv("BRIDGE_PROJECT_ROOT", str(repo))
