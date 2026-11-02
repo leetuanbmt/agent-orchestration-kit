@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Human-run `storage relink <old-root> <new-root> [--apply]` reattaches central history after moving or renaming a repository or worktree, with a dry run by default.
 - `storage prune [--apply]` removes missing roots from the project registry, and
   `storage gc --logs-older-than DAYS [--apply]` deletes old central attempt logs of terminal tasks;
   both preview changes by default and refuse to apply while bridge processes are running.

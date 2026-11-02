@@ -100,6 +100,8 @@ async def _run(args: argparse.Namespace) -> Any:
         return None
     if args.cmd == "storage":
         from . import storage
+        if args.storage_cmd == "relink":
+            return storage.relink(args.old_root, Path(args.new_root), apply=args.apply)
         if args.storage_cmd == "prune":
             return storage.prune(apply=args.apply)
         if args.storage_cmd == "gc":
@@ -302,6 +304,10 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--wait", type=float, default=0)
     st = sub.add_parser("storage").add_subparsers(dest="storage_cmd", required=True)
     st.add_parser("status")
+    sl = st.add_parser("relink", help="A human runs this after moving a repository")
+    sl.add_argument("old_root")
+    sl.add_argument("new_root")
+    sl.add_argument("--apply", action="store_true")
     sm = st.add_parser("migrate", help="A human runs this after closing every Claude session, TUI and agent-bridge web")
     sm.add_argument("--apply", action="store_true")
     sr = st.add_parser("rollback", help="A human runs this to move a migrated central store aside")

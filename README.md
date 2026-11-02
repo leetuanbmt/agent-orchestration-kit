@@ -371,6 +371,7 @@ secrets), stops at `APPROVED` until a human runs `agent-bridge approve TASK_ID` 
 | `web [--port N] [--open]` | Read-only web dashboard for all known projects and worktrees; localhost only |
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Install into / remove from a project |
 | `storage status` / `storage migrate [--apply]` | Inspect storage / preview or apply migration |
+| `storage relink <old-root> <new-root> [--apply]` | Reattach central history after moving a repository (human operation) |
 | `storage rollback <root> [--yes]` | Move a migrated central store aside (human operation) |
 | `storage cleanup-legacy [--apply]` | Preview or back up verified legacy files (human operation) |
 | `storage prune [--apply]` | Preview or remove registry entries for missing folders |
@@ -451,6 +452,7 @@ inspect the plan, then `agent-bridge storage migrate --apply`. Without `--apply`
 only previews the plan. Migration uses SQLite backup (including WAL), checks database integrity,
 table counts and row hashes, and copies logs with SHA-256 verification. It checks that the
 source has not changed before publishing the central store. Legacy files are left untouched.
+`agent-bridge storage relink <old-root> <new-root> [--apply]` reattaches central history after a repository or worktree is moved or renamed; it previews the move by default.
 `agent-bridge storage rollback <root>` moves the central copy aside; pass `--yes` to accept hiding newer central events.
 `agent-bridge storage cleanup-legacy --apply` moves verified legacy files to `~/.agent-bridge/backups`; nothing is deleted.
 `agent-bridge storage prune [--apply]` removes registry entries for roots that are no longer directories; it previews changes by default.

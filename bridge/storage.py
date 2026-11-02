@@ -130,6 +130,55 @@ def find_store(root: str | Path) -> Path:
     return directory / "bridge.db"
 
 
+def relink(old_root: str, new_root: Path, apply: bool = False) -> dict:
+    from . import config
+
+    old = Path(old_root).resolve()
+    new_root = new_root.resolve()
+
+    def validate():
+        source = central_stores().get(str(old))
+        if source is None:
+            raise RuntimeError("no central store for old root")
+        if config.find_root(new_root) != new_root:
+            raise RuntimeError("new root must be a worktree top level")
+        gdir, common, target = _paths(new_root)
+        if (target / "bridge.db").exists():
+            raise RuntimeError("target already contains bridge.db")
+        if old.is_dir():
+            raise RuntimeError("old root still exists as a directory")
+        return source, gdir, common, target
+
+    source, gdir, common, target = validate()
+    if not apply:
+        return {"applied": False, "from": str(source), "to": str(target)}
+    with _storage_guard():
+        source, gdir, common, target = validate()
+        metadata = json.loads((source / "worktree.json").read_text())
+        metadata.update(root=str(new_root), git_dir=str(gdir.resolve()), relinked_from=str(old))
+        project = target.parent.parent
+        for directory in (home(), home() / "projects", project, target.parent):
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _metadata(project / "project.json", {
+            "name": _project_name(common.resolve()), "common_git_dir": str(common.resolve()),
+            "created_at": datetime.now(timezone.utc).isoformat()})
+        os.replace(source, target)
+        path = target / "worktree.json"
+        temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        try:
+            temporary.write_text(json.dumps(metadata) + "\n")
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        old_project = source.parent.parent
+        if (not any(source.parent.iterdir())
+                and {p.name for p in old_project.iterdir()} == {"project.json", "worktrees"}):
+            source.parent.rmdir()
+            (old_project / "project.json").unlink()
+            old_project.rmdir()
+        return {"applied": True, "from": str(source), "to": str(target)}
+
+
 TABLES = ("tasks", "attempts", "events", "workflows", "accounts", "account_quota")
 
 

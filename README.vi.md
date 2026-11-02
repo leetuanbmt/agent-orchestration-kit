@@ -375,6 +375,7 @@ terminal.
 | `web [--port N] [--open]` | Dashboard web chỉ đọc cho mọi project và worktree đã biết; chỉ trên localhost |
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Cài vào / gỡ khỏi một project |
 | `storage status` / `storage migrate [--apply]` | Xem nơi lưu trữ / xem trước hoặc thực hiện di chuyển |
+| `storage relink <old-root> <new-root> [--apply]` | Gắn lại lịch sử tập trung sau khi di chuyển kho mã (người dùng chạy) |
 | `storage rollback <root> [--yes]` | Chuyển bản tập trung sang nơi lưu riêng (người dùng chạy) |
 | `storage cleanup-legacy [--apply]` | Xem trước hoặc sao lưu file cũ đã xác minh (người dùng chạy) |
 | `storage prune [--apply]` | Xem trước hoặc xóa mục đăng ký của thư mục không còn tồn tại |
@@ -455,6 +456,7 @@ sau đó chạy `agent-bridge storage migrate --apply`. Không có `--apply` th�
 Quá trình di chuyển dùng SQLite backup (bao gồm WAL), kiểm tra tính toàn vẹn database, số dòng
 và mã băm từng bảng, đồng thời sao chép log và kiểm tra SHA-256. Nguồn được kiểm tra để bảo đảm
 không thay đổi trước khi công bố bản tập trung. Các file cũ được giữ nguyên.
+`agent-bridge storage relink <old-root> <new-root> [--apply]` gắn lại lịch sử tập trung sau khi di chuyển hoặc đổi tên kho mã hay cây làm việc; mặc định chỉ xem trước thay đổi.
 `agent-bridge storage rollback <root>` chuyển bản tập trung sang nơi lưu riêng; thêm `--yes` để chấp nhận ẩn các sự kiện mới hơn.
 `agent-bridge storage cleanup-legacy --apply` chuyển các file cũ đã xác minh vào `~/.agent-bridge/backups`; không xóa dữ liệu.
 `agent-bridge storage prune [--apply]` xóa mục đăng ký của đường dẫn không còn là thư mục; mặc định chỉ xem trước thay đổi.
