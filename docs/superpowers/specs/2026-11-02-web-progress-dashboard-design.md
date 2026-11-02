@@ -152,11 +152,11 @@ counts per stage and exception, and its tasks (id, objective, stage, exception, 
 
 `GET /api/projects/<pid>/tasks/<tid>`: raw state, `needs_human`, `risk_level`, agent,
 account, attempts used / max, the attempts (n, kind, outcome, started, ended, exit code), the
-latest attempt's verification checks (command, pass/fail, duration), scope violations,
-`head_changed`, diff stat (files, added, removed; **no patch**), review decisions with notes,
+latest attempt's verification checks (command, pass/fail, error), scope violations,
+`head_changed`, changed files and the `git diff --stat` text (**no patch**), review decisions with notes,
 and the suggested command.
 
-Errors: unknown `pid`, `rid` or `tid`, or an id not matching `^T-\d+$` / `^WF-\d+$` → 404 with
+Errors: unknown `pid`, `rid` or `tid`, or an id not matching `^T\d{4,}$` / `^W\d{4,}$` (the bridge's `T0001` / `W0001` ids) → 404 with
 `{"error": "not found"}` and no path in the body.
 
 ## 4. Interface
@@ -175,7 +175,7 @@ Errors: unknown `pid`, `rid` or `tid`, or an id not matching `^T-\d+$` / `^WF-\d
     touched, so there is no flicker, the scroll position holds and an open drawer stays open;
   - `I18N = {vi: {…}, en: {…}}` for every interface string and activity template; the default
     language comes from `navigator.language`, the choice is kept in `localStorage`;
-  - filter, language and open drawer live in the URL hash (`#p=<pid>&lang=en&r=WF-7`).
+  - filter, language and open drawer live in the URL hash (`#p=<pid>&lang=en&r=W0007`).
 - **Detail drawer** slides in from the right in the same dark style. Top: the plain summary,
   the five-stage stepper, the task list. Selecting a task shows the engineer layer (3.5) and the
   suggested command with a copy button. Closes with `Esc` or ×.
