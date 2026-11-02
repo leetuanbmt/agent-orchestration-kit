@@ -12,6 +12,67 @@ from bridge.models import Actor, State, TaskSpec
 from bridge.state import Store
 
 
+# @pt.id T0048-log-cursor
+# @pt.item Safe attempt entries and byte cursors
+# @pt.condition Codex, Claude, stderr, reasoning and a partial record
+# @pt.expected Safe summaries and complete-line cursor resumption
+# @pt.target bridge.progress.task_log
+# @pt.method unit
+# @pt.legacy none
+def test_task_log_entries_and_cursor(repo, store):
+    tid = add(store)
+    store.start_attempt(tid, 1, "execute")
+    path = repo / f".git/agent-bridge/logs/{tid}-1.jsonl"
+    path.parent.mkdir()
+    events = [
+        ("stdout", json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "Codex"}})),
+        ("stdout", json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Claude"}]}})),
+        ("stdout", json.dumps({"type": "item.completed", "item": {"type": "reasoning", "text": "private"}})),
+        ("stderr", "warning"), ("stdout", "plain output")]
+    complete = ''.join(json.dumps({"ts": 1, "stream": stream, "line": line}) + '\n' for stream, line in events)
+    partial = json.dumps({"ts": 2, "stream": "stdout", "line": "next"})
+    path.write_text(complete + partial)
+    pid, roots = progress.project_id(str(repo)), [str(repo)]
+    result = progress.task_log(pid, tid, 1, roots=roots)
+    assert [e["text"] for e in result["entries"]] == ["agent: Codex", "agent: Claude", "warning", "plain output"]
+    assert [e["kind"] for e in result["entries"]] == ["event", "event", "stderr", "stdout"]
+    assert all("line" not in entry for entry in result["entries"])
+    assert result["offset"] == len(complete.encode())
+    assert progress.task_log(pid, tid, 1, result["offset"], roots)["entries"] == []
+    with path.open('a') as log:
+        log.write('\n')
+    resumed = progress.task_log(pid, tid, 1, result["offset"], roots)
+    assert [e["text"] for e in resumed["entries"]] == ["next"]
+    assert resumed["offset"] == path.stat().st_size
+    for task, attempt in (("T9999", 1), (tid, 2), (tid, 0), (tid, True), ("../bad", 1)):
+        assert progress.task_log(pid, task, attempt, roots=roots) is None
+    assert progress.task_log("000000000000", tid, 1, roots=roots) is None
+
+
+# @pt.id T0048-log-tail
+# @pt.item Large log pagination
+# @pt.condition More than 256 KB and 500 records
+# @pt.expected Initial tail is truncated and next page resumes
+# @pt.target bridge.progress.task_log
+# @pt.method unit
+# @pt.legacy none
+def test_task_log_tail_and_page(repo, store):
+    tid = add(store)
+    store.start_attempt(tid, 1, "execute")
+    path = repo / f".git/agent-bridge/logs/{tid}-1.jsonl"
+    path.parent.mkdir()
+    row = json.dumps({"ts": 1, "stream": "stdout", "line": "é" * 100}, ensure_ascii=False) + '\n'
+    path.write_text(row * 2000)
+    pid, roots = progress.project_id(str(repo)), [str(repo)]
+    result = progress.task_log(pid, tid, 1, roots=roots)
+    assert result["truncated"] is True
+    assert len(result["entries"]) == 500
+    assert result["offset"] > path.stat().st_size - 256 * 1024
+    page = progress.task_log(pid, tid, 1, result["offset"], roots)
+    assert page["truncated"] is False and page["entries"]
+    assert page["offset"] > result["offset"]
+
+
 @pytest.fixture
 def store(repo):
     value = Store(repo / ".git/agent-bridge/bridge.db")

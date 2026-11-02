@@ -116,7 +116,7 @@ def classify(text: str) -> str:
     return "crash"
 
 
-def describe_event(ev: dict[str, Any]) -> str | None:
+def describe_event(ev: dict[str, Any], limit: int = 200) -> str | None:
     """Return a short, safe summary for user-visible execution progress."""
     t = ev.get("type")
     item = ev.get("item") or {}
@@ -147,11 +147,17 @@ def describe_event(ev: dict[str, Any]) -> str | None:
                                if inp.get(k)), "")
                 summary = f"tool {block.get('name', 'unknown')}: {detail}"
                 break
+        if summary is None:
+            texts = [str(block.get("text", ""))
+                     for block in (ev.get("message") or {}).get("content") or []
+                     if isinstance(block, dict) and block.get("type") == "text"]
+            if texts:
+                summary = "agent: " + " ".join(texts)
     elif t == "result":
         summary = f"result {ev.get('subtype', 'unknown')}: {ev.get('result', '')}"
     if summary:
         summary = "".join(char if char.isprintable() else " " for char in summary)
-        return redact(" ".join(summary.split()), 200)
+        return redact(" ".join(summary.split()), limit)
     return None
 
 

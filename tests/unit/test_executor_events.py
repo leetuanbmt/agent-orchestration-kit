@@ -7,6 +7,24 @@ from bridge import cli
 from bridge.service import _write_attempt_log_line
 
 
+# @pt.id T0048-event-text
+# @pt.item Configurable summaries and Claude text
+# @pt.condition Long messages and mixed assistant blocks
+# @pt.expected Limit is honoured and tools take precedence
+# @pt.target bridge.executor.describe_event
+# @pt.method unit
+# @pt.legacy none
+def test_event_limit_and_claude_text():
+    event = {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "Hello"}, {"type": "text", "text": "world"}]}}
+    assert describe_event(event) == "agent: Hello world"
+    event["message"]["content"].append({"type": "tool_use", "name": "Read", "input": {}})
+    assert describe_event(event) == "tool Read:"
+    event = {"type": "item.completed", "item": {"type": "agent_message", "text": "a" * 3000}}
+    assert len(describe_event(event)) == 201
+    assert len(describe_event(event, limit=2000)) == 2001
+
+
 # @pt.id KIT-UNIT-LOG-001-event-summaries
 # @pt.item Codex and Claude execution events have concise progress summaries
 # @pt.condition known supported event shapes are described and unknown events are ignored

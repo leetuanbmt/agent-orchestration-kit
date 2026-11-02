@@ -8,6 +8,7 @@ if (launchParams.has("token")) {
 
 const I18N = {
   en: {
+    log: 'Log', messagesOnly: 'Messages only', logTail: 'Showing the last 256 KB', noLog: 'No log for this attempt',
     awaitingReview: 'Awaiting review', nextStep: 'Next step', approve: 'Approve', result: 'View result', resume: 'Resume',
     groupWorktree: 'Group by worktree', stale: 'stale',
     views: 'Views', open: 'Open', needsYou: 'Needs you', waiting: 'Waiting', status: 'Status', task: 'Task', location: 'Location',
@@ -39,6 +40,7 @@ const I18N = {
     FAILED: 'Failed', BLOCKED: 'Blocked', low: 'Low', medium: 'Medium', high: 'High'
   },
   vi: {
+    log: 'Nhật ký', messagesOnly: 'Chỉ tin nhắn agent', logTail: 'Đang hiển thị 256 KB cuối', noLog: 'Không có nhật ký cho lần chạy này',
     awaitingReview: 'Chờ duyệt', nextStep: 'Việc tiếp theo', approve: 'Phê duyệt', result: 'Xem kết quả', resume: 'Tiếp tục',
     groupWorktree: 'Gom theo worktree', stale: 'cũ',
     views: 'Chế độ xem', open: 'Đang mở', needsYou: 'Cần bạn', waiting: 'Đang chờ', status: 'Trạng thái', task: 'Tác vụ', location: 'Vị trí',
@@ -78,6 +80,7 @@ try { const saved = localStorage.getItem('dashboard-language'); if (['vi', 'en']
 let state = {view: 'tasks', p: '', w: '', s: 'open', q: '', t: '', g: '', lang: language};
 let overview = null, timer = null, inFlight = false, disconnected = false, tokenRequired = false;
 let detailVersion = 0, taskData = null, detailError = '', returnFocus = null;
+let attemptLog = null;
 const tr = (key, values = {}) => {
   let value = I18N[state.lang][key] ?? key;
   for (const [name, replacement] of Object.entries(values)) value = value.replaceAll(`{${name}}`, String(replacement));
@@ -316,7 +319,92 @@ function readState() {
   try { localStorage.setItem('dashboard-language', state.lang); } catch {}
   renderOverview(); if (previous.t !== state.t) loadDetail(); else renderDetail();
 }
-function closeDrawer() { setState({t: ''}); }
+function closeDrawer() { stopLog(); setState({t: ''}); }
+function stopLog() {
+  if (attemptLog) clearTimeout(attemptLog.timer);
+  attemptLog = null;
+}
+function logLive(log) {
+  return attemptLog === log && state.t === log.task &&
+    ['RUNNING', 'VERIFYING'].includes(taskData?.state) &&
+    log.n === Math.max(...(taskData.attempts || []).map(a => a.n));
+}
+function drawLog(log, append = []) {
+  const bottom = log.box.scrollHeight - log.box.scrollTop - log.box.clientHeight < 24;
+  for (const entry of append) {
+    const message = entry.text.startsWith('agent:') || entry.text.startsWith('result');
+    const row = el('div', undefined, `log-row log-${entry.kind}`);
+    row.hidden = log.filter.checked && !message;
+    row._message = message;
+    const time = entry.ts == null ? tr('dash') : new Date(entry.ts * 1000).toLocaleTimeString('en-GB', {hour12: false});
+    row.append(el('span', `${time} `, 'muted'), el(entry.text.startsWith('agent: ') ? 'strong' : 'span', entry.text));
+    log.box.append(row);
+  }
+  log.empty.hidden = log.box.childElementCount > 0;
+  if (bottom) log.box.scrollTop = log.box.scrollHeight;
+}
+async function fetchLog(log) {
+  if (attemptLog !== log || log.busy) return;
+  log.busy = true;
+  clearTimeout(log.timer);
+  log.timer = null;
+  try {
+    const [pid, tid] = log.task.split(':');
+    const data = await getJSON(`/api/projects/${encodeURIComponent(pid)}/tasks/${encodeURIComponent(tid)}/log?n=${log.n}&offset=${log.offset}`);
+    if (attemptLog !== log || state.t !== log.task) return;
+    log.offset = data.offset;
+    log.tail.hidden = !(log.truncated ||= data.truncated);
+    drawLog(log, data.entries);
+    // Drain complete pages even for attempts that have already finished.
+    if (data.entries.length === 500) log.timer = setTimeout(() => fetchLog(log), 0);
+  } catch (error) {
+    if (attemptLog !== log) return;
+    log.empty.textContent = tr(error.status === 404 ? 'noLog' : error.status === 401 ? 'tokenRequired' : 'detailError');
+    log.empty.hidden = false;
+  } finally {
+    log.busy = false;
+    if (logLive(log) && !log.timer) log.timer = setTimeout(() => { log.timer = null; fetchLog(log); }, 2000);
+  }
+}
+function renderLog(body, task, selected = null) {
+  const latest = Math.max(0, ...task.attempts.map(a => a.n));
+  if (attemptLog?.task !== state.t || (selected !== null && selected !== attemptLog?.n) ||
+      (attemptLog?.latest !== latest && attemptLog?.n === attemptLog?.latest)) stopLog();
+  if (!attemptLog) {
+    const section = el('section', undefined, 'attempt-log-section'), select = el('select'), filter = el('input');
+    filter.type = 'checkbox';
+    const log = {task: state.t, n: selected ?? latest, latest, offset: 0, section, select, filter,
+      box: el('div', undefined, 'attempt-log'), tail: el('p', undefined, 'muted'),
+      empty: el('p', undefined, 'muted'), timer: null, busy: false};
+    attemptLog = log;
+    log.box.tabIndex = 0;
+    log.tail.hidden = true;
+    const heading = el('h3'), label = el('label');
+    label.append(filter, el('span'));
+    section.append(heading, select, label, log.tail, log.empty, log.box);
+    select.onchange = () => {
+      if (attemptLog !== log || state.t !== log.task) return;
+      renderLog(body, taskData, Number(select.value));
+    };
+    filter.onchange = () => { for (const row of log.box.children) row.hidden = filter.checked && !row._message; };
+  }
+  const log = attemptLog;
+  log.latest = latest;
+  log.section.querySelector('h3').textContent = tr('log');
+  log.section.querySelector('label span').textContent = tr('messagesOnly');
+  log.select.setAttribute('aria-label', tr('attempts'));
+  log.box.setAttribute('aria-label', tr('log'));
+  log.select.replaceChildren(...task.attempts.map(a => { const option = el('option', `${tr('n')} ${a.n}`); option.value = String(a.n); return option; }));
+  log.select.value = String(log.n);
+  log.select.disabled = !latest;
+  log.tail.textContent = tr('logTail'); log.empty.textContent = tr('noLog');
+  for (const section of body.querySelectorAll('.attempt-log-section')) {
+    if (section !== log.section) section.remove();
+  }
+  body.append(log.section);
+  if (!logLive(log)) { clearTimeout(log.timer); log.timer = null; }
+  if (latest && !log.busy && !log.timer) fetchLog(log);
+}
 async function getJSON(url) {
   const response = await fetch(url, {headers: {"X-Bridge-Token": sessionStorage.getItem("agent-bridge-token") || ""}, cache: 'no-store'});
   tokenRequired = response.status === 401;
@@ -362,14 +450,15 @@ function renderDetail() {
   const drawer = $('drawer'), wasHidden = drawer.hidden;
   drawer.hidden = !state.t;
   text($('close'), tr('closeSymbol')); attr($('close'), 'aria-label', tr('close'));
-  if (drawer.hidden) { if (!wasHidden && returnFocus?.isConnected) returnFocus.focus(); return; }
+  if (drawer.hidden) { stopLog(); if (!wasHidden && returnFocus?.isConnected) returnFocus.focus(); return; }
+  if (attemptLog && attemptLog.task !== state.t) stopLog();
   if (wasHidden) $('close').focus();
   text($('drawer-title'), taskData?.objective || state.t.split(':').pop());
   const body = $('drawer-body');
   const signature = JSON.stringify([state.lang, taskData, detailError]);
   if (body._signature === signature) return;
   body._signature = signature; body.replaceChildren();
-  if (detailError) { body.append(el('p', tr(detailError)), button(tr('retry'), () => loadDetail())); return; }
+  if (detailError) { stopLog(); body.append(el('p', tr(detailError)), button(tr('retry'), () => loadDetail())); return; }
   if (!taskData) { body.append(el('p', tr('loading'))); return; }
   const task = taskData;
   if (task.preview) {
@@ -393,6 +482,7 @@ function renderDetail() {
   for (const key of ['scope_violations', 'files', 'stat', 'final']) {
     const value = Array.isArray(task[key]) ? task[key].join('\n') : task[key];
     body.append(el('h3', tr(key)), el('pre', value || tr('none')));
+    if (key === 'final') renderLog(body, task);
   }
   records(body, 'reviews', task.reviews, ['decision', 'notes', 'actor', 'ts']);
   if (task.command) {
@@ -429,7 +519,7 @@ document.addEventListener('keydown', event => {
   if ($('drawer').hidden) return;
   if (event.key === 'Escape') { event.preventDefault(); closeDrawer(); }
   if (event.key === 'Tab') {
-    const nodes = Array.from($('drawer').querySelectorAll('button, textarea, [tabindex="0"]'));
+    const nodes = Array.from($('drawer').querySelectorAll('button, textarea, select, input, [tabindex="0"]'));
     const first = nodes[0], last = nodes[nodes.length - 1];
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }

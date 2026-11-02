@@ -10,6 +10,42 @@ from bridge.models import TaskSpec
 from bridge.state import Store
 
 
+# @pt.id T0048-log-route
+# @pt.item Read-only authenticated attempt logs
+# @pt.condition Known attempt and malformed queries
+# @pt.expected Entries or 404, token enforced, database unchanged
+# @pt.target bridge.webui.make_server
+# @pt.method integration
+# @pt.legacy none
+def test_log_route(server, repo):
+    path = repo / '.git/agent-bridge/bridge.db'
+    store = Store(path)
+    store.start_attempt('T0001', 1, 'execute')
+    store.db.close()
+    log = path.parent / 'logs/T0001-1.jsonl'
+    log.parent.mkdir()
+    log.write_text(json.dumps({'ts': 1, 'stream': 'stdout', 'line': 'hello'}) + '\n')
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    base = f'/api/projects/{progress.project_id(str(repo))}/tasks/T0001/log'
+    status, _, body = request(server, base + '?n=1')
+    assert status == 200
+    assert json.loads(body)['entries'] == [{'ts': 1, 'stream': 'stdout', 'kind': 'stdout', 'text': 'hello'}]
+    for query in ('', '?n=x', '?n=1&offset=x', '?n=2', '?n=0', '?n=1&n=1', '?n=1&offset=-1'):
+        assert request(server, base + query)[0] == 404
+    assert request(server, base.replace('T0001', 'bad') + '?n=1')[0] == 404
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+    protected = webui.make_server(0, roots=[str(repo)], token='t')
+    thread = threading.Thread(target=protected.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assert request(protected, base + '?n=1')[0] == 401
+        assert request(protected, base + '?n=1', token='t')[0] == 200
+    finally:
+        protected.shutdown()
+        protected.server_close()
+        thread.join()
+
+
 @pytest.fixture
 def server(repo):
     store = Store(repo / ".git/agent-bridge/bridge.db")

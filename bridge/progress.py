@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import accounts, config, install, orchestrator, quota, storage
 from .security import redact
+from .executor import describe_event
 
 TASK_ID = re.compile(r"^T\d{4,}$")
 WORKFLOW_ID = re.compile(r"^W\d{4,}$")
@@ -330,6 +331,68 @@ def _detail_data(pid, roots):
             except (OSError, subprocess.CalledProcessError, sqlite3.Error, ValueError):
                 return None
     return None
+
+
+def task_log(pid, tid, n, offset=0, roots=None):
+    """Read complete attempt log records using a byte cursor."""
+    if (not TASK_ID.fullmatch(tid) or type(n) is not int or n < 1
+            or type(offset) is not int or offset < 0):
+        return None
+    roots = list(discover_roots() if roots is None else roots)
+    data = _detail_data(pid, roots)
+    if (data is None or not any(t["id"] == tid for t in data["tasks"])
+            or not any(a["task_id"] == tid and a["n"] == n for a in data["attempts"])):
+        return None
+    root = next(root for root in roots if project_id(root) == pid)
+    entries = []
+    truncated = False
+    try:
+        path = storage.find_store(root).parent / "logs" / f"{tid}-{n}.jsonl"
+        with path.open("rb") as log:
+            size = log.seek(0, 2)
+            start = offset
+            if offset == 0 and size > 256 * 1024:
+                start = size - 256 * 1024
+                truncated = True
+            log.seek(start)
+            if truncated:
+                log.seek(start - 1)
+                if log.read(1) != b"\n":
+                    log.readline()
+            offset = log.tell()
+            while len(entries) < 500:
+                raw = log.readline()
+                if not raw.endswith(b"\n"):
+                    break
+                offset = log.tell()
+                try:
+                    row = json.loads(raw)
+                    if not isinstance(row, dict):
+                        continue
+                    stream = row.get("stream")
+                    line = row.get("line", "")
+                    if stream not in {"stdout", "stderr"} or not isinstance(line, str):
+                        continue
+                    kind, text = stream, _text(line, 2000)
+                    if stream == "stdout":
+                        try:
+                            event = json.loads(line)
+                        except ValueError:
+                            event = None
+                        else:
+                            if not isinstance(event, dict):
+                                continue
+                            kind, text = "event", describe_event(event, limit=2000)
+                            if text is None:
+                                continue
+                    ts = row.get("ts")
+                    entries.append({"ts": ts if type(ts) in (int, float) else None,
+                                    "stream": stream, "kind": kind, "text": text})
+                except (ValueError, TypeError, AttributeError):
+                    continue
+    except FileNotFoundError:
+        return None
+    return {"n": n, "offset": offset, "truncated": truncated, "entries": entries}
 
 
 def request_detail(pid: str, rid: str, roots: list[str] | None = None) -> dict | None:
