@@ -181,7 +181,7 @@ async def _run(args: argparse.Namespace) -> Any:
         if root is not None:
             cfg = load_config(root)
             if args.cmd == "account-list":
-                return Bridge(root, cfg).list_accounts()
+                return Bridge(root, cfg, create=False).list_accounts()
             orch = orchestrator.load(root, cfg)
             name = _pick(args, {k: a.provider for k, a in orch.accounts.items()})
             acc = resolve_account(orch, cfg, root, name)
@@ -201,10 +201,13 @@ async def _run(args: argparse.Namespace) -> Any:
             raise ValueError("account-login requires a configured named account (with its own "
                              "home)")
         return _login(cfg, acc, args.device_auth)
-    b = Bridge()
+    readonly = args.cmd in {"health", "status", "result", "list", "agents", "workflow-status"}
+    if args.cmd == "status" and args.wait > 0:
+        readonly = False
+    b = Bridge(create=False) if readonly else Bridge()
     if args.cmd in {"execute", "resume", "run-workflow"}:
         b.progress = lambda line: print(line, file=sys.stderr, flush=True)
-    if args.cmd not in {"approve", "reassign"}:
+    if not readonly and args.cmd not in {"approve", "reassign"}:
         b.recover()
     match args.cmd:
         case "account-clear":

@@ -362,8 +362,8 @@ Mỗi mục P0/P1 là một task cho executor, dưới 400 dòng thay đổi, ch
 | P2 Windows | Xong ở mức code: `bridge/osutil.py` (msvcrt, taskkill, OpenProcess, CIM). Chưa chạy trên máy Windows thật. |
 | Web token | Xong: `/api/*` trả 401 khi thiếu token. |
 | S3 probe | Đã chạy: sandbox Codex chặn ghi vào `~/.agent-bridge` (codex-cli 0.166). |
+| F3 | Xong: ghi `projects.json` (cả `storage prune --apply`) giữ `projects.lock`; 32 writer đồng thời không mất entry. |
+| F4 | Xong: `health`, `status`, `result`, `list`, `agents`, `workflow-status`, `account-list` dùng `Bridge(create=False)`, không tạo `.ai/`, state, DB hay entry registry; adapter chỉ tạo state dir khi chạy. |
+| F14 | Không còn áp dụng cho state đã migrate: `~/.agent-bridge` nằm ngoài `~/Desktop`/`~/Documents`. |
 
-Còn mở:
-- F4: `Bridge()` vẫn tạo state khi chạy lệnh chỉ đọc.
-- F3: ghi `projects.json` vẫn không có lock. Rủi ro đã giảm vì discovery giờ hợp cả `central_stores()`.
-- F14: không còn áp dụng cho state đã migrate, vì `~/.agent-bridge` nằm ngoài `~/Desktop` và `~/Documents`.
+Giới hạn còn lại (cần môi trường mà máy này không có): đường Windows chỉ được kiểm bằng mô phỏng; `accounts.db` dùng chung được kiểm bằng test tích hợp với hai repo git và hai `Bridge` thật, chưa quan sát trên hai project thật vì việc đó cần một account thật hết quota.

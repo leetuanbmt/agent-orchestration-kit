@@ -65,30 +65,40 @@ def resolve_account(orch: OrchestratorConfig, cfg: BridgeConfig, root: Path,
 
 class Bridge:
     def __init__(self, root: str | Path | None = None, cfg: BridgeConfig | None = None,
-                 orch: OrchestratorConfig | None = None):
+                 orch: OrchestratorConfig | None = None, *, create: bool = True):
         self.root = find_root(root)
         self.cfg = cfg or load_config(self.root)
         self.orch = orch or load_orchestrator(self.root, self.cfg)
         # Legacy mode: agents are named after the `.ai/config.json` accounts and every task is
         # pinned to an account at creation, exactly as before roles existed.
         self.legacy = self.orch.source.startswith("legacy")
-        ensure_ai_dir(self.root)
-        self.state_dir = state_dir(self.root)
-        self.storage = storage.locate(self.root).kind
+        if create:
+            ensure_ai_dir(self.root)
+        location = storage.locate(self.root, create=create)
+        self.state_dir = state_dir(self.root) if create else location.dir
+        self.storage = location.kind
         database = self.state_dir / "bridge.db"
         legacy = self.root / AI_DIR / "bridge.db"
-        migrated = legacy.exists() and not database.exists()
+        if not create and not database.exists() and legacy.exists():
+            self.state_dir = legacy.parent
+            database = legacy
+        migrated = create and legacy.exists() and not database.exists()
         if migrated:
             # SQLite sidecars may contain committed state after an interrupted runner.
             for suffix in ("", "-wal", "-shm"):
                 source = Path(str(legacy) + suffix)
                 if source.exists():
                     os.replace(source, Path(str(database) + suffix))
-        self.store = Store(database, shared=storage.home() / "accounts.db")
+        shared = storage.home() / "accounts.db"
+        if create or database.is_file():
+            self.store = Store(database, shared=shared if create or shared.is_file() else None)
+        else:
+            self.store = Store(Path(":memory:"))
         if migrated:
             self.store.log(None, "bridge", "state_migrated",
                            {"from": str(legacy), "to": str(database)})
-        remember_project(self.root)
+        if create:
+            remember_project(self.root)
         self._adapters: dict[str, Adapter] = {}
         self._runs: dict[str, asyncio.Task[None]] = {}
         self._workflows: dict[str, asyncio.Task[None]] = {}
@@ -836,7 +846,7 @@ class Bridge:
         attempts = self.store.attempts(task_id)
         if attempts:
             a = attempts[-1]
-            log_path = _attempt_log_path(self.root, task_id, a["n"])
+            log_path = self.state_dir / "logs" / f"{task_id}-{a['n']}.jsonl"
             out["last_attempt"] = {"n": a["n"], "outcome": a["outcome"],
                                    "log": str(log_path) if log_path.exists() else None,
                                    "changed_files": (a.get("changes") or {}).get("files"),
@@ -848,7 +858,7 @@ class Bridge:
         row = self.store.get(task_id)
         attempts = []
         for a in self.store.attempts(task_id):
-            log_path = _attempt_log_path(self.root, task_id, a["n"])
+            log_path = self.state_dir / "logs" / f"{task_id}-{a['n']}.jsonl"
             attempts.append({k: a.get(k) for k in (
                 "n", "kind", "outcome", "exit_code", "session_id", "final", "usage", "changes",
                 "verification", "stderr_tail")})

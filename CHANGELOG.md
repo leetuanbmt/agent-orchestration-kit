@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Read-only commands (`health`, `status`, `result`, `list`, `agents`, `workflow-status`,
+  `account-list`) no longer create `.ai/`, state, databases or registry entries.
+- Updates to `~/.agent-bridge/projects.json` hold `projects.lock`, so concurrent bridges
+  and `storage prune` no longer drop each other's entries.
 - Centralize platform operations for Windows locks, process groups and process discovery; real Windows testing remains pending.
 - Share account quota/auth marks and reported quota machine-wide in `$AGENT_BRIDGE_HOME/accounts.db`; `account-clear` lifts marks across projects.
 - Account slot locks default to `~/.agent-bridge/locks` (`$AGENT_BRIDGE_HOME/locks`)

@@ -114,15 +114,18 @@ def overview(path: Path, state: str | None, limit: int) -> dict[str, Any]:
 
 class Store:
     def __init__(self, path: Path, shared: Path | None = None):
-        path.parent.mkdir(parents=True, exist_ok=True)
+        memory = str(path) == ":memory:"
+        if not memory:
+            path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.db = sqlite3.connect(path, timeout=10, isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
-        path.chmod(0o600)
+        if not memory:
+            path.chmod(0o600)
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(SCHEMA)
-        for suffix in ("-wal", "-shm"):
+        for suffix in (() if memory else ("-wal", "-shm")):
             try:
                 Path(str(path) + suffix).chmod(0o600)
             except OSError:

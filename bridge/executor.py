@@ -195,7 +195,10 @@ class Adapter:
 
     def __init__(self, cfg: BridgeConfig, root: Path):
         self.cfg, self.root = cfg, root
-        self.state_dir = state_dir(root)
+
+    @property
+    def state_dir(self) -> Path:
+        return state_dir(self.root)
 
     @property
     def binary(self) -> str:
@@ -333,9 +336,9 @@ class Adapter:
 class CodexAdapter(Adapter):
     name, provider = "codex-cli", "openai"
 
-    def __init__(self, cfg: BridgeConfig, root: Path):
-        super().__init__(cfg, root)
-        self.schema_path = self.state_dir / "output_schema.json"
+    @property
+    def schema_path(self) -> Path:
+        return self.state_dir / "output_schema.json"
 
     @property
     def binary(self) -> str:
