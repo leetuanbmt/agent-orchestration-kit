@@ -74,6 +74,16 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
                 if path == "/api/overview":
                     self.respond(200, progress.snapshot(roots))
                     return
+                log_match = re.fullmatch(r"/api/projects/([0-9a-f]{12})/tasks/(T[0-9]{4,})/log", path)
+                if log_match:
+                    query = self.path.partition("?")[2]
+                    if re.fullmatch(r"(?:n=[0-9]+(?:&offset=[0-9]+)?|offset=[0-9]+&n=[0-9]+)", query):
+                        params = dict(part.split("=", 1) for part in query.split("&"))
+                        result = progress.task_log(*log_match.groups(), int(params["n"]),
+                                                   int(params.get("offset", "0")), roots)
+                        if result is not None:
+                            self.respond(200, result)
+                            return
                 match = re.fullmatch(r"/api/projects/([0-9a-f]{12})/(requests|tasks)/([^/]+)", path)
                 if match:
                     pid, kind, ident = match.groups()

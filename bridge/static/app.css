@@ -80,3 +80,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 ui-monospac
 dl { display: grid; grid-template-columns: minmax(110px, 1fr) 2fr; gap: 10px; font-size: 13px; }
 dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
 .command { width: 100%; resize: vertical; min-height: 70px; color: var(--ink); background: var(--ground); border: 1px solid var(--border); padding: 10px; }
+.attempt-log { max-height: 50vh; overflow-y: auto; background: var(--ground); color: var(--ink); padding: 10px; font: 12px/1.6 ui-monospace, monospace; }
+.log-row { white-space: pre-wrap; overflow-wrap: anywhere; }
+.log-stderr { color: var(--blocked); }
+#drawer section label { display: inline-flex; align-items: center; gap: 6px; margin: 10px; }
