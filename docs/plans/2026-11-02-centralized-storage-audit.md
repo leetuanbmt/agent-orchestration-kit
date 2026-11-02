@@ -366,4 +366,12 @@ Mỗi mục P0/P1 là một task cho executor, dưới 400 dòng thay đổi, ch
 | F4 | Xong: `health`, `status`, `result`, `list`, `agents`, `workflow-status`, `account-list` dùng `Bridge(create=False)`, không tạo `.ai/`, state, DB hay entry registry; adapter chỉ tạo state dir khi chạy. |
 | F14 | Không còn áp dụng cho state đã migrate: `~/.agent-bridge` nằm ngoài `~/Desktop`/`~/Documents`. |
 
-Giới hạn còn lại (cần môi trường mà máy này không có): đường Windows chỉ được kiểm bằng mô phỏng; `accounts.db` dùng chung được kiểm bằng test tích hợp với hai repo git và hai `Bridge` thật, chưa quan sát trên hai project thật vì việc đó cần một account thật hết quota.
+Kiểm chứng cuối (HEAD `9332ace`):
+- `uv run --offline pytest -q`: 314 passed, 5 skipped.
+- `accounts.db` dùng chung, chạy xuyên tiến trình trên hai repo git độc lập, cùng một `AGENT_BRIDGE_HOME`, mỗi bước là một tiến trình riêng:
+  - B ban đầu thấy account khả dụng.
+  - A ghi dấu quota; sau đó B báo `account work quota`.
+  - B chạy `clear_account`; sau đó A thấy account khả dụng.
+  - `accounts.db` có quyền 0600; mỗi repo có store trung tâm riêng.
+
+Còn bị chặn: chưa chạy được trên Windows thật, vì máy này là macOS và repo không có CI. Đường Windows hiện chỉ được kiểm bằng test mô phỏng. Muốn kiểm thật cần một runner Windows (ví dụ GitHub Actions `windows-latest`). Thêm workflow CI là thay đổi trên đường dẫn nhạy cảm nên cần người duyệt.
