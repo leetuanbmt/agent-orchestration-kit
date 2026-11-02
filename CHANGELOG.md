@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Human-run `storage relink <old-root> <new-root> [--apply]` reattaches central history after moving or renaming a repository or worktree, with a dry run by default.
+- `storage prune [--apply]` removes missing roots from the project registry, and
+  `storage gc --logs-older-than DAYS [--apply]` deletes old central attempt logs of terminal tasks;
+  both preview changes by default and refuse to apply while bridge processes are running.
+- Human-run `storage rollback <root> [--yes]` archives migrated central stores, and
+  `storage cleanup-legacy [--apply]` moves verified legacy state into backups without deleting files.
 - New repositories keep bridge state under `~/.agent-bridge/projects/<project>/worktrees/<worktree>/`
   (`AGENT_BRIDGE_HOME` overrides), so history survives deleting the worktree. `storage status` and
   `storage migrate [--apply]` copy existing git-dir state there; `health` flags legacy storage and
@@ -18,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   meaningful progress events on stderr.
 
 ### Changed
+- Account slot locks default to `~/.agent-bridge/locks` (`$AGENT_BRIDGE_HOME/locks`)
+  across projects and processes; bridge databases and WAL/SHM sidecars use private 0600 permissions.
 - Licensed under MIT (`LICENSE`, © leetuanbmt); the wheel carries it and declares
   `License-Expression: MIT`.
 - One account name can be reused across providers: the second `account-add work` for another

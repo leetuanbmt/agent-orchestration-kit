@@ -11,11 +11,11 @@ import re
 import shlex
 import shutil
 import subprocess
-import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import storage
 from .config import BridgeConfig
 from .state import ConflictError
 
@@ -410,7 +410,8 @@ class AccountLock:
         if acc.provider != "openai":  # openai keeps the original lock names
             seed = f"{acc.provider}:{seed}"
         key = hashlib.sha256(seed.encode()).hexdigest()[:16]
-        base = Path(lock_dir or tempfile.gettempdir())
+        self._default_lock_dir = not lock_dir
+        base = Path(lock_dir) if lock_dir else storage.home() / "locks"
         self.paths = [base / (f"agent-bridge-acct-{key}.lock" if i == 0 else
                               f"agent-bridge-acct-{key}-{i}.lock") for i in range(slots)]
         self.path = self.paths[0]
@@ -426,7 +427,15 @@ class AccountLock:
     def acquire(self) -> None:
         if self._file is not None:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        missing = []
+        directory = self.path.parent
+        while not directory.exists():
+            missing.append(directory)
+            directory = directory.parent
+        for directory in reversed(missing):
+            directory.mkdir(mode=0o700, exist_ok=True)
+        if self._default_lock_dir:
+            self.path.parent.chmod(0o700)
         for path in self.paths:
             handle = path.open("a")
             try:

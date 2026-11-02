@@ -7,6 +7,7 @@ import json
 import re
 import sqlite3
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -19,6 +20,8 @@ _STAGES = {"BACKLOG": "queue", "READY": "queue", "RUNNING": "build", "REWORK": "
            "VERIFYING": "check", "REVIEW": "review", "APPROVED": "review", "DONE": "done",
            "CANCELLED": None}
 _ORDER = ["needs", "blocked", "failed", "paused", "review_wait"]
+_CACHE = {}
+_CACHE_LOCK = threading.Lock()
 
 
 def project_id(root: str) -> str:
@@ -84,17 +87,46 @@ def _read(root):
         path = storage.find_store(root)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise FileNotFoundError(root) from exc
-    if not path.exists():
-        raise FileNotFoundError(path)
+    path = path.resolve()
+    with _CACHE_LOCK:
+        signature = []
+        for file in (path, Path(str(path) + "-wal")):
+            try:
+                stat = file.stat()
+                signature.append((stat.st_mtime_ns, stat.st_size))
+            except FileNotFoundError:
+                if file == path:
+                    raise
+                signature.append(None)
+        signature = tuple(signature)
+        cached = _CACHE.get(path)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+        db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        db.row_factory = sqlite3.Row
+        try:
+            tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "tasks" not in tables:
+                raise sqlite3.DatabaseError("missing tasks")
+            data = {}
+            for name in ("tasks", "workflows", "attempts", "events", "account_quota"):
+                columns = ("task_id, n, kind, outcome, started_at, ended_at, exit_code"
+                           if name == "attempts" else "*")
+                data[name] = [dict(r) for r in db.execute(f"SELECT {columns} FROM {name}")] if name in tables else []
+            # Cached rows are shared; callers only build new projections.
+            _CACHE[path] = (signature, data)
+            return data
+        finally:
+            db.close()
+
+
+def _latest_attempt(root, tid):
+    path = storage.find_store(root).resolve()
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     try:
-        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if "tasks" not in tables:
-            raise sqlite3.DatabaseError("missing tasks")
-        return {name: [dict(r) for r in db.execute(f"SELECT * FROM {name}")]
-                if name in tables else [] for name in
-                ("tasks", "workflows", "attempts", "events", "account_quota")}
+        row = db.execute("SELECT * FROM attempts WHERE task_id=? ORDER BY n DESC LIMIT 1", (tid,)).fetchone()
+        return dict(row) if row else {}
     finally:
         db.close()
 
@@ -116,18 +148,23 @@ def _command(tid: str, state: str, needs_human: bool) -> str | None:
 
 def _tasks(data):
     result = []
+    states = {row["id"]: row["state"] for row in data["tasks"]}
+    transitions = {}
+    for event in data["events"]:
+        tid = event.get("task_id")
+        if event.get("kind") != "transition" or tid not in states or event.get("to_state") != states[tid]:
+            continue
+        previous = transitions.get(tid)
+        if previous is None or (event.get("ts", 0), event.get("id", 0)) >= (previous.get("ts", 0), previous.get("id", 0)):
+            transitions[tid] = event
     for row in data["tasks"]:
         tid = row["id"]
         if not TASK_ID.fullmatch(tid):
             continue
         spec = _json(row.get("spec"))
-        transitions = sorted((e for e in data["events"] if e.get("task_id") == tid
-                              and e.get("kind") == "transition" and e.get("to_state") == row["state"]),
-                             key=lambda e: (e.get("ts", 0), e.get("id", 0)))
         failure = _text(row.get("failure")) or None
         task = {"task_id": tid, "objective": _text(spec.get("objective"), 300),
-                "state": row["state"], "stage": stage_of(row["state"], transitions[-1].get("from_state")
-                                                        if transitions else None),
+                "state": row["state"], "stage": stage_of(row["state"], transitions.get(tid, {}).get("from_state")),
                 "exception": exception_of(row["state"], bool(row.get("needs_human")), failure),
                 "needs_human": bool(row.get("needs_human")), "failure": failure,
                 "updated_at": row.get("updated_at", 0), "agent": row.get("agent"),
@@ -241,6 +278,7 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
             project["badge"] = {"kind": first["kind"], "text_key": first["kind"], "ref": ref}
         elif root in trees and len(trees) > 1:
             project["badge"] = {"kind": "worktrees", "count": len(trees) - 1}
+        tasks_by_id = {task["task_id"]: task for task in tasks}
         for event in data["events"]:
             ts = event.get("ts", 0)
             if event.get("kind") != "transition" or not now - 86400 <= ts <= now:
@@ -251,7 +289,7 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
                 activity["per_hour"][index] += 1
             activity["done_24h"] += event.get("to_state") == "DONE"
             if activity["latest"] is None or ts > activity["latest"]["ts"]:
-                task = next((t for t in tasks if t["task_id"] == event.get("task_id")), {})
+                task = tasks_by_id.get(event.get("task_id"), {})
                 activity["latest"] = {"task_id": event.get("task_id"), "to_state": event.get("to_state"),
                                       "kind": "paused" if event.get("to_state") == "PAUSED" else
                                       stage_of(event.get("to_state"), event.get("from_state")),
@@ -297,6 +335,7 @@ def request_detail(pid: str, rid: str, roots: list[str] | None = None) -> dict |
 def task_detail(pid: str, tid: str, roots: list[str] | None = None) -> dict | None:
     if not TASK_ID.fullmatch(tid):
         return None
+    roots = list(discover_roots() if roots is None else roots)
     data = _detail_data(pid, roots)
     if data is None:
         return None
@@ -306,7 +345,11 @@ def task_detail(pid: str, tid: str, roots: list[str] | None = None) -> dict | No
     row = next(r for r in data["tasks"] if r["id"] == tid)
     spec = _json(row.get("spec"))
     attempts = sorted((a for a in data["attempts"] if a.get("task_id") == tid), key=lambda a: a.get("n", 0))
-    latest = attempts[-1] if attempts else {}
+    try:
+        root = next(root for root in roots if project_id(root) == pid)
+        latest = _latest_attempt(root, tid) if attempts else {}
+    except (OSError, subprocess.CalledProcessError, sqlite3.Error, ValueError):
+        return None
     verification = _json(latest.get("verification"))
     changes = _json(latest.get("changes"))
     reviews = []

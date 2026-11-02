@@ -371,6 +371,11 @@ secrets), stops at `APPROVED` until a human runs `agent-bridge approve TASK_ID` 
 | `web [--port N] [--open]` | Read-only web dashboard for all known projects and worktrees; localhost only |
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Install into / remove from a project |
 | `storage status` / `storage migrate [--apply]` | Inspect storage / preview or apply migration |
+| `storage relink <old-root> <new-root> [--apply]` | Reattach central history after moving a repository (human operation) |
+| `storage rollback <root> [--yes]` | Move a migrated central store aside (human operation) |
+| `storage cleanup-legacy [--apply]` | Preview or back up verified legacy files (human operation) |
+| `storage prune [--apply]` | Preview or remove registry entries for missing folders |
+| `storage gc --logs-older-than DAYS [--apply]` | Preview or delete old logs of finished tasks |
 | `serve` | MCP stdio server (what `.mcp.json` runs) |
 | `config-init [example]` | Human only: write `.ai/orchestrator.yaml` from a shipped example (refuses if it exists); without one, list the examples and the `config.example.json` path |
 | `config-check` | Validate `.ai/orchestrator.yaml` (or the legacy config) |
@@ -420,7 +425,9 @@ Unknown keys are rejected. Accounts belong in `orchestrator.yaml` or `account-ad
 | `sensitive_paths` | migrations, auth, deploy, CI, secrets | change ⇒ human approval |
 | `env_deny` / `env_allow` | `*_API_KEY`, `*_TOKEN`, … | scrubbed from agent/verify env |
 | `accounts` / `default_account` / `auto_switch` | — | legacy setup only; with `orchestrator.yaml`, `accounts` or an enabled `auto_switch` here is an error |
-| `lock_dir` | system temp | cross-process account locks |
+| `lock_dir` | `~/.agent-bridge/locks` (`$AGENT_BRIDGE_HOME/locks`) | cross-process account locks |
+
+This default makes per-account limits hold across every project and process on the machine.
 
 ### State and files
 
@@ -433,7 +440,8 @@ Unknown keys are rejected. Accounts belong in `orchestrator.yaml` or `account-ad
 
 `AGENT_BRIDGE_HOME` defaults to `~/.agent-bridge` and must be an absolute directory outside
 the worktree. Central state lives outside the worktree so Codex's `workspace-write` sandbox
-cannot write there. Existing legacy databases in the git directory continue to be used until
+cannot write there (an agent's `touch` and Python write into it failed with "Operation not
+permitted" on codex-cli 0.166). Existing legacy databases in the git directory continue to be used until
 migration. Older databases gain new columns and tables on the first start. Central history
 remains readable even when the worktree folder is deleted.
 
@@ -444,8 +452,12 @@ inspect the plan, then `agent-bridge storage migrate --apply`. Without `--apply`
 only previews the plan. Migration uses SQLite backup (including WAL), checks database integrity,
 table counts and row hashes, and copies logs with SHA-256 verification. It checks that the
 source has not changed before publishing the central store. Legacy files are left untouched.
-To roll back, use an older kit version, which reads those legacy files; changes made in central
-storage after migration will not appear there. Health warns if an old process writes new events
+`agent-bridge storage relink <old-root> <new-root> [--apply]` reattaches central history after a repository or worktree is moved or renamed; it previews the move by default.
+`agent-bridge storage rollback <root>` moves the central copy aside; pass `--yes` to accept hiding newer central events.
+`agent-bridge storage cleanup-legacy --apply` moves verified legacy files to `~/.agent-bridge/backups`; nothing is deleted.
+`agent-bridge storage prune [--apply]` removes registry entries for roots that are no longer directories; it previews changes by default.
+`agent-bridge storage gc --logs-older-than DAYS [--apply]` previews deletion of central attempt logs older than DAYS (at least 1) for DONE, CANCELLED or BLOCKED tasks; `--apply` deletes those logs and preserves all database rows.
+Health warns if an old process writes new events
 to the legacy database after migration (split-brain).
 
 

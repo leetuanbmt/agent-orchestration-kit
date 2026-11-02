@@ -2,6 +2,7 @@ import hashlib
 import json
 import sqlite3
 import subprocess
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -342,7 +343,7 @@ def test_snapshot_does_not_modify_databases(repo, store, monkeypatch):
     progress.snapshot(roots, now=1000)
     progress.task_detail(progress.project_id(str(repo)), tid, roots)
     progress.request_detail(progress.project_id(str(repo)), tid, roots)
-    assert len(calls) == 3
+    assert len(calls) == 1
     assert signature() == before
 
 
@@ -481,3 +482,85 @@ def test_invalid_home_readers(repo, store, monkeypatch):
     monkeypatch.setenv(storage.HOME_ENV, "relative")
     assert progress.snapshot([str(repo)])["projects"][0]["error"] == "unreadable"
     assert project_tasks(here=repo)["projects"] == []
+
+
+# @pt.id T0034-cache
+# @pt.item Cached overview reads
+# @pt.condition Unchanged database followed by a Store write
+# @pt.expected No second connection and refreshed task counts after write
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_cache_invalidates_on_write(repo, store, monkeypatch):
+    add(store)
+    connect = progress.sqlite3.connect
+    calls = []
+    def counted(*args, **kwargs):
+        calls.append(args[0])
+        return connect(*args, **kwargs)
+    monkeypatch.setattr(progress.sqlite3, "connect", counted)
+    roots = [str(repo)]
+    first = progress.snapshot(roots, now=1000)
+    assert len(calls) == 1
+    assert progress.snapshot(roots, now=1000) == first
+    assert len(calls) == 1
+    add(store, "DONE")
+    assert progress.snapshot(roots, now=1000)["projects"][0]["counts"] == {"queue": 1, "done": 1}
+    assert len(calls) == 2
+
+
+# @pt.id T0034-latest-attempt
+# @pt.item Full latest attempt detail
+# @pt.condition Two attempts with different heavy columns
+# @pt.expected Latest checks changes and final survive overview projection
+# @pt.target bridge.progress.task_detail
+# @pt.method unit
+# @pt.legacy None
+def test_latest_attempt_detail_with_light_overview(repo, store):
+    tid = add(store)
+    for n in (1, 2):
+        store.start_attempt(tid, n, "execute")
+        store.db.execute("UPDATE attempts SET verification=?, changes=?, final=? WHERE task_id=? AND n=?",
+                         (json.dumps({"checks": [{"command": f"check {n}", "passed": True}]}),
+                          json.dumps({"head_changed": True, "files": [f"src/{n}.py"], "stat": f"{n} files"}),
+                          f"final {n}", tid, n))
+    roots = [str(repo)]
+    progress.snapshot(roots)
+    assert set(progress._read(str(repo))["attempts"][0]) == {
+        "task_id", "n", "kind", "outcome", "started_at", "ended_at", "exit_code"}
+    detail = progress.task_detail(progress.project_id(str(repo)), tid, roots)
+    assert detail["checks"] == [{"command": "check 2", "passed": True, "error": ""}]
+    assert detail["files"] == ["src/2.py"]
+    assert detail["stat"] == "2 files"
+    assert detail["head_changed"] is True
+    assert detail["final"] == "final 2"
+
+
+# @pt.id T0034-performance
+# @pt.item First overview load cost
+# @pt.condition Database containing 1000 tasks and 20000 transitions
+# @pt.expected Snapshot finishes within two seconds
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_large_snapshot_first_load(repo, store):
+    tid = add(store, "PAUSED")
+    template = dict(store.db.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone())
+    columns = list(template)
+    rows = []
+    for index in range(2, 1001):
+        row = dict(template, id=f"T{index:04d}")
+        rows.append(tuple(row[column] for column in columns))
+    store.db.executemany(
+        f"INSERT INTO tasks ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})", rows)
+    store.db.execute("DELETE FROM events")
+    store.db.executemany(
+        "INSERT INTO events(ts,task_id,actor,kind,from_state,to_state) "
+        "VALUES (?,?,'bridge','transition',?,'PAUSED')",
+        [(index, f"T{index % 1000 + 1:04d}", "REVIEW" if index >= 19000 else "RUNNING")
+         for index in range(20000)])
+    started = time.perf_counter()
+    snap = progress.snapshot([str(repo)], now=20000)
+    elapsed = time.perf_counter() - started
+    assert snap["projects"][0]["counts"] == {"review": 1000}
+    assert elapsed < 2

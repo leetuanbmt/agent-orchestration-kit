@@ -10,7 +10,8 @@ import fcntl
 import shutil
 import sqlite3
 import subprocess
-from contextlib import closing
+import time
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
@@ -127,6 +128,55 @@ def find_store(root: str | Path) -> Path:
     if directory is None:
         raise FileNotFoundError(root)
     return directory / "bridge.db"
+
+
+def relink(old_root: str, new_root: Path, apply: bool = False) -> dict:
+    from . import config
+
+    old = Path(old_root).resolve()
+    new_root = new_root.resolve()
+
+    def validate():
+        source = central_stores().get(str(old))
+        if source is None:
+            raise RuntimeError("no central store for old root")
+        if config.find_root(new_root) != new_root:
+            raise RuntimeError("new root must be a worktree top level")
+        gdir, common, target = _paths(new_root)
+        if (target / "bridge.db").exists():
+            raise RuntimeError("target already contains bridge.db")
+        if old.is_dir():
+            raise RuntimeError("old root still exists as a directory")
+        return source, gdir, common, target
+
+    source, gdir, common, target = validate()
+    if not apply:
+        return {"applied": False, "from": str(source), "to": str(target)}
+    with _storage_guard():
+        source, gdir, common, target = validate()
+        metadata = json.loads((source / "worktree.json").read_text())
+        metadata.update(root=str(new_root), git_dir=str(gdir.resolve()), relinked_from=str(old))
+        project = target.parent.parent
+        for directory in (home(), home() / "projects", project, target.parent):
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _metadata(project / "project.json", {
+            "name": _project_name(common.resolve()), "common_git_dir": str(common.resolve()),
+            "created_at": datetime.now(timezone.utc).isoformat()})
+        os.replace(source, target)
+        path = target / "worktree.json"
+        temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        try:
+            temporary.write_text(json.dumps(metadata) + "\n")
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        old_project = source.parent.parent
+        if (not any(source.parent.iterdir())
+                and {p.name for p in old_project.iterdir()} == {"project.json", "worktrees"}):
+            source.parent.rmdir()
+            (old_project / "project.json").unlink()
+            old_project.rmdir()
+        return {"applied": True, "from": str(source), "to": str(target)}
 
 
 TABLES = ("tasks", "attempts", "events", "workflows", "accounts", "account_quota")
@@ -294,6 +344,17 @@ def migrate(here: Path | None = None, apply: bool = False) -> dict:
     if not apply:
         return {"applied": False, "home": str(base), "running": running_processes(),
                 "sources": plan(here)}
+    with _storage_guard() as running:
+        entries = plan(here)
+        for entry in entries:
+            if entry["status"] == "ready":
+                _migrate_entry(entry)
+        return {"applied": True, "home": str(base), "running": running, "sources": entries}
+
+
+@contextmanager
+def _storage_guard():
+    base = home()
     base.mkdir(mode=0o700, parents=True, exist_ok=True)
     locks = base / "locks"
     locks.mkdir(mode=0o700, exist_ok=True)
@@ -306,8 +367,143 @@ def migrate(here: Path | None = None, apply: bool = False) -> dict:
         running = running_processes()
         if running:
             raise RuntimeError("bridge processes are running: " + ", ".join(str(p["pid"]) for p in running))
-        entries = plan(here)
-        for entry in entries:
-            if entry["status"] == "ready":
-                _migrate_entry(entry)
-        return {"applied": True, "home": str(base), "running": running, "sources": entries}
+        yield running
+
+
+def prune(apply: bool = False) -> dict:
+    if apply:
+        with _storage_guard():
+            return _prune(True)
+    return _prune(False)
+
+
+def _prune(apply: bool) -> dict:
+    from . import accounts
+
+    roots = accounts.known_projects()
+    removed = [root for root in roots if not Path(root).is_dir()]
+    kept = [root for root in roots if root not in removed]
+    if apply:
+        base = accounts.registry_dir()
+        base.mkdir(mode=0o700, parents=True, exist_ok=True)
+        temporary = base / f"projects.json.{os.getpid()}.tmp"
+        try:
+            temporary.write_text(json.dumps(sorted(kept), indent=2) + "\n")
+            os.replace(temporary, base / "projects.json")
+        finally:
+            temporary.unlink(missing_ok=True)
+    return {"applied": apply, "removed": removed, "kept": len(kept)}
+
+
+def gc(days: float, apply: bool = False) -> dict:
+    if not days >= 1:
+        raise ValueError("days must be >= 1")
+    if apply:
+        with _storage_guard():
+            return _gc(days, True)
+    return _gc(days, False)
+
+
+def _gc(days: float, apply: bool) -> dict:
+    from .models import TERMINAL
+
+    cutoff = time.time() - days * 86400
+    files = []
+    total = 0
+    for central in central_stores().values():
+        with closing(_readonly(central / "bridge.db")) as conn:
+            terminal = {row[0] for row in conn.execute(
+                "SELECT id FROM tasks WHERE state IN (?, ?, ?)", tuple(TERMINAL))}
+        for path in sorted((central / "logs").glob("*.jsonl")):
+            task, separator, attempt = path.stem.rpartition("-")
+            if not separator or not attempt.isdecimal() or task not in terminal:
+                continue
+            if path.is_symlink() or not path.is_file():
+                continue
+            stat = path.stat()
+            if stat.st_mtime < cutoff:
+                files.append(str(path))
+                total += stat.st_size
+    if apply:
+        for path in files:
+            Path(path).unlink()
+    return {"applied": apply, "files": files, "bytes": total}
+
+
+def _archive_dir(kind: str, central: Path) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    destination = home() / kind / stamp / central.parent.parent.name / central.name
+    for directory in reversed([destination, *destination.parents]):
+        if directory.is_relative_to(home()):
+            directory.mkdir(mode=0o700, exist_ok=True)
+            directory.chmod(0o700)
+    return destination
+
+
+def rollback(root: Path, yes: bool = False) -> dict:
+    root = root.resolve()
+    with _storage_guard():
+        central = central_stores().get(str(root))
+        if central is None and root.exists():
+            central = _paths(root)[2]
+        if central is None or not (central / "migration.json").is_file():
+            raise RuntimeError("only migrated stores can be rolled back")
+        metadata = json.loads((central / "migration.json").read_text())
+        if not Path(metadata["source"]).is_file():
+            raise RuntimeError("legacy source no longer exists")
+        with closing(_readonly(central / "bridge.db")) as conn:
+            has_events = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone()
+            hidden = conn.execute("SELECT count(*) FROM events WHERE id > ?",
+                                  (metadata["source_max_event_id"],)).fetchone()[0] if has_events else 0
+        if hidden and not yes:
+            raise RuntimeError(f"{hidden} events would be hidden; pass --yes to roll back")
+        destination = _archive_dir("rollback", central)
+        os.replace(central, destination)
+        return {"root": str(root), "moved_to": str(destination), "hidden_events": hidden}
+
+
+def cleanup_legacy(apply: bool = False) -> dict:
+    if not apply:
+        return _cleanup_legacy(False)
+    with _storage_guard():
+        return _cleanup_legacy(True)
+
+
+def _cleanup_legacy(apply: bool) -> dict:
+    entries = []
+    for root, central in central_stores().items():
+        manifest = central / "migration.json"
+        if not manifest.is_file():
+            continue
+        entry = {"root": root, "source": None, "status": "changed", "error": None}
+        entries.append(entry)
+        try:
+            metadata = json.loads(manifest.read_text())
+            source = Path(metadata["source"])
+            entry["source"] = str(source)
+            if not source.exists():
+                entry["status"] = "gone"
+                continue
+            with closing(_readonly(source)) as conn:
+                current = fingerprint(conn)
+            recorded = metadata["fingerprint"]
+            if (current["integrity"] != "ok" or current["tables"] != recorded["tables"]
+                    or current["max_event_id"] != recorded["max_event_id"]):
+                entry["error"] = "legacy database changed since migration"
+                continue
+            entry["status"] = "ready"
+            if apply:
+                destination = _archive_dir("backups", central)
+                files = [source, Path(str(source) + "-wal"), Path(str(source) + "-shm")]
+                git_dir = Path(json.loads((central / "worktree.json").read_text())["git_dir"])
+                if source.parent in (git_dir / "agent-bridge", git_dir / "codex-bridge"):
+                    files.append(source.parent / "logs")
+                if any((destination / path.name).exists() for path in files):
+                    raise RuntimeError("backup destination already exists")
+                for path in files:
+                    if path.exists():
+                        shutil.move(str(path), str(destination / path.name))
+                entry["status"] = "moved"
+        except (OSError, ValueError, KeyError, sqlite3.Error, RuntimeError) as exc:
+            entry.update(status="changed", error=str(exc))
+    return {"applied": apply, "entries": entries}

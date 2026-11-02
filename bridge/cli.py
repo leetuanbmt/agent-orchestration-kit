@@ -100,6 +100,16 @@ async def _run(args: argparse.Namespace) -> Any:
         return None
     if args.cmd == "storage":
         from . import storage
+        if args.storage_cmd == "relink":
+            return storage.relink(args.old_root, Path(args.new_root), apply=args.apply)
+        if args.storage_cmd == "prune":
+            return storage.prune(apply=args.apply)
+        if args.storage_cmd == "gc":
+            return storage.gc(args.logs_older_than, apply=args.apply)
+        if args.storage_cmd == "rollback":
+            return storage.rollback(Path(args.root), yes=args.yes)
+        if args.storage_cmd == "cleanup-legacy":
+            return storage.cleanup_legacy(apply=args.apply)
         try:
             here = find_root()
         except RuntimeError:
@@ -294,8 +304,22 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--wait", type=float, default=0)
     st = sub.add_parser("storage").add_subparsers(dest="storage_cmd", required=True)
     st.add_parser("status")
+    sl = st.add_parser("relink", help="A human runs this after moving a repository")
+    sl.add_argument("old_root")
+    sl.add_argument("new_root")
+    sl.add_argument("--apply", action="store_true")
     sm = st.add_parser("migrate", help="A human runs this after closing every Claude session, TUI and agent-bridge web")
     sm.add_argument("--apply", action="store_true")
+    sr = st.add_parser("rollback", help="A human runs this to move a migrated central store aside")
+    sr.add_argument("root")
+    sr.add_argument("--yes", action="store_true")
+    sc = st.add_parser("cleanup-legacy", help="A human runs this to back up verified legacy files")
+    sc.add_argument("--apply", action="store_true")
+    sp = st.add_parser("prune", help="Preview removal of missing project roots from the registry")
+    sp.add_argument("--apply", action="store_true")
+    sg = st.add_parser("gc", help="Preview deletion of old logs of finished tasks")
+    sg.add_argument("--logs-older-than", type=float, required=True)
+    sg.add_argument("--apply", action="store_true")
     tk = sub.add_parser("tasks", help="tasks of every project and worktree agent-bridge has "
                                       "run in, grouped by project")
     tk.add_argument("--state")
@@ -356,7 +380,8 @@ def main(argv: list[str] | None = None) -> None:
             console.print(getattr(render, view)(out, **extra))
         else:
             print(dumps(out))
-    if args.cmd == "storage" and any(e["status"] in ("failed", "corrupt") for e in out["sources"]):
+    if args.cmd == "storage" and any(e["status"] in ("failed", "corrupt", "changed")
+                                     for e in out.get("sources", []) + out.get("entries", [])):
         raise SystemExit(1)
     if args.cmd == "health" and not out["ok"]:
         raise SystemExit(1)  # scripts and CI can gate on `agent-bridge health`

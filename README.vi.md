@@ -375,6 +375,11 @@ terminal.
 | `web [--port N] [--open]` | Dashboard web chỉ đọc cho mọi project và worktree đã biết; chỉ trên localhost |
 | `init [dir] [--force]` / `uninstall [dir] [--purge]` | Cài vào / gỡ khỏi một project |
 | `storage status` / `storage migrate [--apply]` | Xem nơi lưu trữ / xem trước hoặc thực hiện di chuyển |
+| `storage relink <old-root> <new-root> [--apply]` | Gắn lại lịch sử tập trung sau khi di chuyển kho mã (người dùng chạy) |
+| `storage rollback <root> [--yes]` | Chuyển bản tập trung sang nơi lưu riêng (người dùng chạy) |
+| `storage cleanup-legacy [--apply]` | Xem trước hoặc sao lưu file cũ đã xác minh (người dùng chạy) |
+| `storage prune [--apply]` | Xem trước hoặc xóa mục đăng ký của thư mục không còn tồn tại |
+| `storage gc --logs-older-than DAYS [--apply]` | Xem trước hoặc xóa nhật ký cũ của tác vụ đã kết thúc |
 | `serve` | MCP stdio server (lệnh mà `.mcp.json` chạy) |
 | `config-init [example]` | Chỉ người dùng: ghi `.ai/orchestrator.yaml` từ một file mẫu đi kèm (từ chối nếu đã có); không có tên thì liệt kê file mẫu và đường dẫn `config.example.json` |
 | `config-check` | Kiểm tra `.ai/orchestrator.yaml` (hoặc cấu hình legacy) |
@@ -424,7 +429,9 @@ key `accounts` / `auto_switch` bên dưới chỉ dành cho cấu hình legacy.
 | `sensitive_paths` | migrations, auth, deploy, CI, secrets | thay đổi ⇒ cần người duyệt |
 | `env_deny` / `env_allow` | `*_API_KEY`, `*_TOKEN`, … | bị xoá khỏi env của agent/verify |
 | `accounts` / `default_account` / `auto_switch` | — | chỉ cho cấu hình legacy; khi có `orchestrator.yaml`, đặt `accounts` hoặc bật `auto_switch` ở đây là lỗi |
-| `lock_dir` | thư mục temp hệ thống | lock account giữa các process |
+| `lock_dir` | `~/.agent-bridge/locks` (`$AGENT_BRIDGE_HOME/locks`) | lock account giữa các process |
+
+Mặc định này giúp giới hạn của từng tài khoản có hiệu lực trên mọi dự án và tiến trình trên máy.
 
 ### Trạng thái và file
 
@@ -437,7 +444,8 @@ key `accounts` / `auto_switch` bên dưới chỉ dành cho cấu hình legacy.
 
 `AGENT_BRIDGE_HOME` mặc định là `~/.agent-bridge`, phải là đường dẫn tuyệt đối bên ngoài
 worktree. Trạng thái tập trung nằm ngoài worktree để sandbox `workspace-write` của Codex
-không thể ghi vào đó. Database cũ trong thư mục git vẫn được sử dụng cho đến khi di chuyển.
+không thể ghi vào đó (đã kiểm chứng trên codex-cli 0.166: agent chạy `touch` và ghi bằng Python
+vào đó đều bị từ chối với "Operation not permitted"). Database cũ trong thư mục git vẫn được sử dụng cho đến khi di chuyển.
 Database cũ được bổ sung cột và bảng ở lần khởi động đầu tiên. Lịch sử tập trung vẫn đọc được
 khi thư mục worktree đã bị xoá.
 
@@ -448,8 +456,12 @@ sau đó chạy `agent-bridge storage migrate --apply`. Không có `--apply` th�
 Quá trình di chuyển dùng SQLite backup (bao gồm WAL), kiểm tra tính toàn vẹn database, số dòng
 và mã băm từng bảng, đồng thời sao chép log và kiểm tra SHA-256. Nguồn được kiểm tra để bảo đảm
 không thay đổi trước khi công bố bản tập trung. Các file cũ được giữ nguyên.
-Để quay lại, dùng phiên bản kit cũ đọc các file cũ đó; thay đổi trong kho tập trung sau khi di
-chuyển sẽ không xuất hiện ở bản cũ. Health cảnh báo nếu tiến trình cũ ghi thêm sự kiện vào
+`agent-bridge storage relink <old-root> <new-root> [--apply]` gắn lại lịch sử tập trung sau khi di chuyển hoặc đổi tên kho mã hay cây làm việc; mặc định chỉ xem trước thay đổi.
+`agent-bridge storage rollback <root>` chuyển bản tập trung sang nơi lưu riêng; thêm `--yes` để chấp nhận ẩn các sự kiện mới hơn.
+`agent-bridge storage cleanup-legacy --apply` chuyển các file cũ đã xác minh vào `~/.agent-bridge/backups`; không xóa dữ liệu.
+`agent-bridge storage prune [--apply]` xóa mục đăng ký của đường dẫn không còn là thư mục; mặc định chỉ xem trước thay đổi.
+`agent-bridge storage gc --logs-older-than DAYS [--apply]` xem trước việc xóa nhật ký lần chạy trong kho tập trung cũ hơn DAYS ngày (tối thiểu 1) của tác vụ DONE, CANCELLED hoặc BLOCKED; thêm `--apply` để xóa các nhật ký đó và giữ nguyên mọi dòng trong cơ sở dữ liệu.
+Health cảnh báo nếu tiến trình cũ ghi thêm sự kiện vào
 database cũ sau khi di chuyển (split-brain).
 
 
