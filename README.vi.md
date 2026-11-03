@@ -514,8 +514,9 @@ nhập (ví dụ API key hoặc token).
 - Task ở yên trên agent và account của nó. Retry và resume dùng cùng home và session. Người dùng
   chuyển nó bằng `agent-bridge reassign <id> <agent>` (session mới), hoặc bridge tự chuyển khi bật
   quota fallback (bên dưới).
-- QUOTA hoặc AUTH đánh dấu account là unavailable. Lượt chạy mới trên account đó bị từ chối cho
-  tới khi chạy `agent-bridge account-clear <name>` sau khi user xác nhận.
+- QUOTA hoặc AUTH đánh dấu account là unavailable. Dấu QUOTA tự gỡ khi snapshot cho thấy
+  quota còn lại lớn hơn 0 sau khi một cửa sổ đang mở lúc đánh dấu đã reset.
+  AUTH và account không có snapshot vẫn cần `agent-bridge account-clear <name>` sau khi user xác nhận.
 - Quota: với Codex là event `rate_limits` mới nhất trong rollout session của home
   (`<home>/sessions/**/rollout-*.jsonl`; không mở gì khác); với Claude là `rate_limit_event` mà
   CLI báo ở lượt chạy gần nhất qua bridge. Còn lại = `100 − max(% đã dùng 5h, % đã dùng 7d)`;
@@ -628,7 +629,7 @@ cô lập account, slot chạy song song, ánh xạ legacy, nâng cấp schema, 
 | `config-check` báo lỗi | thông báo ghi rõ field; sửa `.ai/orchestrator.yaml` |
 | `health.ok = false` | thiếu CLI của một adapter, hoặc `codex` chưa đăng nhập: đăng nhập (người làm) |
 | `no eligible executor agent (…)` | mọi executor đều tắt, bận hoặc unavailable; lý do được liệt kê theo từng agent |
-| task PAUSED `QUOTA` / `AUTH` | chờ hoặc đăng nhập lại, rồi `agent-bridge account-clear <name>` và resume; bật quota fallback thì resume một lần pause QUOTA sẽ chuyển task |
+| task PAUSED `QUOTA` / `AUTH` | resume sau khi cửa sổ quota reset và quota còn lại lớn hơn 0; với AUTH hoặc không có snapshot, xử lý lỗi rồi `agent-bridge account-clear <name>` và resume; bật quota fallback thì resume có thể chuyển task nếu quota vẫn không đủ |
 | event `agent_review_failed` | reviewer agent lỗi; task chờ ở REVIEW để `bridge_review_task` |
 | workflow `WAITING` | `detail.waiting` và trạng thái task cho biết cần xử lý gì; xử lý xong chạy lại `bridge_run_workflow` |
 | task PAUSED `INTERRUPTED` | runner đã chết; `bridge_resume_task` chạy tiếp session |

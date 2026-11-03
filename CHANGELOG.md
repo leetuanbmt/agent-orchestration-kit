@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- Let QUOTA marks lapse when a window open at mark time has reset and snapshot quota is positive; AUTH and accounts without snapshots still require `account-clear`.
 - `init` works when `.claude/skills` (or another kit directory) is a symlink to a directory
   inside the project, such as a shared `.agents/skills`: the link is followed and the skill is
   installed there. Links leaving the work tree or entering `.git`, and symlinked files, are

@@ -139,3 +139,71 @@ def test_file_limit(tmp_path):
         path.write_text("malformed\n")
         os.utime(path, (index + 2, index + 2))
     assert read_quota(tmp_path) is None
+
+
+# @pt.id KIT-QUOTA-008-windowless-tail
+# @pt.item Codex snapshot survives a windowless premium event
+# @pt.condition A premium event with null windows follows usable codex windows
+# @pt.expected Codex windows remain selected and reset-aware quota is preserved
+# @pt.target bridge.quota.read_quota
+# @pt.method unit
+# @pt.legacy none
+def test_windowless_tail(tmp_path):
+    limits = {"limit_id": "codex", "plan_type": "plus",
+              "primary": {"used_percent": 100.0, "window_minutes": 300, "resets_at": 100},
+              "secondary": {"used_percent": 62.0, "window_minutes": 10080, "resets_at": 200}}
+    path = rollout(tmp_path, "events", limits, 10)
+    with path.open("a") as stream:
+        stream.write(json.dumps({"type": "event_msg", "payload": {
+            "type": "token_count", "rate_limits": {
+                "limit_id": "premium", "primary": None, "secondary": None,
+                "plan_type": "plus"}}}) + "\n")
+    os.utime(path, (10, 10))
+    assert read_quota(tmp_path, now=0) == {
+        "remaining_pct": 0.0, "observed_at": 10, "primary": limits["primary"],
+        "secondary": limits["secondary"], "plan_type": "plus"}
+    assert read_quota(tmp_path, now=100)["remaining_pct"] == 38.0
+
+
+# @pt.id KIT-QUOTA-009-windowless-fallback
+# @pt.item Unusable rollout fallback
+# @pt.condition The newest rollout has no numeric non-bool window usage
+# @pt.expected The older usable rollout supplies quota and observed_at
+# @pt.target bridge.quota.read_quota
+# @pt.method unit
+# @pt.legacy none
+@pytest.mark.parametrize("limits", [
+    {"limit_id": "premium", "primary": None, "secondary": None},
+    {"limit_id": "codex", "primary": {"used_percent": True},
+     "secondary": {"used_percent": "20"}},
+])
+def test_windowless_fallback(tmp_path, limits):
+    rollout(tmp_path, "old", {"primary": {"used_percent": 70}}, 10)
+    rollout(tmp_path, "new", limits, 20)
+    result = read_quota(tmp_path, now=0)
+    assert result["remaining_pct"] == 30.0
+    assert result["observed_at"] == 10
+
+
+# @pt.id KIT-QUOTA-010-bucket-preference
+# @pt.item Usable bucket selection
+# @pt.condition Other buckets surround codex or legacy snapshots, or exist alone
+# @pt.expected The last codex or legacy snapshot wins, otherwise the last other bucket wins
+# @pt.target bridge.quota.read_quota
+# @pt.method unit
+# @pt.legacy none
+@pytest.mark.parametrize("preferred", [None, {"limit_id": "codex"}, {}])
+def test_bucket_preference(tmp_path, preferred):
+    path = rollout(tmp_path, "events", {
+        "limit_id": "premium", "primary": {"used_percent": 10}}, 10)
+    with path.open("a") as stream:
+        snapshots = []
+        if preferred is not None:
+            snapshots.extend([{**preferred, "secondary": {"used_percent": 50}},
+                              {**preferred, "secondary": {"used_percent": 60}}])
+        snapshots.append({"limit_id": "premium", "primary": {"used_percent": 20}})
+        for limits in snapshots:
+            stream.write(json.dumps({"type": "event_msg", "payload": {
+                "type": "token_count", "rate_limits": limits}}) + "\n")
+    result = read_quota(tmp_path, now=0)
+    assert result["remaining_pct"] == (80.0 if preferred is None else 40.0)

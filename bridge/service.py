@@ -174,6 +174,26 @@ class Bridge:
                 "observed_at": stored["observed_at"],
                 "primary": limits.get("primary"), "secondary": limits.get("secondary")}
 
+    def _account_state(self, name: str, *, key: str | None) -> dict[str, Any]:
+        state = self.store.account_state(name, key=key)
+        if state["state"] != "quota" or state.get("updated_at") is None:
+            return state
+        quota = self._account_quota(name)
+        if not isinstance(quota, dict):
+            return state
+        now = time.time()
+        limits = {window: quota.get(window) for window in ("primary", "secondary")}
+        remaining = remaining_pct(limits, now)
+        if remaining is None or remaining <= 0:
+            return state
+        for window in limits.values():
+            reset = window.get("resets_at") if isinstance(window, dict) else None
+            if (isinstance(reset, (int, float)) and not isinstance(reset, bool)
+                    and state["updated_at"] < reset <= now):
+                self.store.set_account_state(name, "available", actor=Actor.BRIDGE, key=key)
+                return self.store.account_state(name, key=key)
+        return state
+
     def _remaining(self, name: str) -> float | None:
         quota = self._account_quota(name)
         return quota.get("remaining_pct") if isinstance(quota, dict) else None
@@ -182,7 +202,8 @@ class Bridge:
         if res.rate_limits:
             self.store.save_quota(name, res.rate_limits, key=self._key(name))
         # Runs only start on an available account, so a mark seen after a successful run came from
-        # another run meanwhile; only account-clear (the user) lifts it.
+        # another run meanwhile. account-clear lifts marks; a quota mark may also lapse
+        # once a window open at mark time has reset and remaining quota is positive.
         if res.outcome in {"quota", "auth"}:
             self.store.set_account_state(name, res.outcome, res.error, actor=Actor.BRIDGE,
                                          key=self._key(name))
@@ -202,7 +223,7 @@ class Bridge:
             account = self._account(agent.account or "")
         except ValueError as e:
             return str(e)
-        state = self.store.account_state(account.name, key=account_key(account))["state"]
+        state = self._account_state(account.name, key=account_key(account))["state"]
         if state != "available":
             return f"account {account.name} {state}"
         if self.store.active_on_account(account.name) >= self._slots(account.name):
@@ -243,7 +264,7 @@ class Bridge:
         registry = load_registry()
         for account in listing["accounts"]:
             account["quota"] = self._account_quota(account["name"])
-            state = self.store.account_state(account["name"], key=self._key(account["name"]))
+            state = self._account_state(account["name"], key=self._key(account["name"]))
             account.update(state=state["state"], last_error=state["last_error"],
                            max_concurrency=self._slots(account["name"]),
                            source="registry" if account["name"] in registry else "project")
@@ -345,7 +366,7 @@ class Bridge:
         if current is None:
             return
         account = self.orch.agent(current).account or ""
-        state = self.store.account_state(account, key=self._key(account))["state"]
+        state = self._account_state(account, key=self._key(account))["state"]
         if state == "auth":
             return
         remaining = 0 if state == "quota" else self._remaining(account)
@@ -551,7 +572,7 @@ class Bridge:
             return self._summary(row)
         agent = self.orch.agent(self._agent_of(row) or "")
         account = self._account(agent.account or "")
-        availability = self.store.account_state(account.name, key=account_key(account))
+        availability = self._account_state(account.name, key=account_key(account))
         if availability["state"] != "available":
             raise ValueError(
                 f"account {account.name} unavailable ({availability['state']}: "
