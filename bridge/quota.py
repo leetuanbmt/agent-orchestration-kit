@@ -51,6 +51,7 @@ def read_quota(home: Path, now: float | None = None) -> dict | None:
     now = time.time() if now is None else now
     for mtime, path in sorted(candidates, key=lambda item: item[0], reverse=True)[:20]:
         latest = None
+        latest_codex = None
         try:
             with path.open(encoding="utf-8", errors="replace") as stream:
                 for line in stream:
@@ -63,9 +64,17 @@ def read_quota(home: Path, now: float | None = None) -> dict | None:
                     payload = event.get("payload")
                     if (isinstance(payload, dict) and payload.get("type") == "token_count"
                             and isinstance(payload.get("rate_limits"), dict)):
-                        latest = payload["rate_limits"]
+                        limits = payload["rate_limits"]
+                        if remaining_pct(limits, now) is None:
+                            continue
+                        latest = limits
+                        # Legacy snapshots without a bucket ID describe Codex quota.
+                        if limits.get("limit_id", "codex") == "codex":
+                            latest_codex = limits
         except OSError:
             continue
+        if latest_codex is not None:
+            latest = latest_codex
         if latest is not None:
             result = {"remaining_pct": remaining_pct(latest, now), "observed_at": mtime}
             for name in ("primary", "secondary"):
