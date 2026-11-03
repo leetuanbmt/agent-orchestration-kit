@@ -510,8 +510,10 @@ and the method (for example an API key or token).
 - A task stays on its agent and account. Retries and resumes use the same home and session. A
   human moves it with `agent-bridge reassign <id> <agent>` (new session), or the bridge does when
   quota fallback is enabled (below).
-- QUOTA or AUTH marks the account unavailable. New runs on it are refused until
-  `agent-bridge account-clear <name>` after the user confirms.
+- QUOTA or AUTH marks the account unavailable. A QUOTA mark clears automatically when a
+  snapshot shows positive remaining quota after a window open at mark time resets.
+  AUTH and accounts without a snapshot still require `agent-bridge account-clear <name>`
+  after the user confirms.
 - Quota: for Codex, the latest `rate_limits` event in the home's session rollouts
   (`<home>/sessions/**/rollout-*.jsonl`; nothing else is opened); for Claude, the
   `rate_limit_event` the CLI reported on its last run through the bridge. Remaining =
@@ -621,7 +623,7 @@ validation, account isolation, concurrency slots, legacy mapping, schema upgrade
 | `config-check` error | the message names the field; fix `.ai/orchestrator.yaml` |
 | `health.ok = false` | an adapter CLI missing, or `codex` not logged in: log in (human) |
 | `no eligible executor agent (…)` | every executor is disabled, busy or unavailable; the reasons are listed per agent |
-| task PAUSED `QUOTA` / `AUTH` | wait or re-login, then `agent-bridge account-clear <name>` and resume; with quota fallback on, resuming a QUOTA pause moves it |
+| task PAUSED `QUOTA` / `AUTH` | resume after a quota window resets with positive remaining quota; for AUTH or no snapshot, resolve the issue, then `agent-bridge account-clear <name>` and resume; with quota fallback on, resume may move a task whose quota is still insufficient |
 | `agent_review_failed` event | the reviewer agent errored; the task waits in REVIEW for `bridge_review_task` |
 | workflow `WAITING` | `detail.waiting` and task states say what needs attention; run `bridge_run_workflow` again after |
 | task PAUSED `INTERRUPTED` | the runner died; `bridge_resume_task` continues the session |
