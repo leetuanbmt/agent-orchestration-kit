@@ -281,3 +281,76 @@ def test_block_failure_is_redacted(repo, fake_codex, monkeypatch):
     failure = b.store.get(tid)["failure"]
     assert failure.startswith("BLOCKED by review:")
     assert "hunter2" not in failure
+
+
+# @pt.id T0056-01
+# @pt.item test_block_failure_keeps_prefix_for_long_notes
+# @pt.condition block review contains 8000 characters of notes
+# @pt.expected failure retains its prefix and has at most 500 characters
+# @pt.target Bridge._apply_review
+# @pt.method integration
+# @pt.legacy T0055-02
+def test_block_failure_keeps_prefix_for_long_notes(repo, fake_codex, monkeypatch):
+    b, tid = ready(repo, fake_codex, monkeypatch)
+    run(b.review_task(tid, "block", "x" * 8000))
+    failure = b.store.get(tid)["failure"]
+    assert failure.startswith("BLOCKED by review:")
+    assert len(failure) <= 500
+
+
+# @pt.id T0056-02
+# @pt.item test_resume_stops_at_clean_attempt_with_corrupt_review
+# @pt.condition clean second attempt has a non-JSON review after older rework notes
+# @pt.expected next resume prompt excludes older notes
+# @pt.target Bridge.resume_task
+# @pt.method integration
+# @pt.legacy T0054-03
+def test_resume_stops_at_clean_attempt_with_corrupt_review(repo, fake_codex, monkeypatch):
+    b, tid = ready(repo, fake_codex, monkeypatch)
+    run(b.review_task(tid, "rework", "old-notes"))
+    run(b.resume_task(tid, wait=True))
+    assert b.store.attempts(tid)[-1]["outcome"] == "ok"
+    with b.store.tx() as c:
+        c.execute("UPDATE attempts SET review=? WHERE task_id=? AND n=2",
+                  ("corrupt review", tid))
+    b.store.transition(tid, State.REWORK, Actor.CLIENT)
+    captured = []
+
+    async def start(task_id, kind, prompt, session, expect, wait, actor):
+        captured.append(prompt)
+        return {}
+
+    monkeypatch.setattr(b, "_start", start)
+    run(b.resume_task(tid))
+    assert "old-notes" not in captured[0]
+
+
+# @pt.id T0056-03
+# @pt.item test_legacy_fallback_ignores_review_before_clean_attempt
+# @pt.condition legacy review event occurs before or at or after a clean attempt end
+# @pt.expected only events at or after the clean attempt end supply feedback
+# @pt.target Bridge.resume_task
+# @pt.method integration
+# @pt.legacy T0053-08, T0054-03
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_legacy_fallback_ignores_review_before_clean_attempt(repo, fake_codex,
+                                                           monkeypatch, offset):
+    b, tid = ready(repo, fake_codex, monkeypatch)
+    run(b.review_task(tid, "rework", "legacy-old"))
+    run(b.resume_task(tid, wait=True))
+    clean = b.store.attempts(tid)[-1]
+    assert clean["outcome"] == "ok"
+    with b.store.tx() as c:
+        c.execute("UPDATE attempts SET review=NULL WHERE task_id=?", (tid,))
+        c.execute("UPDATE events SET ts=? WHERE task_id=? AND kind='review'",
+                  (clean["ended_at"] + offset, tid))
+    b.store.transition(tid, State.REWORK, Actor.CLIENT)
+    captured = []
+
+    async def start(task_id, kind, prompt, session, expect, wait, actor):
+        captured.append(prompt)
+        return {}
+
+    monkeypatch.setattr(b, "_start", start)
+    run(b.resume_task(tid))
+    assert ("legacy-old" in captured[0]) == (offset >= 0)

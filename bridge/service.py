@@ -547,11 +547,15 @@ class Bridge:
                 if isinstance(review, dict):
                     feedback = review.get("notes", "")
                     break
-                if review is None and attempt.get("outcome") == "ok":
+                if attempt.get("outcome") == "ok":
                     break
             if not any(a.get("review") is not None for a in attempts):
+                clean = next((a for a in reversed(attempts) if a.get("outcome") == "ok"),
+                             None)
                 reviews = [e for e in self.store.events(task_id, 200)
-                           if e["kind"] == "review" and isinstance(e["detail"], dict)]
+                           if e["kind"] == "review" and isinstance(e["detail"], dict)
+                           and (clean is None or
+                                e["ts"] >= (clean.get("ended_at") or clean["started_at"]))]
                 feedback = reviews[-1]["detail"].get("notes", "") if reviews else ""
         last_ver = attempts[-1].get("verification") if attempts else None
         if row["session_id"]:
@@ -823,7 +827,7 @@ class Bridge:
         elif d.decision == "block":
             row = self.store.transition(task_id, State.BLOCKED, actor, detail,
                                         expect={State.REVIEW}, attempt_review=detail,
-                                        failure=redact(f"BLOCKED by review: {d.notes}", 8000)[:500])
+                                        failure=("BLOCKED by review: " + redact(d.notes, 8000))[:500])
         else:
             self._assert_gates(task_id, need_review=False)
             row = self.store.transition(task_id, State.APPROVED, actor, detail,
