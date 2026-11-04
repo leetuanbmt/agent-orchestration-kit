@@ -239,3 +239,45 @@ def test_resume_ignores_review_from_older_attempt(repo, fake_codex, monkeypatch)
     monkeypatch.setattr(b, "_start", start)
     run(b.resume_task(tid))
     assert "old-notes" not in captured[0]
+
+
+# @pt.id T0055-01
+# @pt.item test_resume_keeps_rework_notes_after_paused_attempt
+# @pt.condition resumed attempt ends without a clean outcome after reviewer rework
+# @pt.expected next resume prompt retains the reviewer notes
+# @pt.target Bridge.resume_task
+# @pt.method integration
+# @pt.legacy T0054-03
+@pytest.mark.parametrize("outcome", ["quota", "auth", "network", "missing_binary",
+                                    "timeout", "crash", "interrupted", None])
+def test_resume_keeps_rework_notes_after_paused_attempt(repo, fake_codex, monkeypatch,
+                                                       outcome):
+    b, tid = ready(repo, fake_codex, monkeypatch)
+    run(b.review_task(tid, "rework", "keep-these-notes"))
+    run(b.resume_task(tid, wait=True))
+    b.store.finish_attempt(tid, 2, outcome=outcome)
+    b.store.transition(tid, State.REWORK, Actor.CLIENT)
+    captured = []
+
+    async def start(task_id, kind, prompt, session, expect, wait, actor):
+        captured.append(prompt)
+        return {}
+
+    monkeypatch.setattr(b, "_start", start)
+    run(b.resume_task(tid))
+    assert "keep-these-notes" in captured[0]
+
+
+# @pt.id T0055-02
+# @pt.item test_block_failure_is_redacted
+# @pt.condition block review contains a secret-shaped note
+# @pt.expected failure retains the block prefix and excludes the secret
+# @pt.target Bridge._apply_review
+# @pt.method integration
+# @pt.legacy T0053 review persistence
+def test_block_failure_is_redacted(repo, fake_codex, monkeypatch):
+    b, tid = ready(repo, fake_codex, monkeypatch)
+    run(b.review_task(tid, "block", "leaked password=hunter2"))
+    failure = b.store.get(tid)["failure"]
+    assert failure.startswith("BLOCKED by review:")
+    assert "hunter2" not in failure
