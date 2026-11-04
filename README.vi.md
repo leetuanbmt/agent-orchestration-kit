@@ -77,18 +77,25 @@ Phiên Claude Code chỉ giao tiếp với bridge qua MCP tool; bridge khởi ch
 chặn kết quả của chúng bằng các gate.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 600}}}%%
 flowchart TB
     user["<b>Người dùng / Claude Code</b><br/>Yêu cầu công việc, giám sát, phê duyệt"]
     bridge["<b>MCP Bridge / Orchestrator</b><br/>Phân công nhiệm vụ · Chọn Agent · Quản lý tài khoản"]
-    subgraph roles [" "]
-        direction LR
-        planner["<b>Planner</b><br/>Lập kế hoạch"]
-        executor["<b>Executor</b><br/>Viết và sửa code"]
-        reviewer["<b>Reviewer</b><br/>Đánh giá kết quả"]
-    end
+    planner["<b>Planner</b><br/>Lập kế hoạch"]
+    executor["<b>Executor</b><br/>Viết và sửa code"]
+    reviewer["<b>Reviewer</b><br/>Đánh giá kết quả"]
     gates["<b>Verification Gates + SQLite</b><br/>Kiểm tra phạm vi thay đổi · Chạy test · Lưu trạng thái · Audit log"]
 
-    user --> bridge --> roles --> gates
+    user --> bridge
+    bridge ~~~ planner
+    bridge --> executor
+    bridge ~~~ reviewer
+    planner ~~~ gates
+    executor --> gates
+    reviewer ~~~ gates
+
+    classDef plain fill:none,stroke:none
+    class user,planner,executor,reviewer,gates plain
 ```
 
 | Thành phần | Vị trí |
@@ -264,36 +271,36 @@ Một task, từ yêu cầu đến báo cáo:
 ```mermaid
 sequenceDiagram
     autonumber
-    actor You
-    participant C as Claude Code session
+    actor You as Bạn
+    participant C as Phiên Claude Code
     participant B as agent-bridge
     participant X as Executor agent
-    actor H as Human (terminal)
+    actor H as Con người (terminal)
 
-    You->>C: describe the change
+    You->>C: mô tả thay đổi
     C->>B: bridge_create_task(spec, allowed_paths, verification_commands)
-    B-->>C: READY (path rules checked)
+    B-->>C: READY (đã kiểm tra quy tắc path)
     C->>B: bridge_execute_task
-    B->>X: run in its account home
-    loop until the task leaves RUNNING / VERIFYING
+    B->>X: chạy trong account home của agent
+    loop cho tới khi task rời RUNNING / VERIFYING
         C->>B: bridge_task_status(wait_s=55)
     end
-    X-->>B: exits
-    B->>B: scope check + re-run verification
-    alt a check failed
-        B-->>C: REWORK (budget left) or BLOCKED
+    X-->>B: kết thúc
+    B->>B: kiểm tra phạm vi + chạy lại verification
+    alt có kiểm tra thất bại
+        B-->>C: REWORK (còn ngân sách) hoặc BLOCKED
         C->>B: bridge_resume_task(feedback)
-    else all gates passed
+    else mọi gate đều qua
         B-->>C: REVIEW
         C->>B: bridge_task_result (patch, checks, violations)
         C->>B: bridge_review_task(approve / rework / block)
-        alt high risk or sensitive path
-            B-->>H: waits at APPROVED
+        alt rủi ro cao hoặc path nhạy cảm
+            B-->>H: chờ ở APPROVED
             H->>B: agent-bridge approve TASK_ID
         end
         B-->>C: DONE
     end
-    C-->>You: report with the evidence
+    C-->>You: báo cáo kèm bằng chứng
 ```
 
 Các trạng thái: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED → DONE`, cùng với

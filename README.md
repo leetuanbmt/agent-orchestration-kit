@@ -77,18 +77,25 @@ The Claude Code session talks to the bridge only through MCP tools; the bridge s
 other agent and gates their results.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 600}}}%%
 flowchart TB
     user["<b>User / Claude Code</b><br/>requests work · monitors · approves"]
     bridge["<b>MCP Bridge / Orchestrator</b><br/>assigns tasks · picks agents · manages accounts"]
-    subgraph roles [" "]
-        direction LR
-        planner["<b>Planner</b><br/>plans the work"]
-        executor["<b>Executor</b><br/>writes and fixes code"]
-        reviewer["<b>Reviewer</b><br/>reviews the result"]
-    end
-    gates["<b>Verification gates + SQLite</b><br/>scope check · runs tests · stores state · audit log"]
+    planner["<b>Planner</b><br/>plans the work"]
+    executor["<b>Executor</b><br/>writes and fixes code"]
+    reviewer["<b>Reviewer</b><br/>reviews the result"]
+    gates["<b>Verification Gates + SQLite</b><br/>scope check · runs tests · stores state · audit log"]
 
-    user --> bridge --> roles --> gates
+    user --> bridge
+    bridge ~~~ planner
+    bridge --> executor
+    bridge ~~~ reviewer
+    planner ~~~ gates
+    executor --> gates
+    reviewer ~~~ gates
+
+    classDef plain fill:none,stroke:none
+    class user,planner,executor,reviewer,gates plain
 ```
 
 | Component | Where it lives |
