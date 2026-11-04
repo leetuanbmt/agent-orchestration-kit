@@ -78,15 +78,15 @@ chặn kết quả của chúng bằng các gate.
 
 ```mermaid
 flowchart TB
-    user["<b>User / Claude Code</b><br/>requests work · monitors · approves"]
-    bridge["<b>MCP Bridge / Orchestrator</b><br/>assigns tasks · picks agents · manages accounts"]
+    user["<b>Người dùng / Claude Code</b><br/>Yêu cầu công việc, giám sát, phê duyệt"]
+    bridge["<b>MCP Bridge / Orchestrator</b><br/>Phân công nhiệm vụ · Chọn Agent · Quản lý tài khoản"]
     subgraph roles [" "]
         direction LR
-        planner["<b>Planner</b><br/>plans the work"]
-        executor["<b>Executor</b><br/>writes and fixes code"]
-        reviewer["<b>Reviewer</b><br/>reviews the result"]
+        planner["<b>Planner</b><br/>Lập kế hoạch"]
+        executor["<b>Executor</b><br/>Viết và sửa code"]
+        reviewer["<b>Reviewer</b><br/>Đánh giá kết quả"]
     end
-    gates["<b>Verification gates + SQLite</b><br/>scope check · runs tests · stores state · audit log"]
+    gates["<b>Verification Gates + SQLite</b><br/>Kiểm tra phạm vi thay đổi · Chạy test · Lưu trạng thái · Audit log"]
 
     user --> bridge --> roles --> gates
 ```
