@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- README and README.vi restructured and checked against the code; the full configuration and
+  CLI/MCP reference moved to `docs/configuration.md` and `docs/cli-reference.md`.
 - Read-only commands (`health`, `status`, `result`, `list`, `agents`, `workflow-status`,
   `account-list`) no longer create `.ai/`, state, databases or registry entries.
 - Updates to `~/.agent-bridge/projects.json` hold `projects.lock`, so concurrent bridges

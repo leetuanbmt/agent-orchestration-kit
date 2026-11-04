@@ -1,10 +1,8 @@
 <h1 align="center">agent-orchestration-kit</h1>
 
 <p align="center">
-  Harness cục bộ theo từng project, không phụ thuộc nhà cung cấp, cho <b>quy trình lập trình nhiều agent</b>.<br>
-  Role (planner, executor, reviewer) được gán cho agent; agent chạy trên CLI (Codex, Claude Code) với account tách biệt.<br>
-  Một MCP server nhỏ (<code>agent-bridge</code>) giữ trạng thái task, chạy agent an toàn và tự kiểm chứng lại kết quả.<br>
-  Mọi thứ nằm trong repository, không đụng tới cấu hình global.
+  Chạy các AI agent planner, executor và reviewer trên những CLI và account riêng,<br>
+  với một MCP server cục bộ kiểm tra lại kết quả thay vì tin vào lời agent.
 </p>
 
 <p align="center">
@@ -12,230 +10,196 @@
 </p>
 
 <p align="center">
-  <img alt="platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
-  <img alt="python" src="https://img.shields.io/badge/python-3.12-blue">
-  <img alt="dependencies" src="https://img.shields.io/badge/dependencies-mcp%20%7C%20pyyaml-brightgreen">
-  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
-  <img alt="version" src="https://img.shields.io/badge/version-0.1.0%20%2B%20unreleased-blue">
+  <img alt="platform: macOS | Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
+  <img alt="python: &gt;=3.12" src="https://img.shields.io/badge/python-%E2%89%A53.12-blue">
+  <img alt="dependencies: mcp | pyyaml | textual" src="https://img.shields.io/badge/dependencies-mcp%20%7C%20pyyaml%20%7C%20textual-brightgreen">
+  <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <img alt="version: 0.1.0 + unreleased" src="https://img.shields.io/badge/version-0.1.0%20%2B%20unreleased-blue">
 </p>
 
 <p align="center">
   <img alt="dashboard agent-bridge" src="docs/images/dashboard.svg" width="900">
 </p>
 
----
+Khi để một AI agent vừa viết code vừa tự đánh giá, không ai kiểm tra lại công việc: agent báo
+"xong" là xong, kể cả khi test chưa hề chạy hay nó đã sửa file ngoài phạm vi được giao.
 
-Khi để một AI agent vừa viết code vừa tự đánh giá, không có ai kiểm tra lại: agent báo "xong" là
-xong, kể cả khi test chưa chạy hay nó sửa ra ngoài phạm vi được giao.
+`agent-orchestration-kit` tách các việc đó ra. Một MCP server nhỏ, `agent-bridge`, chạy ngay trong
+project của bạn: giao từng task cho một executor agent (Codex CLI hoặc Claude Code), giới hạn
+những file agent được sửa, tự chạy lại các lệnh verification, và chỉ sau đó mới cho reviewer
+approve. Lời tự báo cáo của agent không bao giờ được coi là bằng chứng, còn các bước không thể
+đảo ngược vẫn do con người quyết định.
 
-`agent-orchestration-kit` tách các việc ra và để bạn chọn ai làm việc nào:
+Kit dành cho developer đang dùng Claude Code và Codex CLI bằng tài khoản subscription, muốn có
+một vòng giao việc lặp lại được và kiểm toán được trong từng repository.
 
-- **Role**: `planner` chia việc thành task, `executor` implement từng task một, `reviewer` quyết
-  định approve / rework / block. Có thể thêm role tuỳ chỉnh.
-- **Agent**: một adapter (`codex-cli`, `claude-cli`, `client` là chính MCP client, hoặc
-  `opencode-cli` / `agy-cli` chỉ đọc, dùng để lập kế hoạch và review), một account, model tuỳ
-  chọn, quyền đọc/ghi.
-- **Account**: các phiên đăng nhập tách biệt (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, cả một `HOME`
-  với agy), mỗi account có giới hạn chạy song song và quota riêng. Account dùng chung toàn máy
-  được tạo và chuyển bằng chính `agent-bridge`, không cần công cụ switch nào khác.
-- **`agent-bridge`**: giữ trạng thái task trong SQLite, định tuyến task tới agent, chạy agent với
-  quyền hẹp nhất, kiểm tra file nào thay đổi và tự chạy lại lệnh verification. Lời tự báo cáo
-  của agent không được tính là bằng chứng.
+## Mục lục
 
-Ai làm gì: phiên Claude chính chỉ nói chuyện với bridge qua MCP tool, bridge khởi chạy mọi
-agent khác, còn các bước không đảo ngược được thuộc về người dùng.
+- [Tính năng chính](#tính-năng-chính)
+- [Kiến trúc](#kiến-trúc)
+- [Yêu cầu](#yêu-cầu)
+- [Cài đặt](#cài-đặt)
+- [Bắt đầu nhanh](#bắt-đầu-nhanh)
+- [Cấu hình](#cấu-hình)
+- [Role, adapter và provider](#role-adapter-và-provider)
+- [Vòng đời workflow](#vòng-đời-workflow)
+- [Mô hình bảo mật và giới hạn](#mô-hình-bảo-mật-và-giới-hạn)
+- [Theo dõi](#theo-dõi)
+- [Xử lý sự cố](#xử-lý-sự-cố)
+- [Phát triển và kiểm thử](#phát-triển-và-kiểm-thử)
+- [Tài liệu khác](#tài-liệu-khác)
+- [Đóng góp và giấy phép](#đóng-góp-và-giấy-phép)
+
+## Tính năng chính
+
+- **Role, agent và account tách biệt.** `planner`, `executor` và `reviewer` được gán cho agent;
+  mỗi agent dùng một adapter (`codex-cli`, `claude-cli`, `client`, hoặc `opencode-cli` /
+  `agy-cli` chỉ đọc) và một account riêng.
+- **Bridge quyết định đạt hay không.** Sau mỗi lượt chạy, bridge đối chiếu mọi file bị thay đổi
+  với `allowed_paths` của task, xác nhận `HEAD` không đổi và tự chạy lại các lệnh verification.
+- **Giới hạn số lần làm lại.** Mỗi task có ngân sách attempt; lỗi chuyển sang `REWORK`, rồi
+  `BLOCKED` kèm chẩn đoán.
+- **Cổng duyệt của con người.** Task rủi ro cao và thay đổi ở path nhạy cảm (migration, auth,
+  deploy, CI, secret) phải chờ `agent-bridge approve` trong một terminal interactive.
+- **Account cô lập.** Mỗi account có auth home riêng (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, hoặc cả
+  một `HOME` với agy), giới hạn chạy song song và theo dõi quota. Quota fallback (tùy chọn) chuyển
+  việc sang account khác.
+- **Workflow do planner lập.** Một planner agent có thể chia mục tiêu thành các task đã được
+  validate, chạy theo thứ tự phụ thuộc.
+- **Theo dõi.** Dashboard trong terminal, các lệnh CLI xuất bảng/JSON và dashboard web chỉ đọc
+  trên localhost.
+- **Cài đặt theo project.** `agent-bridge init` chỉ ghi file trong project; không bao giờ sửa
+  `~/.claude`, `~/.codex` hay cấu hình MCP global.
+
+## Kiến trúc
+
+Phiên Claude Code chỉ giao tiếp với bridge qua MCP tool; bridge khởi chạy mọi agent khác và
+chặn kết quả của chúng bằng các gate.
 
 ```mermaid
 flowchart TB
-    user(["Bạn"])
-    claude["<b>Phiên Claude Code chính</b> (client)<br/>lập kế hoạch, chia task, review, báo cáo"]
-    router["<b>agent-bridge</b> · định tuyến<br/>role → agent → account<br/>agent mặc định, dự phòng khi hết quota"]
-    codex["Executor: codex exec<br/>OS sandbox, account riêng"]
-    helper["Planner / reviewer, chỉ đọc<br/>claude -p · opencode · agy"]
-    gates["<b>agent-bridge</b> · cổng kiểm<br/>scope của mọi file đã đổi<br/>bridge tự chạy verification"]
-    db[("<b>agent-bridge</b> · SQLite in .git/agent-bridge<br/>tasks · attempts · audit log")]
-    human["Người dùng ở terminal<br/>approve · account-login · reassign"]
+    user["<b>User / Claude Code</b><br/>requests work · monitors · approves"]
+    bridge["<b>MCP Bridge / Orchestrator</b><br/>assigns tasks · picks agents · manages accounts"]
+    subgraph roles [" "]
+        direction LR
+        planner["<b>Planner</b><br/>plans the work"]
+        executor["<b>Executor</b><br/>writes and fixes code"]
+        reviewer["<b>Reviewer</b><br/>reviews the result"]
+    end
+    gates["<b>Verification gates + SQLite</b><br/>scope check · runs tests · stores state · audit log"]
 
-    user <--> claude
-    claude -- "tool bridge_* qua MCP stdio" --> router
-    router -- "khởi chạy" --> codex
-    router -- "khởi chạy" --> helper
-    codex -- "diff, mã thoát" --> gates
-    helper -- "plan / decision" --> db
-    gates -- "REVIEW / REWORK" --> db
-    human -- "duyệt rủi ro cao, login" --> db
-    db -. "trạng thái, bằng chứng" .-> claude
+    user --> bridge --> roles --> gates
 ```
 
-Không có `.ai/orchestrator.yaml` thì kit chạy y như 0.1: phiên Claude Code lập kế hoạch và
-review, Codex thực thi, account lấy từ `.ai/config.json`.
+| Thành phần | Vị trí |
+|---|---|
+| MCP server và CLI (`agent-bridge`) | Tool đã cài; `.mcp.json` chạy `agent-bridge serve` |
+| Thiết lập của project | `.mcp.json`, `.claude/settings.json`, `.claude/rules/`, `.claude/skills/agent-orchestration/`, một block trong `CLAUDE.md`, `.ai/` |
+| Trạng thái task, log, audit event | `~/.agent-bridge/projects/<project>/worktrees/<worktree>/bridge.db` (đổi bằng `AGENT_BRIDGE_HOME`), nằm ngoài worktree để agent không ghi được |
+| Account dùng chung toàn máy và lock | `~/.agent-bridge/` (`accounts.json`, `accounts.db`, `homes/`, `locks/`) |
 
-Mọi thứ đều cục bộ theo project: `.mcp.json`, `.claude/`, `CLAUDE.md`, `.ai/`, và trạng thái
-runtime trong git directory của repository (`.git/agent-bridge/`). Không có gì dưới `~/.claude`,
-`~/.codex` hay cấu hình MCP global bị sửa.
+Khi không có `.ai/orchestrator.yaml`, kit dùng **thiết lập legacy**: phiên Claude Code lập kế
+hoạch và review, Codex thực thi.
 
----
+## Yêu cầu
+
+- macOS hoặc Linux. Có code cho Windows nhưng chưa được kiểm thử trên máy Windows thật.
+- `git` và [uv](https://docs.astral.sh/uv/) (uv tự tải Python 3.12 trở lên).
+- Project đích phải là một git repository.
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) cho phiên làm việc interactive.
+- Ít nhất một agent CLI đã đăng nhập bằng subscription riêng; không cần API key:
+  - Codex CLI (đã kiểm chứng với 0.163.0; kiểm tra bằng `codex login status`), và/hoặc
+  - Claude Code headless (đã kiểm chứng với 2.1.306; kiểm tra bằng `claude auth status`).
+  - Tùy chọn, dùng làm planner/reviewer chỉ đọc: opencode, agy.
 
 ## Cài đặt
 
-**Yêu cầu:**
-- macOS hoặc Linux, git, [uv](https://docs.astral.sh/uv/) (uv tự tải Python 3.12).
-- Ít nhất một agent CLI, đăng nhập bằng subscription riêng: Codex CLI (đã test 0.163.0,
-  `codex login status`) và/hoặc Claude Code (đã test 2.1.306, `claude auth status`). Không cần
-  API key.
-
 ```bash
 git clone https://github.com/leetuanbmt/agent-orchestration-kit.git ~/tools/agent-orchestration-kit
-uv tool install --editable ~/tools/agent-orchestration-kit   # đưa lệnh `agent-bridge` lên PATH
+uv tool install --editable ~/tools/agent-orchestration-kit   # đưa `agent-bridge` vào PATH
 uv tool update-shell                                          # một lần, nếu ~/.local/bin chưa có trong PATH
 ```
 
-Bản cài là editable: tool chạy thẳng từ thư mục clone, nên `git pull` ở đó là cập nhật, và rules
-cùng skill mà `init` copy luôn cùng phiên bản với tool. Đừng di chuyển thư mục clone.
+Mở shell mới sau `update-shell`, rồi kiểm tra bằng `agent-bridge --help`.
 
-### Cài cho một project
+Bản cài là editable: tool chạy trực tiếp từ thư mục checkout, nên rule và skill mà `init` sao
+chép luôn khớp với phiên bản đang cài. Hãy giữ nguyên vị trí thư mục checkout.
 
-Chạy `init` trong folder muốn dùng bridge; settings nằm luôn trong folder đó.
+- **Cập nhật:** `git -C ~/tools/agent-orchestration-kit pull`. Tool dùng code mới ngay. Rule và
+  skill đã sao chép vào project vẫn giữ nguyên; muốn làm mới, chạy `agent-bridge init --force`
+  trong project đó. `--force` ghi đè các chỉnh sửa cục bộ trên những file này, sau khi sao lưu
+  chúng vào `.ai/backup-<UTC timestamp>/`.
+- **Gỡ khỏi một project:** `agent-bridge uninstall` chỉ xoá những gì `init` đã thêm và giữ lại
+  file bạn đã sửa (kèm cảnh báo); `--purge` xoá thêm `.ai/`. Lịch sử task vẫn nằm trong
+  `~/.agent-bridge`.
+- **Gỡ tool:** `uv tool uninstall agent-orchestration-kit`, rồi xoá thư mục checkout.
 
-```bash
-cd /path/to/project
-agent-bridge init            # .mcp.json, .claude/settings.json, rules, skill, block CLAUDE.md, .ai/
-claude                       # một lần: trust thư mục → agent-bridge kết nối
-claude mcp list              # agent-bridge: ✔ Connected
-agent-bridge                 # mở dashboard của project này
-```
-
-- `.mcp.json` nhận `{"command": "agent-bridge", "args": ["serve"]}`, không có đường dẫn riêng
-  của máy, nên commit được. Claude Code phải tìm thấy `agent-bridge` trong `PATH` của nó.
-- `.mcp.json` và `.claude/settings.json` có sẵn được merge theo từng key (server khác, deny rule
-  và setting khác giữ nguyên); `CLAUDE.md` có thêm một block đánh dấu
-  (`<!-- agent-bridge:start/end -->`). Mọi file `init` thay đổi đều được copy trước vào
-  `.ai/backup-<UTC timestamp>/`.
-- Rules được cài thành `.claude/rules/{orchestration,delegation,security}.md` và skill thành
-  `.claude/skills/agent-orchestration/`. Nếu đích đã có file khác, hoặc có server `agent-bridge`
-  khác, `init` dừng lại trừ khi dùng `--force`.
-- Nâng cấp bản cài của kit cũ: server `codex-bridge`, các entry trong settings, block
-  `CLAUDE.md` và thư mục state được thay bằng bản `agent-bridge`; file rule/skill tên `codex-*`
-  chưa sửa thì bị xoá (đã sửa thì giữ kèm cảnh báo). Permission rule bạn tự viết cho tool
-  `mcp__codex-bridge__*` thì phải tự đổi tên.
-- Install manifest nằm ở `<git-dir>/agent-bridge/install-manifest.json`, ngoài tầm với của agent.
-  `agent-bridge uninstall [--purge]` chỉ gỡ những gì `init` đã thêm và giữ file bạn đã sửa (kèm
-  cảnh báo); `--purge` xoá luôn `.ai/`, kể cả config.
-- Không cài tool: `scripts/setup.sh <dir> [--force]` và `scripts/uninstall.sh <dir> [--purge]`
-  làm việc tương tự từ thư mục clone; khi đó `.mcp.json` chạy `uv run --project <kit>
-  agent-bridge serve`, một đường dẫn tuyệt đối sẽ hỏng nếu kit bị di chuyển.
-
-Phát triển chính kit: `uv sync`, rồi `scripts/check.sh --with-health`.
-
----
+Nếu không cài tool, `scripts/setup.sh <dir> [--force]` và `scripts/uninstall.sh <dir> [--purge]`
+làm việc tương tự từ thư mục checkout. Khi đó `.mcp.json` chạy
+`uv run --project <kit> agent-bridge serve`, một đường dẫn tuyệt đối sẽ hỏng nếu kit bị di chuyển.
 
 ## Bắt đầu nhanh
 
-### 1. Chọn một cấu hình
-
-Tạo `.ai/orchestrator.yaml` từ một file mẫu bên dưới (hoặc không có file nào để dùng cấu hình
-legacy). Bản cài đã kèm các file mẫu, không cần clone repo:
+**1. Thiết lập project.**
 
 ```bash
-agent-bridge config-init                # liệt kê các file mẫu
+cd /path/to/project          # một git repository
+agent-bridge init            # .mcp.json, .claude/settings.json, rules, skill, block CLAUDE.md, .ai/
+claude                       # một lần: trust thư mục để server agent-bridge kết nối được
+claude mcp list              # kỳ vọng: agent-bridge ... Connected
+```
+
+`init` làm những việc sau:
+
+- `.mcp.json` nhận `{"command": "agent-bridge", "args": ["serve"]}`, không chứa đường dẫn riêng của
+  máy, nên có thể commit. Claude Code phải tìm thấy `agent-bridge` trong `PATH`.
+- `.mcp.json` và `.claude/settings.json` có sẵn được gộp theo từng key; các server và deny rule
+  khác được giữ nguyên. `CLAUDE.md` nhận một block có đánh dấu (`<!-- agent-bridge:start/end -->`).
+- Mọi file bị thay đổi đều được sao lưu trước vào `.ai/backup-<UTC timestamp>/`.
+- Nếu đích đã có một file khác, hoặc một server `agent-bridge` khác, `init` sẽ dừng trừ khi có
+  `--force`.
+- Manifest cài đặt nằm ở `<git-dir>/agent-bridge/install-manifest.json`, ngoài tầm với của agent.
+- Project thiết lập bằng kit `codex-bridge` cũ được nâng cấp: server, các mục settings, block
+  `CLAUDE.md` và thư mục trạng thái được thay thế; file rule và skill `codex-*` chưa sửa bị xoá
+  (file đã sửa được giữ lại kèm cảnh báo). Permission rule bạn tự viết cho tool
+  `mcp__codex-bridge__*` phải đổi tên thủ công.
+
+**2. Chọn thiết lập (tùy chọn).** Bỏ qua bước này để dùng thiết lập legacy (Claude Code lập kế
+hoạch và review, Codex thực thi bằng login global).
+
+```bash
 agent-bridge config-init orchestrator   # ghi .ai/orchestrator.yaml; không bao giờ ghi đè
-agent-bridge config-check   # kiểm tra schema, lỗi ghi rõ field
-agent-bridge agents         # ai plan, ai thực thi, ai review; ai đang sẵn sàng
+agent-bridge config-check               # validate
+agent-bridge agents                     # ai plan, execute, review; ai đang sẵn sàng
 ```
 
-| Mẫu | Planner | Executor | Reviewer |
-|---|---|---|---|
-| *(không có file, legacy)* | phiên Claude Code | Codex (theo account trong `config.json`) | phiên Claude Code |
-| [`examples/orchestrator.yaml`](examples/orchestrator.yaml) | Claude headless | Codex trên hai account (thứ tự fallback) | Claude headless |
-| [`examples/claude-executor.yaml`](examples/claude-executor.yaml) | Codex | Claude headless (`allow_write`) | Codex |
-| [`examples/single-agent.yaml`](examples/single-agent.yaml) | Codex | Codex | Codex |
-| [`examples/gates-only.yaml`](examples/gates-only.yaml) | — | Codex | không có: chỉ gate tất định |
-
-### 2. Nhờ Claude Code thực hiện thay đổi
-
-Skill `agent-orchestration` điều khiển một trong hai luồng:
-
-```
-bạn plan:      bridge_create_task → bridge_execute_task → bridge_task_status(wait_s)
-                 → bridge_task_result → bridge_review_task (→ bridge_resume_task khi rework)
-agent plan:    bridge_plan → bridge_workflow_status(wait_s) → bridge_run_workflow
-                 → bridge_workflow_status (DONE / INCOMPLETE / WAITING)
-```
-
-### 3. Theo dõi trên dashboard
-
-Chạy `agent-bridge` trong project. Tất cả nằm trên một màn hình, tự làm mới mỗi 3 giây:
-
-- **Search**, **Agents** và **Accounts** (trái). Accounts liệt kê mọi account máy đang có:
-  account của project và toàn máy, home codex-switch chưa thêm, profile codex-switch và
-  claude-switch (đánh dấu không dùng được vì chứa token đã copy) và CLI agent đã cài nhưng chưa
-  có account.
-- **Needs you** (giữa, trên): task đang chờ bạn (APPROVED, REVIEW, PAUSED, FAILED, BLOCKED).
-  **Tasks** ở dưới: mọi task.
-- **Detail** (phải): mục tiêu của task đang chọn, kết quả kiểm tra (PASS / FAIL), diff stat,
-  review; hoặc thông tin account đang chọn: provider, đăng nhập, trạng thái, quota, home, các
-  agent dùng nó và lỗi gần nhất.
-- Thanh dưới đáy hiện quota còn lại của account executor.
-
-Bấm **Enter** trên bất kỳ dòng nào để mở các thao tác hợp lệ cho dòng đó, không cần nhớ phím.
-Footer chỉ hiện những phím dùng được cho dòng đang chọn.
-
-<img alt="Enter trên task đang REVIEW" src="docs/images/dashboard-actions.svg" width="900">
-<img alt="Đang chọn một account" src="docs/images/dashboard-account.svg" width="900">
-
-| Phím | Thao tác |
-|---|---|
-| `Tab` / `Shift+Tab`, `↑` `↓` | Chuyển ô / dòng (dùng chuột cũng được) |
-| `Enter` | Thao tác cho task hoặc account đang chọn |
-| `/` | Tìm task theo id, trạng thái, agent hoặc mục tiêu |
-| `p` / `a` / `v` | Xem patch / approve task chờ người duyệt / review task ở `REVIEW` |
-| `c` / `m` | Huỷ task / chuyển task sang agent khác (session mới) |
-| `l` / `u` / `x` / `d` | Trên account: đăng nhập / mở shell bằng account (agy: hiện dòng `eval`) / đánh dấu sẵn sàng / xoá |
-| `n` | Thêm account toàn máy (trên dòng home codex-switch: thêm chính home đó) |
-| `s` | Settings; trong đó `e` sửa `.ai/orchestrator.yaml` (hoặc `config.json`) bằng `$EDITOR` |
-| `?` / `q` | Bảng phím / thoát |
-
-Dashboard không bao giờ khởi chạy agent: một lần chạy thuộc về process đã khởi chạy nó (MCP
-server), thoát dashboard sẽ làm gián đoạn lần chạy đó. Dữ liệu tương tự có ở dạng bảng trong
-terminal (JSON khi thêm `--json` hoặc qua pipe):
+**3. Kiểm tra tình trạng.**
 
 ```bash
-agent-bridge health        # adapter, quota còn lại theo account, số task
-agent-bridge account-list  # account, trạng thái đăng nhập, codex-switch / claude-switch, CLI chưa dùng
-agent-bridge list          # task, mới nhất trước
-agent-bridge tasks         # task của mọi project và worktree trên máy, nhóm theo project
-agent-bridge web           # dashboard web chỉ đọc cho mọi project và worktree
+agent-bridge health          # adapter, login, quota, số task; exit 1 khi không OK
 ```
 
-<img alt="agent-bridge list" src="docs/images/cli-list.svg" width="900">
-<img alt="agent-bridge account-list" src="docs/images/cli-accounts.svg" width="900">
+**4. Nhờ Claude Code thực hiện thay đổi.** Skill `agent-orchestration` đã cài sẽ điều khiển một
+trong hai luồng:
 
-Ảnh chụp lấy từ một lần chạy end-to-end bằng bản tool đã cài, trên dữ liệu giả (CLI agent giả,
-`HOME` mới, project demo trong `/tmp/agent-bridge-demo`). Tạo lại bằng
-`"$(uv tool dir)/agent-orchestration-kit/bin/python" scripts/screenshots.py docs/images`.
+```text
+you plan:     bridge_create_task → bridge_execute_task → bridge_task_status(wait_s)
+                → bridge_task_result → bridge_review_task (→ bridge_resume_task for rework)
+agent plans:  bridge_plan → bridge_workflow_status(wait_s) → bridge_run_workflow
+                → bridge_workflow_status (DONE / INCOMPLETE / WAITING)
+```
 
-#### Dashboard web
+**5. Theo dõi tiến độ** bằng `agent-bridge` (dashboard terminal) hoặc `agent-bridge web`. Xem
+[Theo dõi](#theo-dõi).
 
-Chạy `agent-bridge web [--port N] [--open]` để xem dashboard trên trình duyệt máy tính tại
-`http://127.0.0.1:8765/?token=…`. URL được in ra chứa token bí mật riêng cho mỗi lần khởi chạy;
-hãy mở đường dẫn đó và không chia sẻ. Cổng mặc định là 8765; `--port 0` chọn cổng trống,
-`--open` mở trình duyệt, và Ctrl+C dừng server.
+## Cấu hình
 
-Dashboard hiển thị mọi project agent-bridge biết trên máy và các git worktree của chúng, bỏ qua
-thư mục đã xoá hoặc không còn là repository: yêu cầu duyệt kèm lệnh chính xác, task bị chặn hoặc
-thất bại, task tạm dừng kèm lý do, task chờ review, tiến độ tổng thể, task đang chạy kèm thời gian
-đã chạy so với timeout, một ô cho mỗi project, hoạt động trong 24 giờ qua và bảng yêu cầu.
-Bấm vào một yêu cầu để mở ngăn chi tiết với các giai đoạn, task và thông tin kỹ thuật (không có
-patch). Dùng nút VI/EN để đổi ngôn ngữ.
+Hai file tùy chọn trong thư mục `.ai/` của project:
 
-Dashboard chỉ đọc: mở từng `bridge.db` bằng SQLite `mode=ro`, không ghi dữ liệu, không khởi chạy
-agent và không thực hiện thao tác dành cho người dùng. Server chỉ lắng nghe trên `127.0.0.1`
-và từ chối Host header khác. Như các lệnh bridge khác, lệnh này từ chối chạy trong agent do
-bridge khởi chạy.
-
----
-
-## Role và agent (`.ai/orchestrator.yaml`)
+| File | Mục đích |
+|---|---|
+| `.ai/orchestrator.yaml` | Account, agent, role, định tuyến, các stage của workflow. Bị git-ignore (vì chứa đường dẫn home riêng của máy). |
+| `.ai/config.json` | Cài đặt bridge: sandbox, timeout, quy tắc path, allowlist verification. Được commit. |
 
 ```yaml
 version: 1
@@ -243,13 +207,13 @@ accounts:
   codex-work:  {provider: openai,    home: ~/.codex-accounts/homes/work}
   claude-main: {provider: anthropic, home: ~/.claude-accounts/main, max_concurrency: 1}
 agents:
-  claude:          {adapter: client}                         # chính MCP client
+  claude:          {adapter: client}                         # the MCP caller
   claude-headless: {adapter: claude-cli, account: claude-main, model: sonnet}
   codex-a:         {adapter: codex-cli,  account: codex-work}
 roles:
   planner: claude-headless
   executor: {agents: [codex-a], strategy: ordered}
-  reviewer: claude                                           # bạn review qua bridge_review_task
+  reviewer: claude                                           # you review via bridge_review_task
 routing:
   quota_fallback: {enabled: false, min_remaining_pct: 10}
 workflow:
@@ -257,406 +221,295 @@ workflow:
   max_rework: 2
 ```
 
-| Mục | Key |
-|---|---|
-| `accounts.<id>` | `provider` (`openai` \| `anthropic` \| `google` \| `opencode`; opencode không có `home`), `home` (auth home tách biệt; bỏ trống để dùng login global kế thừa, chỉ đọc), `max_concurrency` (1–8) |
-| `agents.<id>` | `adapter` (`codex-cli` \| `claude-cli` \| `client` \| `opencode-cli` \| `agy-cli`; hai cái cuối chỉ đọc), `account`, `model`, `capabilities` (tập con của `[read, write]`), `allow_write` (claude-cli chỉ ghi khi bật), `allow_bash` (claude-cli), `timeout_s`, `enabled` |
-| `roles.<name>` | một agent id, hoặc `{agents: [...], default: <agent>, strategy: ordered \| explicit, requires: read \| write}`; `default` được thử trước, các agent còn lại là dự phòng theo thứ tự trong list. Bắt buộc có `executor` và phải ghi được; `planner`/`reviewer` cần đọc |
-| `routing.quota_fallback` | `enabled`, `min_remaining_pct`, `agents` (ứng viên theo thứ tự; mặc định: role executor) |
-| `workflow` | `stages` (tập con có thứ tự của `plan, execute, test, review`; cần `execute` và ít nhất một gate), `max_rework` (0–4) |
+Các ví dụ đi kèm (`agent-bridge config-init <name>`):
 
-Key lạ, id không tồn tại, provider không khớp adapter, hai account dùng chung một home, hoặc role
-mà không agent nào trong danh sách đảm nhận được đều bị từ chối, thông báo lỗi ghi rõ đường dẫn
-field.
+| Ví dụ | Planner | Executor | Reviewer |
+|---|---|---|---|
+| *(không có file, legacy)* | Phiên Claude Code | Codex | Phiên Claude Code |
+| [`orchestrator`](examples/orchestrator.yaml) | Claude headless | Codex trên hai account, theo thứ tự fallback | Claude headless |
+| [`claude-executor`](examples/claude-executor.yaml) | Codex | Claude headless (`allow_write`) | Codex |
+| [`single-agent`](examples/single-agent.yaml) | Codex | Codex | Codex |
+| [`gates-only`](examples/gates-only.yaml) | — | Codex | Không có: chỉ gate tất định |
+| [`other-reviewers`](examples/other-reviewers.yaml) | agy | Codex | opencode |
 
-- **Định tuyến.** Task được ghim bằng `agent` (hoặc `account`) sẽ chạy ở đó. Nếu không, khi bắt
-  đầu lần đầu, bridge thử `default` của role trước, rồi tới executor đủ điều kiện đầu tiên theo thứ tự trong role (đang bật, CLI đã
-  cài, ghi được, account sẵn sàng và chưa vượt `max_concurrency`), ghi event `agent_routed`; từ
-  đó task giữ agent và session ấy. `strategy: explicit` bắt buộc mỗi task phải chỉ định agent.
-- **Stage review.** Reviewer `client` là chính MCP client. Reviewer là agent thì chạy read-only
-  sau khi các check của bridge đã pass; quyết định được ghi kèm `reviewer: <agent>`. Nếu reviewer
-  lỗi, task ở lại REVIEW để client quyết định. Không có stage `review` thì bridge tự approve việc
-  đã qua mọi gate (`reviewer: bridge`); việc rủi ro cao vẫn chờ người duyệt.
-- **Stage plan.** `bridge_plan` chạy planner agent ở chế độ read-only; bridge kiểm tra mọi task
-  được plan (path, lệnh, dependency) trước khi tạo task nào, rồi `bridge_run_workflow` chạy
-  chúng theo thứ tự dependency, lần lượt từng task.
+Account do con người đăng nhập, theo project (`agent-bridge account-login <name>`) hoặc dùng
+chung toàn máy (`agent-bridge account-add <name> --provider …`). Quota fallback mặc định tắt;
+bật nó nghĩa là cho phép bridge chuyển task sang account khác khi quota xuống thấp (không bao
+giờ chuyển khi lỗi AUTH).
 
----
+Tài liệu đầy đủ: mọi key và giá trị mặc định, account, quota, quota fallback và nơi lưu trạng
+thái có trong [docs/configuration.md](docs/configuration.md) (tiếng Anh).
 
-## Luồng điều phối với phiên Claude chính
+## Role, adapter và provider
 
-Phiên Claude Code chính lập kế hoạch và review; bridge, không phải agent nào, quyết định công
-việc có đạt hay không. Một task, từ yêu cầu tới báo cáo:
+| Adapter | Provider | Ghi được | Cơ chế cô lập | Account home |
+|---|---|---|---|---|
+| `codex-cli` | `openai` | Có (mặc định) | OS sandbox của Codex (`workspace-write` / `read-only`), không có mạng | `CODEX_HOME` |
+| `claude-cli` | `anthropic` | Chỉ khi `allow_write: true` | Permission rule của CLI; không có OS sandbox | `CLAUDE_CONFIG_DIR` |
+| `client` | — | Không | Chính MCP caller; bridge không bao giờ khởi chạy nó | — |
+| `opencode-cli` | `opencode` | Không (config từ chối) | Chặn tool qua config; không có OS sandbox | Chỉ login global |
+| `agy-cli` | `google` | Không (config từ chối) | `--mode plan --sandbox`; không có OS sandbox | Cả một `HOME` |
+
+- `executor` phải ghi được, nên chỉ có thể là `codex-cli` hoặc `claude-cli` với `allow_write`.
+- `planner` và `reviewer` chỉ cần quyền đọc; `client` nghĩa là chính bạn, thông qua
+  `bridge_review_task`.
+- **Định tuyến.** Task được ghim bằng `agent` hoặc `account` sẽ chạy ở đó. Nếu không, khi task
+  khởi động lần đầu, bridge chọn agent `default` của role, rồi đến agent đủ điều kiện đầu tiên
+  theo thứ tự trong role. Task giữ agent và session đó cho các lần thử lại.
+
+## Vòng đời workflow
+
+Một task, từ yêu cầu đến báo cáo:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor You as Bạn
-    participant C as Phiên Claude chính
+    actor You
+    participant C as Claude Code session
     participant B as agent-bridge
-    participant X as Executor (Codex)
-    actor H as Người dùng (terminal)
+    participant X as Executor agent
+    actor H as Human (terminal)
 
-    You->>C: mô tả thay đổi
+    You->>C: describe the change
     C->>B: bridge_create_task(spec, allowed_paths, verification_commands)
-    B-->>C: READY (đã kiểm luật path)
+    B-->>C: READY (path rules checked)
     C->>B: bridge_execute_task
-    B->>B: định tuyến tới executor mặc định (dự phòng theo thứ tự)
-    B->>X: chạy trong home của account, có sandbox
-    loop mỗi 55 giây
+    B->>X: run in its account home
+    loop until the task leaves RUNNING / VERIFYING
         C->>B: bridge_task_status(wait_s=55)
     end
-    X-->>B: kết thúc
-    B->>B: kiểm scope + chạy lại verification
-    alt có kiểm tra thất bại
-        B-->>C: REWORK (còn lượt) hoặc BLOCKED
-        C->>B: bridge_resume_task(notes)
-    else qua mọi cổng kiểm
+    X-->>B: exits
+    B->>B: scope check + re-run verification
+    alt a check failed
+        B-->>C: REWORK (budget left) or BLOCKED
+        C->>B: bridge_resume_task(feedback)
+    else all gates passed
         B-->>C: REVIEW
         C->>B: bridge_task_result (patch, checks, violations)
         C->>B: bridge_review_task(approve / rework / block)
-        B->>B: kiểm lại cổng → APPROVED
-        alt rủi ro cao hoặc path nhạy cảm
-            B-->>H: chờ ở APPROVED
+        alt high risk or sensitive path
+            B-->>H: waits at APPROVED
             H->>B: agent-bridge approve TASK_ID
         end
         B-->>C: DONE
     end
-    C-->>You: báo cáo kèm bằng chứng
+    C-->>You: report with the evidence
 ```
 
----
+Các trạng thái: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED → DONE`, cùng với
+`REWORK`, `FAILED`, `PAUSED`, `BLOCKED` và `CANCELLED`. `DONE`, `CANCELLED` và `BLOCKED` là trạng
+thái kết thúc.
 
-## Vòng đời task
-
-Trạng thái: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED → DONE`, cộng thêm
-`REWORK`, `FAILED`, `PAUSED`, `BLOCKED`, `CANCELLED`.
-
-| Chuyển trạng thái | Ai | Khi nào |
+| Chuyển | Ai | Điều kiện |
 |---|---|---|
-| `RUNNING → VERIFYING` | bridge | agent thoát bình thường |
-| `VERIFYING → REVIEW` / `REWORK` | bridge | scope sạch và mọi lệnh verification pass / có check fail |
-| `RUNNING → PAUSED` | bridge | quota, auth, network, thiếu CLI, runner bị ngắt (không tính vào số lần thử) |
-| `REVIEW → APPROVED` / `REWORK` / `BLOCKED` | client hoặc reviewer agent | `bridge_review_task` / lượt chạy reviewer |
-| `REVIEW → APPROVED` | bridge | không có stage review và mọi gate đã pass |
-| `APPROVED → DONE` | bridge, hoặc **người** với task rủi ro cao | quality gate được kiểm tra lại |
+| `BACKLOG → READY` | Bridge | Mọi task trong `depends_on` đã `DONE` |
+| `READY` / `REWORK` / `FAILED` / `PAUSED` → `RUNNING` | Client hoặc trình điều khiển workflow | `bridge_execute_task`, `bridge_resume_task`, `bridge_run_workflow` |
+| `RUNNING → VERIFYING` | Bridge | Agent kết thúc bình thường |
+| `RUNNING → FAILED` | Bridge | Timeout hoặc crash (`BLOCKED` khi hết ngân sách attempt) |
+| `RUNNING → PAUSED` | Bridge | Quota, auth, mạng, thiếu CLI hoặc runner bị gián đoạn; không tốn ngân sách attempt |
+| `VERIFYING → REVIEW` | Bridge | Không vi phạm phạm vi, mọi lệnh verification đều qua, agent báo `completed` |
+| `VERIFYING → REWORK` | Bridge | Có kiểm tra thất bại (`BLOCKED` khi hết ngân sách) |
+| `REVIEW → APPROVED` / `REWORK` / `BLOCKED` | Client hoặc reviewer agent | `bridge_review_task` hoặc lượt chạy của reviewer |
+| `REVIEW → APPROVED` | Bridge | Không có stage `review` và mọi gate đều qua |
+| `APPROVED → DONE` | Bridge, hoặc con người với task rủi ro cao | Kiểm tra lại quality gate |
+| Mọi trạng thái chưa kết thúc → `CANCELLED` | Client | `bridge_cancel_task` |
 
-Task có `risk_level: high`, hoặc thay đổi đụng tới path nhạy cảm (migrations, auth, deploy, CI,
-secrets), dừng ở `APPROVED` cho tới khi một người chạy `agent-bridge approve TASK_ID` trong
-terminal.
+Mỗi task chạy tối đa `max_rework + 1` lần (mặc định 3). Runner chết giữa chừng được phát hiện ở
+lần khởi động bridge kế tiếp: task chuyển sang `PAUSED` (`INTERRUPTED`) và `bridge_resume_task`
+tiếp tục đúng session đó.
 
----
+## Mô hình bảo mật và giới hạn
 
-## Danh sách lệnh
+Kit thu hẹp những gì agent được làm và kiểm chứng những gì agent đã làm. Nó không phải một
+sandbox hoàn chỉnh cho code không đáng tin cậy.
 
-### MCP tools
+**Bridge áp dụng cho mọi adapter:**
 
-| Tool | Mô tả |
+- **Path.** Kiểm tra khi tạo task (đường dẫn tuyệt đối, `..`, `~`, symlink thoát ra ngoài, path
+  protected, glob quá rộng) và sau mỗi lượt chạy (hash snapshot, diff toàn worktree, `HEAD` không
+  được đổi). Path protected (`.env*`, key, `.git/`, `.ai/`, `.mcp.json`,
+  `.claude/settings*.json`) không bao giờ được cho phép.
+- **Verification.** Bridge tự chạy lại, chỉ dùng argv (không qua shell), file thực thi phải nằm
+  trong allowlist, có timeout.
+- **Duyệt.** Executor không tự approve được. Client hoặc reviewer agent approve; bridge chỉ tự
+  approve khi workflow không có stage `review`. Task rủi ro cao hoặc đụng path nhạy cảm cần con
+  người duyệt trong terminal interactive.
+- **Process.** Agent khởi chạy từ argv list trong process group riêng; khi timeout hoặc bị huỷ,
+  bridge gửi SIGTERM rồi SIGKILL. Process group mồ côi của runner đã chết bị kill ở lần khởi động
+  sau, chỉ khi PID là process `codex`, `claude`, `opencode` hoặc `agy`.
+- **Environment và output.** Biến có dạng credential (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`,
+  `*PASSWORD*`, `AWS_*`) bị xoá trước khi agent hoặc lệnh verification chạy. Output được lưu đều
+  đi qua bước che secret.
+- **Chống đệ quy.** Mọi process agent nhận `AGENT_BRIDGE_AGENT=1`; server và CLI từ chối khởi
+  động khi có biến này.
+- **Audit.** Mọi lần chuyển trạng thái, attempt, quyết định định tuyến, review, thay đổi account
+  và trạng thái workflow đều là một event trong `bridge.db`.
+
+**Theo từng adapter:**
+
+- **Codex CLI** chạy trong OS sandbox của nó (`workspace-write` hoặc `read-only`; không thể cấu
+  hình `danger-full-access`), không có mạng, `/tmp` và `$TMPDIR` không ghi được, bỏ qua
+  `~/.codex/config.toml`. Lượt plan và review chạy `read-only`.
+- **Claude CLI** không có OS sandbox. Bridge chạy nó với `--strict-mcp-config` (không MCP server
+  nào), `--setting-sources ""` (không nạp settings, allow rule hay hook của user lẫn project),
+  `--permission-mode dontAsk` và allowlist Read/Glob/Grep. Khi `allow_write: true`, nó có thêm
+  Edit/Write giới hạn trong `allowed_paths` của task, còn path bị loại trừ và path protected bị
+  chặn. Tool đọc vẫn đọc được mọi thứ user của bạn đọc được, và `allow_bash: true` hoàn toàn
+  không bị giới hạn path. Nên dùng Codex làm executor và không bao giờ bật `allow_bash` cho việc
+  không đáng tin cậy.
+- **opencode và agy** chỉ đọc. opencode chạy với edit, bash, webfetch và thư mục bên ngoài bị
+  chặn qua `OPENCODE_CONFIG_CONTENT`; agy chạy `--mode plan --sandbox` và vẫn giữ các tool trình
+  duyệt mà CLI không tắt được. Probe không ghi file nào với cả hai; cả hai đều không có OS sandbox.
+- **Tùy chọn `claude_hook_settings`** trong `.ai/config.json` truyền một file settings chỉ chứa
+  hook cho mọi lượt chạy Claude. Các hook này là code được tin cậy, chạy không có sandbox; tùy
+  chọn này mặc định tắt.
+
+**Credential.** Mỗi account dùng auth home riêng, tạo bằng một lần đăng nhập mới, không bao giờ
+sao chép token của profile khác. Bridge chỉ đọc các event `rate_limits` của Codex trong
+`<home>/sessions/**/rollout-*.jsonl`; không bao giờ đọc `auth.json` hay file credential khác.
+
+**Giới hạn đã biết:**
+
+- Deny rule trong `.claude/settings.json` chỉ định hướng cho Claude Code, không phải ranh giới bảo
+  mật. Việc kiểm tra terminal interactive cho lệnh chỉ dành cho con người có thể bị vượt qua nếu
+  agent tự cấp một pseudo-terminal.
+- Lệnh verification chạy ngoài sandbox của Codex, với quyền của bạn.
+- Snapshot sau lượt chạy bao gồm file được track, file đã sửa và file protected ở cấp gốc; thay
+  đổi ở một file secret lồng sâu và bị git-ignore sẽ không bị phát hiện.
+- Codex và Claude vẫn ghi file session của riêng chúng (`~/.codex/sessions`, `~/.claude.json`).
+- Các file trong `.ai/` ngoài `config.json` bị git-ignore và Codex ghi được; hãy coi chúng là bản
+  sao tiện dụng, không phải đầu vào đáng tin cậy.
+- Mỗi worktree chỉ có một tiến trình ghi; trình điều khiển workflow chạy lần lượt từng task. Muốn
+  ghi song song cần các worktree riêng.
+- Quota của Claude chỉ biết được sau lượt chạy đầu tiên của account qua bridge; quota của Codex là
+  snapshot từ session gần nhất, không phải truy vấn trực tiếp.
+- Hành vi sandbox của Codex mới chỉ được kiểm chứng trên macOS.
+- Chưa hỗ trợ: opencode hoặc agy làm executor, chiến lược định tuyến ngoài "agent đủ điều kiện
+  đầu tiên", nhiều reviewer bỏ phiếu, và stage riêng cho role tùy chỉnh. Muốn thêm CLI khác cần
+  viết một lớp con `Adapter` mới.
+
+Chi tiết hơn: [docs/REPORT.md](docs/REPORT.md) (phiên bản CLI đã kiểm chứng, các probe và danh
+sách giới hạn đầy đủ, tiếng Anh).
+
+## Theo dõi
+
+### Dashboard trong terminal
+
+Chạy `agent-bridge` (hoặc `agent-bridge tui`) trong project. Dashboard làm mới mỗi 3 giây và
+không bao giờ khởi chạy agent: lượt chạy thuộc về process MCP server.
+
+- **Search**, **Agents** và **Accounts** ở bên trái. Accounts liệt kê mọi account máy biết: account
+  của project và toàn máy, home codex-switch chưa được thêm, profile codex-switch và claude-switch
+  (đánh dấu không dùng được) và các CLI đã cài nhưng chưa có account.
+- **Needs you** (task ở `APPROVED`, `REVIEW`, `PAUSED`, `FAILED`, `BLOCKED`) và **Tasks** ở giữa.
+- **Detail** bên phải: mục tiêu, kết quả kiểm tra, diff stat và review của task; hoặc provider,
+  login, trạng thái, quota, home và lỗi gần nhất của account.
+
+Nhấn **Enter** trên một dòng để xem các thao tác phù hợp; footer chỉ hiện các phím dùng được
+cho dòng đang chọn.
+
+<img alt="Thao tác cho task ở REVIEW" src="docs/images/dashboard-actions.svg" width="900">
+<img alt="Đang chọn một account" src="docs/images/dashboard-account.svg" width="900">
+
+| Phím | Thao tác |
 |---|---|
-| `bridge_health` | Adapter (path/version), login Codex, task đang chạy, % quota còn lại theo account |
-| `bridge_list_agents` | Agent, role, quyền, tình trạng sẵn sàng, stage, quota fallback |
-| `bridge_list_accounts` | Account, trạng thái đăng nhập, snapshot quota (cửa sổ 5h / 7d), home/profile codex-switch (không lộ credential) |
-| `bridge_create_task` | Hợp đồng task đã validate (path, tiêu chí, verification, deps, risk, agent/account) |
-| `bridge_execute_task` | Chạy executor agent ở background |
-| `bridge_task_status` | Trạng thái gọn; long-poll `wait_s ≤ 55` |
-| `bridge_task_result` | Spec, các attempt, JSON cuối của agent, diff stat + patch, check của bridge, review |
-| `bridge_review_task` | approve / rework / block bởi client (cũng dùng để thay quyết định khi reviewer agent lỗi) |
-| `bridge_resume_task` | Rework hoặc khôi phục, cùng session và agent |
-| `bridge_cancel_task` | Kill process group của lượt chạy và huỷ task |
-| `bridge_list_tasks` | Mới nhất trước, lọc theo trạng thái tuỳ chọn |
-| `bridge_plan` | Chạy planner agent; tạo workflow |
-| `bridge_workflow_status` | Trạng thái workflow và các task; long-poll `wait_s ≤ 55` |
-| `bridge_run_workflow` | Chạy workflow tới DONE / INCOMPLETE / WAITING |
+| `Tab` / `Shift+Tab`, `↑` `↓` | Chuyển giữa các panel và dòng (dùng chuột cũng được) |
+| `Enter` | Thao tác cho task hoặc account đang chọn |
+| `/` | Tìm task theo id, trạng thái, agent hoặc mục tiêu |
+| `p` / `a` / `v` | Xem patch / approve task đang chờ con người / review task ở `REVIEW` |
+| `c` / `m` | Huỷ task / chuyển sang agent khác (session mới) |
+| `l` / `u` / `x` / `d` | Trên account: đăng nhập / mở shell bằng account đó (agy: hiện dòng `eval`) / đánh dấu sẵn sàng / xoá |
+| `n` | Thêm account toàn máy (trên dòng home codex-switch: thêm home đó) |
+| `s` | Settings; `e` trong đó mở `.ai/orchestrator.yaml` (hoặc `config.json`) bằng `$EDITOR` |
+| `?` / `q` | Danh sách phím / thoát |
 
-### CLI (`agent-bridge <cmd>`)
+### Các lệnh CLI xem nhanh
 
-| Lệnh | Mô tả |
-|---|---|
-| *(không có)* / `tui` | Dashboard cho project ở thư mục hiện tại |
-| `web [--port N] [--open]` | Dashboard web chỉ đọc cho mọi project và worktree đã biết; chỉ trên localhost |
-| `init [dir] [--force]` / `uninstall [dir] [--purge]` | Cài vào / gỡ khỏi một project |
-| `storage status` / `storage migrate [--apply]` | Xem nơi lưu trữ / xem trước hoặc thực hiện di chuyển |
-| `storage relink <old-root> <new-root> [--apply]` | Gắn lại lịch sử tập trung sau khi di chuyển kho mã (người dùng chạy) |
-| `storage rollback <root> [--yes]` | Chuyển bản tập trung sang nơi lưu riêng (người dùng chạy) |
-| `storage cleanup-legacy [--apply]` | Xem trước hoặc sao lưu file cũ đã xác minh (người dùng chạy) |
-| `storage prune [--apply]` | Xem trước hoặc xóa mục đăng ký của thư mục không còn tồn tại |
-| `storage gc --logs-older-than DAYS [--apply]` | Xem trước hoặc xóa nhật ký cũ của tác vụ đã kết thúc |
-| `serve` | MCP stdio server (lệnh mà `.mcp.json` chạy) |
-| `config-init [example]` | Chỉ người dùng: ghi `.ai/orchestrator.yaml` từ một file mẫu đi kèm (từ chối nếu đã có); không có tên thì liệt kê file mẫu và đường dẫn `config.example.json` |
-| `config-check` | Kiểm tra `.ai/orchestrator.yaml` (hoặc cấu hình legacy) |
-| `agents [--json]` | Role → agent, rồi bảng agent kèm quyền và tình trạng sẵn sàng |
-| `health [--json]` | OK / NOT OK, adapter, quota, số task và việc cần sửa; thoát exit 1 khi không OK |
-| `create <spec.json>` | Tạo task từ file spec |
-| `execute` / `status` / `result` | Chạy task, xem trạng thái, xem kết quả |
-| `review` / `resume` / `cancel` | Review, chạy tiếp hoặc huỷ task |
-| `plan "<objective>"` / `run-workflow <W…>` / `workflow-status <W…>` | Workflow do planner agent lập |
-| `list [--json]` | Task kèm trạng thái, số lần chạy và thời gian; task cần bạn xử lý có dấu `●` và lệnh tiếp theo |
-| `account-list [--all] [--json]` | Account dùng được (của project và toàn máy) kèm lệnh để thêm; `--all` hiện thêm profile codex-switch / claude-switch, home chưa thêm và CLI đã cài chưa có account. Terminal hẹp sẽ có bảng gọn |
-
-Trong terminal bốn lệnh này in bảng; khi có `--json` hoặc khi pipe output, chúng in đúng JSON
-mà các MCP tool trả về.
-| `account-use <name> [--shell]` | In dòng `export`/function cho `eval "$(…)"`, hoặc mở subshell, để CLI interactive của bạn dùng account đó |
-| `account-clear <name>` | Gỡ cờ "unavailable" của account sau khi user xác nhận |
-
-**Chỉ dành cho người** (cần terminal interactive và gõ xác nhận, hoặc dùng dashboard):
-
-| Lệnh | Mô tả |
-|---|---|
-| `approve <id>` | Duyệt task rủi ro cao / đụng path nhạy cảm |
-| `reassign <id> <agent\|account>` | Chuyển task sang agent khác (session mới) |
-| `account-login <name>` | Đăng nhập mới vào home riêng của account (`codex login`, `claude auth login`, `agy`, `opencode auth login`) |
-| `account-add <name> --provider openai\|anthropic\|google\|opencode [--home DIR]` | Tạo account toàn máy (home mới trong `~/.agent-bridge/homes/` nếu không có `--home`; opencode: một account dùng login global), rồi đăng nhập |
-| `account-remove <name>` | Bỏ account toàn máy; chỉ xoá home nếu `account-add` đã tạo nó |
-
----
-
-## Cấu hình bridge (`.ai/config.json`, tuỳ chọn)
-
-Xem `.ai/config.example.json`: mọi cấu hình bridge kèm giá trị mặc định; dùng được cùng
-`orchestrator.yaml`. Chỉ chép các key cần đổi: một list bạn đặt sẽ thay hẳn list mặc định.
-Key lạ bị từ chối. Account khai báo trong `orchestrator.yaml` hoặc tạo bằng `account-add`; các
-key `accounts` / `auto_switch` bên dưới chỉ dành cho cấu hình legacy.
-
-| Key | Mặc định | Ý nghĩa |
-|---|---|---|
-| `sandbox` | `workspace-write` | hoặc `read-only`; không chấp nhận `danger-full-access` |
-| `codex_bin` / `claude_bin` / `opencode_bin` / `agy_bin` | `codex` / `claude` / `opencode` / `agy` | file chạy của CLI |
-| `claude_hook_settings` | `null` | đường dẫn tuyệt đối tới file JSON ngoài project, chỉ chứa object `hooks`; truyền cho mọi lượt chạy Claude qua `--settings`. Là mã được tin cậy, chạy không có sandbox |
-| `default_timeout_s` / `max_timeout_s` | 1800 / 7200 | giới hạn mỗi lượt chạy |
-| `max_attempts` | 3 | chỉ cho cấu hình legacy; có `orchestrator.yaml` thì dùng `workflow.max_rework` |
-| `network_retries` / `retry_backoff_s` | 1 / 10 | retry có giới hạn, chỉ cho lỗi network |
-| `verify_timeout_s` | 900 | cho mỗi lệnh verification |
-| `verify_allowlist` | pytest, uv, python, … | file chạy mà verification được phép gọi |
-| `protected_paths` | `.env*`, key, `.git/**`, `.ai/**`, … | task không bao giờ được ghi |
-| `sensitive_paths` | migrations, auth, deploy, CI, secrets | thay đổi ⇒ cần người duyệt |
-| `env_deny` / `env_allow` | `*_API_KEY`, `*_TOKEN`, … | bị xoá khỏi env của agent/verify |
-| `accounts` / `default_account` / `auto_switch` | — | chỉ cho cấu hình legacy; khi có `orchestrator.yaml`, đặt `accounts` hoặc bật `auto_switch` ở đây là lỗi |
-| `lock_dir` | `~/.agent-bridge/locks` (`$AGENT_BRIDGE_HOME/locks`) | lock account giữa các process |
-
-Mặc định này giúp giới hạn của từng tài khoản có hiệu lực trên mọi dự án và tiến trình trên máy.
-
-### Trạng thái và file
-
-| Path | Commit | Nội dung |
-|---|---|---|
-| `.ai/config.json` | có | cấu hình bridge; agent sửa file này là vi phạm scope |
-| `.ai/orchestrator.yaml` | không (home gắn với máy) | role, agent, account, workflow |
-| `$AGENT_BRIDGE_HOME/projects/<project>/worktrees/<worktree>/` | không bao giờ | `bridge.db`, `logs/`, file tạm mỗi lượt chạy, `worktree.json` và `migration.json` sau khi di chuyển |
-| `$(git rev-parse --absolute-git-dir)/agent-bridge/install-manifest.json` | không bao giờ | bản kê cài đặt, vẫn nằm trong thư mục git |
-
-`AGENT_BRIDGE_HOME` mặc định là `~/.agent-bridge`, phải là đường dẫn tuyệt đối bên ngoài
-worktree. Trạng thái tập trung nằm ngoài worktree để sandbox `workspace-write` của Codex
-không thể ghi vào đó (đã kiểm chứng trên codex-cli 0.166: agent chạy `touch` và ghi bằng Python
-vào đó đều bị từ chối với "Operation not permitted"). Database cũ trong thư mục git vẫn được sử dụng cho đến khi di chuyển.
-Database cũ được bổ sung cột và bảng ở lần khởi động đầu tiên. Lịch sử tập trung vẫn đọc được
-khi thư mục worktree đã bị xoá.
-
-#### Di chuyển trạng thái hiện có
-
-Đóng các phiên Claude, TUI và máy chủ web. Chạy `agent-bridge storage status` để xem kế hoạch,
-sau đó chạy `agent-bridge storage migrate --apply`. Không có `--apply` thì chỉ xem trước.
-Quá trình di chuyển dùng SQLite backup (bao gồm WAL), kiểm tra tính toàn vẹn database, số dòng
-và mã băm từng bảng, đồng thời sao chép log và kiểm tra SHA-256. Nguồn được kiểm tra để bảo đảm
-không thay đổi trước khi công bố bản tập trung. Các file cũ được giữ nguyên.
-`agent-bridge storage relink <old-root> <new-root> [--apply]` gắn lại lịch sử tập trung sau khi di chuyển hoặc đổi tên kho mã hay cây làm việc; mặc định chỉ xem trước thay đổi.
-`agent-bridge storage rollback <root>` chuyển bản tập trung sang nơi lưu riêng; thêm `--yes` để chấp nhận ẩn các sự kiện mới hơn.
-`agent-bridge storage cleanup-legacy --apply` chuyển các file cũ đã xác minh vào `~/.agent-bridge/backups`; không xóa dữ liệu.
-`agent-bridge storage prune [--apply]` xóa mục đăng ký của đường dẫn không còn là thư mục; mặc định chỉ xem trước thay đổi.
-`agent-bridge storage gc --logs-older-than DAYS [--apply]` xem trước việc xóa nhật ký lần chạy trong kho tập trung cũ hơn DAYS ngày (tối thiểu 1) của tác vụ DONE, CANCELLED hoặc BLOCKED; thêm `--apply` để xóa các nhật ký đó và giữ nguyên mọi dòng trong cơ sở dữ liệu.
-Health cảnh báo nếu tiến trình cũ ghi thêm sự kiện vào
-database cũ sau khi di chuyển (split-brain).
-
-
----
-
-## Account
-
-Dấu trạng thái quota/xác thực và quota được báo cáo được chia sẻ giữa mọi dự án trên máy qua `$AGENT_BRIDGE_HOME/accounts.db`; `agent-bridge account-clear` xóa dấu trạng thái trên toàn máy.
-
-Account không có `home` dùng login global kế thừa của CLI (`~/.codex`, `~/.claude`), bridge chỉ
-đọc. Account có `home` là một phiên đăng nhập riêng: bridge đặt `CODEX_HOME` hoặc
-`CLAUDE_CONFIG_DIR` cho mọi lượt chạy trên nó. Home phải là đường dẫn tuyệt đối, nằm ngoài
-project và ngoài các home global, và không bao giờ dùng chung giữa hai account.
-
-`agent-bridge account-login <name>` (người chạy) đăng nhập mới vào home đó; với Codex, lệnh báo
-lỗi rõ ràng nếu `~/.codex/auth.json` global bị thay đổi trong lúc đăng nhập. Home tạo bằng
-`codex-switch home add` dùng được làm account Codex; profile snapshot của `codex-switch` chỉ được
-liệt kê, không bao giờ được dùng, vì dùng nghĩa là phải copy refresh token.
-
-### Account toàn máy và chuyển account
-
-`agent-bridge account-add work --provider openai` (người chạy) tạo `~/.agent-bridge/homes/work`
-(mode 0700), ghi vào `~/.agent-bridge/accounts.json` và chạy lệnh đăng nhập của chính provider
-trong home đó: một phiên mới, không bao giờ copy từ login khác. `--home DIR` đăng ký một home có
-sẵn, ví dụ home tạo bằng `codex-switch home add`. Mọi project đều thấy các account này theo tên;
-account mà project tự khai báo thì được ưu tiên.
-
-Một tên dùng được cho nhiều provider: sau `account-add work --provider openai`, lệnh
-`account-add work --provider google` tạo account google với mã `work@google` (home
-`~/.agent-bridge/homes/work@google`). Danh sách hiện cả hai là `work`. Agent khai báo
-`account: work` sẽ nhận account đúng provider của adapter. Các lệnh `account-login`,
-`account-use`, `account-clear` và `account-remove` cần thêm `--provider` (hoặc gõ mã
-`work@google`) khi tên bị trùng.
-
-Để dùng một account trong terminal của bạn:
+Các lệnh này in bảng trong terminal và in JSON khi có `--json` hoặc khi output được pipe:
 
 ```bash
-eval "$(agent-bridge account-use work)"   # export CODEX_HOME=… / CLAUDE_CONFIG_DIR=…
-agent-bridge account-use work --shell     # hoặc mở subshell; exit để quay lại
+agent-bridge health        # adapter, quota mỗi account, số task
+agent-bridge agents        # role, agent và tình trạng sẵn sàng
+agent-bridge account-list  # account và trạng thái login; --all thêm profile và CLI chưa dùng
+agent-bridge list          # task của project này, mới nhất trước
+agent-bridge tasks         # task của mọi project và worktree trên máy
 ```
 
-`~/.codex` và `~/.claude` không bao giờ bị ghi đè. Với agy, home của account là cả một `HOME`,
-nên `account-use` định nghĩa hàm shell `agy` thay vì đổi `HOME`. opencode chỉ có một login global
-nên `account-add <name> --provider opencode` tạo một account không có `home`; sau đó
-`account-login <name>` chạy `opencode auth login`, nơi bạn chọn integration và phương thức đăng
-nhập (ví dụ API key hoặc token).
+<img alt="agent-bridge list" src="docs/images/cli-list.svg" width="900">
+<img alt="agent-bridge account-list" src="docs/images/cli-accounts.svg" width="900">
 
-- Task ở yên trên agent và account của nó. Retry và resume dùng cùng home và session. Người dùng
-  chuyển nó bằng `agent-bridge reassign <id> <agent>` (session mới), hoặc bridge tự chuyển khi bật
-  quota fallback (bên dưới).
-- QUOTA hoặc AUTH đánh dấu account là unavailable. Dấu QUOTA tự gỡ khi snapshot cho thấy
-  quota còn lại lớn hơn 0 sau khi một cửa sổ đang mở lúc đánh dấu đã reset.
-  AUTH và account không có snapshot vẫn cần `agent-bridge account-clear <name>` sau khi user xác nhận.
-- Quota: với Codex là event `rate_limits` mới nhất trong rollout session của home
-  (`<home>/sessions/**/rollout-*.jsonl`; không mở gì khác); với Claude là `rate_limit_event` mà
-  CLI báo ở lượt chạy gần nhất qua bridge. Còn lại = `100 − max(% đã dùng 5h, % đã dùng 7d)`;
-  `UNKNOWN` với account chưa từng báo.
-- Chạy song song: tối đa `max_concurrency` process agent mỗi account (slot `flock` giữa các
-  process trong `lock_dir`) và một task `workspace-write` mỗi worktree; lượt chạy read-only
-  (plan, review, task `read-only`) có thể chạy cùng lúc.
+Ảnh chụp màn hình lấy từ một lượt chạy end-to-end của tool đã cài trên dữ liệu giả (agent CLI
+giả, `HOME` mới, một project demo). Tạo lại bằng
+`"$(uv tool dir)/agent-orchestration-kit/bin/python" scripts/screenshots.py docs/images`.
 
-### Quota fallback (opt-in)
+### Dashboard web
 
-```yaml
-routing:
-  quota_fallback: {enabled: true, min_remaining_pct: 15, agents: [codex-b, codex-a]}
-```
+`agent-bridge web [--port N] [--open]` phục vụ dashboard trên trình duyệt tại `127.0.0.1` (port
+mặc định 8765; `--port 0` tự chọn port trống; Ctrl+C để dừng). URL được in ra chứa một token bí
+mật sinh cho mỗi lần chạy, mọi request API đều cần token này; đừng chia sẻ nó.
 
-Trước khi task bắt đầu hoặc chạy lại, bridge kiểm tra account của nó. Khi account đang ở trạng
-thái QUOTA hoặc dưới `min_remaining_pct`, task được chuyển sang agent ứng viên đầu tiên trên
-account khác mà đang sẵn sàng, đã đăng nhập, chưa vượt giới hạn song song và có quota từ ngưỡng
-trở lên (hoặc `UNKNOWN`). Việc chuyển bỏ session cũ (task chạy lại với prompt đầy đủ cộng feedback
-review), được ghi event `account_auto_switched`, và không bao giờ kích hoạt bởi AUTH. Bật nó chính
-là sự cho phép của user; block `auto_switch` legacy trong `config.json` được ánh xạ sang đây.
+Dashboard bao quát mọi project mà agent-bridge biết trên máy cùng các git worktree của chúng:
+approval đang chờ kèm lệnh chính xác, task bị blocked, failed hoặc paused, task chờ review, task
+đang chạy với thời gian đã chạy so với timeout, tiến độ tổng thể, hoạt động trong 24 giờ qua và
+bảng request có ngăn chi tiết (không có patch). Giao diện chuyển được giữa tiếng Việt và tiếng
+Anh.
 
----
-
-## Cách hoạt động & Bảo mật
-
-1. **Codex CLI:** OS sandbox `workspace-write` hoặc `read-only`, không network, `/tmp` và `$TMPDIR`
-   không ghi được, bỏ qua `~/.codex/config.toml` của user, prompt qua stdin. Lượt plan và review
-   chạy `read-only`.
-2. **Claude CLI:** không có OS sandbox, nên bridge thu hẹp nó: `--strict-mcp-config` (không MCP
-   server nào, nên không thể điều phối đệ quy), `--setting-sources ""` (không nạp settings, allow rule hay hook của user lẫn project; các deny `Read(...)` chặn file credential của kit được truyền bằng `--disallowedTools` ở mọi lần chạy),
-   `--permission-mode dontAsk` với allowlist tool: Read/Glob/Grep; khi `allow_write: true` thì
-   có thêm Edit/Write giới hạn theo `allowed_paths` của task (`Edit(./src/**)`), còn path bị
-   loại trừ và path protected bị chặn. Probe cho thấy Write không giới hạn ghi được file ngoài
-   worktree, còn rule theo path thì bị từ chối. **Mức cô lập vẫn yếu hơn Codex**: tool đọc đọc
-   được mọi thứ user đọc được, và Bash (`allow_bash: true`) hoàn toàn không bị giới hạn path.
-   Nên dùng Codex làm executor; không bao giờ bật `allow_bash` cho việc không đáng tin cậy.
-   Tùy chọn `claude_hook_settings` mặc định tắt, chỉ do con người đặt trong
-   `.ai/config.json`, bổ sung `--settings <file>`. File phải là JSON thông thường,
-   có đường dẫn tuyệt đối ngoài project và chỉ chứa object `hooks`. Các hook này là
-   mã được tin cậy, chạy không có sandbox.
-
-3. **opencode và agy:** chỉ đọc (planner / reviewer); config từ chối `allow_write`. opencode
-   chạy với `OPENCODE_CONFIG_CONTENT` cấm edit, bash, webfetch và thư mục ngoài, tắt config của
-   project; probe không ghi file nào. Rule edit giới hạn theo path cũng không ghi được gì, nên
-   quyền ghi tắt cho tới khi chứng minh được việc giới hạn path. agy chạy `--mode plan
-   --sandbox`, probe không ghi file nào; nó vẫn có các tool trình duyệt mà CLI không tắt được.
-   Cả hai không có OS sandbox như Codex.
-4. **Chống đệ quy:** mọi process agent có `AGENT_BRIDGE_AGENT=1`; server và CLI từ chối khởi động
-   khi có biến này.
-5. **Process:** argv list, không shell; process group riêng, SIGTERM rồi SIGKILL khi timeout hoặc
-   huỷ; process group agent mồ côi của runner đã chết bị kill ở lần khởi động sau (chỉ khi PID là
-   process `codex`, `claude`, `opencode` hoặc `agy`).
-6. **Environment:** biến trông giống credential (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, …) bị xoá.
-7. **Path:** kiểm tra khi tạo task (tuyệt đối, `..`, `~`, symlink thoát ra ngoài, protected, quá
-   rộng) và sau mỗi lượt chạy với mọi adapter (hash snapshot, diff toàn worktree, `HEAD` không
-   được đổi).
-8. **Verification:** bridge tự chạy lại, chỉ argv, file chạy nằm trong allowlist, có timeout.
-9. **Duyệt:** executor không tự approve được. Client hoặc reviewer agent approve; bridge chỉ
-   approve trong workflow gates-only. Task rủi ro cao hoặc đụng path nhạy cảm cần người ở terminal
-   interactive. `.claude/settings.json` cũng chặn Claude Code chạy các lệnh này, lệnh đăng nhập
-   account, `sqlite3` và sửa file dưới `.ai/`.
-10. **Audit:** mọi chuyển trạng thái, attempt, quyết định định tuyến, review (kèm reviewer), thay
-   đổi account và trạng thái workflow đều là event trong `bridge.db`. Output được lưu đều qua bước
-   che secret.
-
----
-
-## Kiểm thử
-
-```bash
-scripts/check.sh                                   # toàn bộ suite (fake codex + fake claude: tất định)
-CODEX_SMOKE=1 uv run pytest -m real_codex          # hai lượt Codex thật (task + workflow một agent), opt-in, tốn quota của bạn
-CLAUDE_SMOKE=1 uv run pytest tests/e2e/test_real_claude_smoke.py   # một lượt review bằng Claude thật (haiku)
-OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py  # review bằng opencode / agy thật
-```
-
-Kết quả:
-```console
-188 passed, 5 skipped
-```
-
-`tests/fakes/codex`, `claude`, `opencode` và `agy` nói đúng giao thức JSONL / stream-json thật và trả lời
-theo output schema (executor, reviewer, planner). Suite bao phủ cấu hình A–E
-(Claude→Codex→Claude, Codex→Claude→Codex, hai account Codex executor, một agent, chỉ gate),
-định tuyến, ghim agent, affinity, quota fallback, giới hạn rework, reviewer lỗi, validate config,
-cô lập account, slot chạy song song, ánh xạ legacy, nâng cấp schema, account toàn máy và dashboard.
-
----
-
-## Đã hỗ trợ và chưa hỗ trợ
-
-| Đã hỗ trợ | Chưa hỗ trợ |
-|---|---|
-| Adapter `codex-cli`, `claude-cli`, `client`; `opencode-cli`, `agy-cli` chỉ đọc | opencode / agy làm executor (chưa chứng minh giới hạn ghi theo path); CLI khác: thêm một subclass `Adapter` |
-| Role planner / executor / reviewer + role tuỳ chỉnh trong config | Role tuỳ chỉnh chưa có stage riêng; `tester` chính là stage `test` của bridge |
-| Định tuyến ordered và explicit, ghim agent, affinity, giới hạn theo account | Chiến lược cân bằng tải ngoài "đủ điều kiện đầu tiên" |
-| Quota fallback opt-in giữa các agent | Fallback khi AUTH (theo thiết kế: không bao giờ) |
-| Planner agent → workflow → driver tuần tự | Nhiều task ghi song song trong một worktree (dùng worktree riêng) |
-| Reviewer agent, client có thể thay quyết định; workflow chỉ gate | Nhiều reviewer bỏ phiếu |
-| Quota Claude từ `rate_limit_event` | Quota Claude trước lượt chạy đầu tiên của account qua bridge |
-
----
+Dashboard web chỉ đọc: nó mở từng `bridge.db` bằng SQLite `mode=ro`, không khởi chạy agent nào
+và không thực hiện thao tác nào dành cho con người. Nó chỉ lắng nghe trên `127.0.0.1` và từ chối
+các header `Host` khác.
 
 ## Xử lý sự cố
 
-| Triệu chứng | Nguyên nhân / cách xử lý |
+| Triệu chứng | Nguyên nhân và cách xử lý |
 |---|---|
-| `agent-bridge: ⏸ Pending approval` | mở `claude` trong thư mục một lần và trust nó |
-| `config-check` báo lỗi | thông báo ghi rõ field; sửa `.ai/orchestrator.yaml` |
-| `health.ok = false` | thiếu CLI của một adapter, hoặc `codex` chưa đăng nhập: đăng nhập (người làm) |
-| `no eligible executor agent (…)` | mọi executor đều tắt, bận hoặc unavailable; lý do được liệt kê theo từng agent |
-| task PAUSED `QUOTA` / `AUTH` | resume sau khi cửa sổ quota reset và quota còn lại lớn hơn 0; với AUTH hoặc không có snapshot, xử lý lỗi rồi `agent-bridge account-clear <name>` và resume; bật quota fallback thì resume có thể chuyển task nếu quota vẫn không đủ |
-| event `agent_review_failed` | reviewer agent lỗi; task chờ ở REVIEW để `bridge_review_task` |
-| workflow `WAITING` | `detail.waiting` và trạng thái task cho biết cần xử lý gì; xử lý xong chạy lại `bridge_run_workflow` |
-| task PAUSED `INTERRUPTED` | runner đã chết; `bridge_resume_task` chạy tiếp session |
-| `ConflictError … already writing` | mỗi worktree một writer; chờ hoặc dùng worktree khác |
-| `account … busy in another bridge process` | slot của account đang bị dùng ở nơi khác |
-| REWORK `outside allowed paths` | executor sửa file ngoài spec; đọc patch, rework |
+| `agent-bridge: command not found` | Chạy `uv tool update-shell` rồi mở shell mới. |
+| `not a git repository` hoặc `Target must be a git work tree` | Bridge chỉ chạy trong git repository; chạy `git init` hoặc chuyển thư mục. |
+| `claude mcp list` hiện `agent-bridge: ⏸ Pending approval` | Mở `claude` trong thư mục một lần và trust nó. |
+| Lỗi `config-check` | Thông báo nêu đúng field; sửa `.ai/orchestrator.yaml`. |
+| `health` báo NOT OK | Thiếu adapter CLI hoặc CLI chưa đăng nhập; con người đăng nhập. |
+| `no eligible executor agent (…)` | Mọi executor đều bị tắt, bận hoặc không sẵn sàng; lý do được liệt kê theo từng agent. |
+| Task `PAUSED` với `QUOTA` hoặc `AUTH` | Chờ cửa sổ quota reset hoặc sửa login; sau đó chạy `agent-bridge account-clear <name>` nếu dấu vẫn còn, rồi resume. Khi bật quota fallback, resume có thể chuyển task sang account khác. |
+| Task `PAUSED` với `INTERRUPTED` | Runner đã chết; `bridge_resume_task` tiếp tục session. |
+| Event `agent_review_failed` | Reviewer agent gặp lỗi; task chờ ở `REVIEW` để gọi `bridge_review_task`. |
+| Workflow `WAITING` | `detail.waiting` và trạng thái task cho biết cần xử lý gì; xử lý xong thì chạy lại `bridge_run_workflow`. |
+| `ConflictError … already writing` | Mỗi worktree chỉ một tiến trình ghi; chờ, hoặc dùng worktree khác. |
+| `account … busy in another bridge process` | Slot chạy song song của account đang được dùng ở nơi khác. |
+| `REWORK` với `outside allowed paths` | Executor sửa file ngoài phạm vi task; đọc patch rồi yêu cầu rework. |
+| `health` cảnh báo storage legacy | Migrate bằng `agent-bridge storage status`, rồi `storage migrate --apply` ([chi tiết](docs/configuration.md#migrating-and-maintaining-state)). |
 
----
+## Phát triển và kiểm thử
 
-## Gỡ cài đặt
+```bash
+uv sync                          # .venv cục bộ của project với Python 3.12+
+scripts/check.sh                 # toàn bộ test với CLI giả (tất định, không tốn quota)
+scripts/check.sh --with-health   # thêm yêu cầu `agent-bridge health` báo OK
+```
 
-Trong project: `agent-bridge uninstall` (thêm `--purge` để xoá `.ai/`). Lịch sử task vẫn nằm trong thư mục
-trạng thái của bridge dưới `AGENT_BRIDGE_HOME` (mặc định `~/.agent-bridge`), hoặc vị trí cũ trước
-khi di chuyển. Gỡ tool: `uv tool uninstall agent-orchestration-kit`, rồi xoá thư mục clone.
+Smoke test tùy chọn với CLI thật sẽ tốn quota của bạn:
 
-## Hạn chế đã biết
+```bash
+CODEX_SMOKE=1 uv run pytest -m real_codex                                        # hai lượt Codex thật
+CLAUDE_SMOKE=1 uv run pytest tests/e2e/test_real_claude_smoke.py                 # một lượt review bằng Claude thật
+OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py    # review bằng opencode / agy thật
+```
 
-Hỗ trợ Windows đã được triển khai nhưng chưa được kiểm thử trên máy Windows thực tế. Các bảo đảm của sandbox hệ điều hành Codex chỉ được xác minh trên macOS.
+Các CLI giả trong `tests/fakes/` (`codex`, `claude`, `opencode`, `agy`) nói đúng giao thức JSONL và
+stream-json thật. Bộ test bao phủ các cấu hình đi kèm, định tuyến, ghim agent, affinity, quota
+fallback, giới hạn rework, reviewer lỗi, validate config, cô lập account, slot chạy song song,
+ánh xạ legacy, nâng cấp schema, migrate storage, account toàn máy và các dashboard.
 
-Xem `docs/REPORT.md` → *Limitations*.
+## Tài liệu khác
 
-## Changelog
+| Tài liệu | Nội dung |
+|---|---|
+| [docs/configuration.md](docs/configuration.md) | Mọi key của `orchestrator.yaml` và `config.json`, account, quota, quota fallback, nơi lưu trạng thái và migration (tiếng Anh) |
+| [docs/cli-reference.md](docs/cli-reference.md) | MCP tool kèm tham số, mọi lệnh CLI và các lệnh chỉ dành cho con người (tiếng Anh) |
+| [docs/REPORT.md](docs/REPORT.md) | Báo cáo build: phiên bản CLI đã kiểm chứng, probe bảo mật, giới hạn đã biết (tiếng Anh) |
+| [CHANGELOG.md](CHANGELOG.md) | Lịch sử phát hành |
 
-Xem [CHANGELOG.md](CHANGELOG.md).
+## Đóng góp và giấy phép
 
----
+Trước khi mở pull request, hãy chạy `scripts/check.sh`, thêm mục vào `CHANGELOG.md` dưới
+*Unreleased*, và giữ README này đồng bộ với [README.md](README.md).
 
-## License
-
-[MIT](LICENSE) © leetuanbmt.
+Phát hành theo [giấy phép MIT](LICENSE) © leetuanbmt.
