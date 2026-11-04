@@ -179,3 +179,63 @@ def test_legacy_review_events_fallback(repo, fake_codex, monkeypatch):
                   (json.dumps({"decision": "rework"}), tid))
     with pytest.raises(TransitionError):
         b._assert_gates(tid)
+
+
+# @pt.id T0054-01
+# @pt.item test_second_review_decision_is_refused
+# @pt.condition racing client reads REVIEW after rework was recorded
+# @pt.expected TransitionError preserves rework and one review event
+# @pt.target Bridge._apply_review
+# @pt.method integration
+# @pt.legacy T0053 review persistence
+@pytest.mark.parametrize("decision", ["rework", "block", "approve"])
+def test_second_review_decision_is_refused(repo, fake_codex, monkeypatch, decision):
+    b, tid = ready(repo, fake_codex, monkeypatch)
+    stale = b.store.get(tid)
+    run(b.review_task(tid, "rework", "first decision"))
+    with monkeypatch.context() as patch:
+        patch.setattr(b.store, "get", lambda task_id: stale)
+        with pytest.raises(TransitionError):
+            b._apply_review(tid, decision, "second decision", Actor.CLIENT, None)
+    assert b.store.get(tid)["state"] == State.REWORK
+    assert b.store.attempts(tid)[-1]["review"]["decision"] == "rework"
+    assert len(events(b, tid, "review")) == 1
+
+
+# @pt.id T0054-02
+# @pt.item test_event_detail_keys_redacted
+# @pt.condition event detail contains a secret-shaped dictionary key
+# @pt.expected stored JSON excludes the secret
+# @pt.target Store._event
+# @pt.method unit
+# @pt.legacy T0053 detail sanitization
+def test_event_detail_keys_redacted():
+    store = Store(Path(":memory:"))
+    store.log(None, Actor.CLIENT, "test", {"password=hunter2": 1})
+    raw = store.db.execute("SELECT detail FROM events").fetchone()["detail"]
+    assert "hunter2" not in raw
+
+
+# @pt.id T0054-03
+# @pt.item test_resume_ignores_review_from_older_attempt
+# @pt.condition latest attempt enters REWORK without a review
+# @pt.expected next resume prompt excludes older review notes
+# @pt.target Bridge.resume_task
+# @pt.method integration
+# @pt.legacy T0053 review feedback
+def test_resume_ignores_review_from_older_attempt(repo, fake_codex, monkeypatch):
+    b, tid = ready(repo, fake_codex, monkeypatch)
+    run(b.review_task(tid, "rework", "old-notes"))
+    run(b.resume_task(tid, wait=True))
+    assert len(b.store.attempts(tid)) == 2
+    assert b.store.attempts(tid)[-1]["review"] is None
+    b.store.transition(tid, State.REWORK, Actor.CLIENT)
+    captured = []
+
+    async def start(task_id, kind, prompt, session, expect, wait, actor):
+        captured.append(prompt)
+        return {}
+
+    monkeypatch.setattr(b, "_start", start)
+    run(b.resume_task(tid))
+    assert "old-notes" not in captured[0]

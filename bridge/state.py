@@ -86,7 +86,7 @@ class NotFound(KeyError):
 
 def _clean_detail(value: Any) -> Any:
     if isinstance(value, dict):
-        return {str(k): _clean_detail(v) for k, v in value.items()}
+        return {redact(str(k), 8000): _clean_detail(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_clean_detail(v) for v in value]
     if isinstance(value, str):
