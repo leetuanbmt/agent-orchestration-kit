@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS attempts (
     stderr_tail TEXT,
     changes TEXT,
     verification TEXT,
+    review TEXT,
     PRIMARY KEY (task_id, n)
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -83,11 +84,23 @@ class NotFound(KeyError):
     pass
 
 
+def _clean_detail(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _clean_detail(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clean_detail(v) for v in value]
+    if isinstance(value, str):
+        return redact(value, 8000)
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    return redact(str(value), 8000)
+
+
 def _row(r: sqlite3.Row | None) -> dict[str, Any] | None:
     if r is None:
         return None
     d = dict(r)
-    for k in ("spec", "final", "usage", "changes", "verification", "detail"):
+    for k in ("spec", "final", "usage", "changes", "verification", "detail", "review"):
         if d.get(k):
             try:
                 d[k] = json.loads(d[k])
@@ -138,6 +151,10 @@ class Store:
         for column, kind in (("runner_pid", "INTEGER"), ("runner_started", "TEXT")):
             if column not in columns:
                 self.db.execute(f"ALTER TABLE workflows ADD COLUMN {column} {kind}")
+        columns = {r["name"] for r in self.db.execute("PRAGMA table_info(attempts)")}
+        for column in ("review",):
+            if column not in columns:
+                self.db.execute(f"ALTER TABLE attempts ADD COLUMN {column} TEXT")
         self.shared = None
         if shared is not None:
             shared.parent.mkdir(parents=True, exist_ok=True)
@@ -177,7 +194,7 @@ class Store:
             "INSERT INTO events(ts, task_id, actor, kind, from_state, to_state, detail)"
             " VALUES (?,?,?,?,?,?,?)",
             (time.time(), task_id, str(actor), kind, src, dst,
-             redact(json.dumps(detail, default=str), 8000) if detail is not None else None),
+             json.dumps(_clean_detail(detail)) if detail is not None else None),
         )
 
     def log(self, task_id: str | None, actor: Actor | str, kind: str, detail: Any = None) -> None:
@@ -351,6 +368,8 @@ class Store:
 
     def transition(self, tid: str, dst: State, actor: Actor, detail: Any = None,
                    expect: set[State] | None = None, account_limit: int = 1,
+                   *, attempt_review: dict | None = None,
+                   extra_event: tuple[str, Any] | None = None,
                    **fields: Any) -> dict[str, Any]:
         """Validated state change + audit event in one transaction."""
         with self.tx() as c:
@@ -383,6 +402,15 @@ class Store:
                 f"UPDATE tasks SET {', '.join(f'{k}=?' for k in sets)} WHERE id=?",
                 (*sets.values(), tid),
             )
+            if attempt_review is not None:
+                c.execute(
+                    "UPDATE attempts SET review=? WHERE task_id=? AND n="
+                    "(SELECT MAX(n) FROM attempts WHERE task_id=?)",
+                    (json.dumps(_clean_detail(attempt_review)), tid, tid),
+                )
+                self._event(c, tid, actor, "review", detail=attempt_review)
+            if extra_event is not None:
+                self._event(c, tid, actor, extra_event[0], detail=extra_event[1])
             self._event(c, tid, actor, "transition", src, dst, detail)
             if dst == State.DONE:
                 self._promote_dependents(c)

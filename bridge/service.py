@@ -540,10 +540,15 @@ class Bridge:
         self._quota_fallback(task_id)
         self._route(task_id)
         row = self.store.get(task_id)
-        if not feedback:
-            reviews = [e for e in self.store.events(task_id, 200) if e["kind"] == "review"]
-            feedback = (reviews[-1]["detail"] or {}).get("notes", "") if reviews else ""
         attempts = self.store.attempts(task_id)
+        if not feedback:
+            review = attempts[-1].get("review") if attempts else None
+            if isinstance(review, dict):
+                feedback = review.get("notes", "")
+            else:
+                reviews = [e for e in self.store.events(task_id, 200)
+                           if e["kind"] == "review" and isinstance(e["detail"], dict)]
+                feedback = reviews[-1]["detail"].get("notes", "") if reviews else ""
         last_ver = attempts[-1].get("verification") if attempts else None
         if row["session_id"]:
             prompt = build_rework_prompt(task_id, feedback, last_ver)
@@ -807,15 +812,18 @@ class Bridge:
         if row["state"] != State.REVIEW:
             raise TransitionError(f"{task_id} is {row['state']}; review needs REVIEW")
         detail = d.model_dump() | ({"reviewer": reviewer} if reviewer else {})
-        self.store.log(task_id, actor, "review", detail)
+        detail["actor"] = str(actor)
         if d.decision == "rework":
-            row = self.store.transition(task_id, State.REWORK, actor, detail)
+            row = self.store.transition(task_id, State.REWORK, actor, detail,
+                                        attempt_review=detail)
         elif d.decision == "block":
             row = self.store.transition(task_id, State.BLOCKED, actor, detail,
+                                        attempt_review=detail,
                                         failure=f"BLOCKED by review: {d.notes}"[:500])
         else:
             self._assert_gates(task_id, need_review=False)
-            row = self.store.transition(task_id, State.APPROVED, actor, detail)
+            row = self.store.transition(task_id, State.APPROVED, actor, detail,
+                                        attempt_review=detail)
             if not row["needs_human"]:
                 row = self._close(task_id, Actor.BRIDGE)
         out = self._summary(row)
@@ -837,23 +845,31 @@ class Bridge:
         ver = last.get("verification") or {}
         if last.get("outcome") != "ok" or not ver.get("passed"):
             raise TransitionError(f"{task_id}: quality gate failed (last attempt not verified)")
-        if need_review and not any(
-            e["kind"] == "review" and (e["detail"] or {}).get("decision") == "approve"
-            for e in self.store.events(task_id, 500)
-        ):
+        review = last.get("review")
+        approved = isinstance(review, dict) and review.get("decision") == "approve"
+        if need_review and review is None:
+            approved = any(
+                e["kind"] == "review" and isinstance(e["detail"], dict)
+                and e["detail"].get("decision") == "approve"
+                and e["ts"] >= last["started_at"]
+                for e in self.store.events(task_id, 500)
+            )
+        if need_review and not approved:
             raise TransitionError(f"{task_id}: quality gate failed (no approving review)")
 
-    def _close(self, task_id: str, actor: Actor) -> dict[str, Any]:
+    def _close(self, task_id: str, actor: Actor,
+               event: tuple[str, Any] | None = None) -> dict[str, Any]:
         self._assert_gates(task_id)
-        return self.store.transition(task_id, State.DONE, actor, {"gates": "passed"})
+        return self.store.transition(task_id, State.DONE, actor, {"gates": "passed"},
+                                     extra_event=event)
 
     def human_approve(self, task_id: str) -> dict[str, Any]:
         """Only reachable from the interactive CLI (`agent-bridge approve`), never from MCP."""
         row = self.store.get(task_id)
         if row["state"] != State.APPROVED:
             raise TransitionError(f"{task_id} is {row['state']}; human approval needs APPROVED")
-        self.store.log(task_id, Actor.HUMAN, "human_approval", {"tty": True})
-        return self._summary(self._close(task_id, Actor.HUMAN))
+        return self._summary(self._close(task_id, Actor.HUMAN,
+                                         ("human_approval", {"tty": True})))
 
     # ---- task queries ----------------------------------------------------------------------
 
