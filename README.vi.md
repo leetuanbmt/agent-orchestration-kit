@@ -78,17 +78,24 @@ chặn kết quả của chúng bằng các gate.
 
 ```mermaid
 flowchart TB
-    user["<b>User / Claude Code</b><br/>requests work · monitors · approves"]
-    bridge["<b>MCP Bridge / Orchestrator</b><br/>assigns tasks · picks agents · manages accounts"]
-    subgraph roles [" "]
-        direction LR
-        planner["<b>Planner</b><br/>plans the work"]
-        executor["<b>Executor</b><br/>writes and fixes code"]
-        reviewer["<b>Reviewer</b><br/>reviews the result"]
-    end
-    gates["<b>Verification gates + SQLite</b><br/>scope check · runs tests · stores state · audit log"]
+    user(["Bạn"])
+    claude["<b>Phiên Claude Code chính</b> (client)<br/>lập kế hoạch, chia task, review, báo cáo"]
+    router["<b>agent-bridge</b> · định tuyến<br/>role → agent → account<br/>agent mặc định, dự phòng khi hết quota"]
+    codex["Executor: codex exec<br/>OS sandbox, account riêng"]
+    helper["Planner / reviewer, chỉ đọc<br/>claude -p · opencode · agy"]
+    gates["<b>agent-bridge</b> · cổng kiểm<br/>scope của mọi file đã đổi<br/>bridge tự chạy verification"]
+    db[("<b>agent-bridge</b> · SQLite in ~/.agent-bridge<br/>tasks · attempts · audit log")]
+    human["Người dùng ở terminal<br/>approve · account-login · reassign"]
 
-    user --> bridge --> roles --> gates
+    user <--> claude
+    claude -- "tool bridge_* qua MCP stdio" --> router
+    router -- "khởi chạy" --> codex
+    router -- "khởi chạy" --> helper
+    codex -- "diff, mã thoát" --> gates
+    helper -- "plan / decision" --> db
+    gates -- "REVIEW / REWORK" --> db
+    human -- "duyệt rủi ro cao, login" --> db
+    db -. "trạng thái, bằng chứng" .-> claude
 ```
 
 | Thành phần | Vị trí |

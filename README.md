@@ -78,17 +78,24 @@ other agent and gates their results.
 
 ```mermaid
 flowchart TB
-    user["<b>User / Claude Code</b><br/>requests work · monitors · approves"]
-    bridge["<b>MCP Bridge / Orchestrator</b><br/>assigns tasks · picks agents · manages accounts"]
-    subgraph roles [" "]
-        direction LR
-        planner["<b>Planner</b><br/>plans the work"]
-        executor["<b>Executor</b><br/>writes and fixes code"]
-        reviewer["<b>Reviewer</b><br/>reviews the result"]
-    end
-    gates["<b>Verification gates + SQLite</b><br/>scope check · runs tests · stores state · audit log"]
+    user(["You"])
+    claude["<b>Main Claude Code session</b> (client)<br/>plans, splits work into tasks, reviews, reports"]
+    router["<b>agent-bridge</b> · route<br/>role → agent → account<br/>default agent, quota fallback"]
+    codex["Executor: codex exec<br/>OS sandbox, own account"]
+    helper["Planner / reviewer, read-only<br/>claude -p · opencode · agy"]
+    gates["<b>agent-bridge</b> · gates<br/>scope of every changed file<br/>bridge-run verification"]
+    db[("<b>agent-bridge</b> · SQLite in ~/.agent-bridge<br/>tasks · attempts · audit log")]
+    human["Human in a terminal<br/>approve · account-login · reassign"]
 
-    user --> bridge --> roles --> gates
+    user <--> claude
+    claude -- "bridge_* tools over MCP stdio" --> router
+    router -- "start" --> codex
+    router -- "start" --> helper
+    codex -- "diff, exit code" --> gates
+    helper -- "plan / decision" --> db
+    gates -- "REVIEW / REWORK" --> db
+    human -- "high-risk approval, logins" --> db
+    db -. "status, evidence" .-> claude
 ```
 
 | Component | Where it lives |
