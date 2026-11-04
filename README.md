@@ -77,6 +77,7 @@ The Claude Code session talks to the bridge only through MCP tools; the bridge s
 other agent and gates their results.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 600}}}%%
 flowchart TB
     user["<b>User / Claude Code</b><br/>requests work · monitors · approves"]
     bridge["<b>MCP Bridge / Orchestrator</b><br/>assigns tasks · picks agents · manages accounts"]

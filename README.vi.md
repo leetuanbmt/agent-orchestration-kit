@@ -77,6 +77,7 @@ Phiên Claude Code chỉ giao tiếp với bridge qua MCP tool; bridge khởi ch
 chặn kết quả của chúng bằng các gate.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 600}}}%%
 flowchart TB
     user["<b>Người dùng / Claude Code</b><br/>Yêu cầu công việc, giám sát, phê duyệt"]
     bridge["<b>MCP Bridge / Orchestrator</b><br/>Phân công nhiệm vụ · Chọn Agent · Quản lý tài khoản"]
