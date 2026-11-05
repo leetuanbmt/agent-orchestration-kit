@@ -132,7 +132,7 @@ def test_missing_binary(sandbox: Sandbox) -> None:
 # @pt.id QA-E2E-027-scope-violation
 # @pt.item An agent writing outside its allowed paths
 # @pt.condition allowed_paths src/**; the agent also writes docs/notes.md, then a run that writes .env
-# @pt.expected REWORK with a scope violation naming the file each time; never REVIEW
+# @pt.expected a scope violation naming the file each time, never REVIEW: REWORK for docs/notes.md, BLOCKED for the protected .env
 # @pt.target bridge.review.scope_violations via the CLI
 # @pt.method e2e
 # @pt.legacy none
@@ -142,7 +142,7 @@ def test_scope_violation(sandbox: Sandbox, path: str) -> None:
     task = sandbox.create()
     out = sandbox.ok("execute", task)
     violations = sandbox.ok("result", task)["attempts"][-1]["verification"]["scope_violations"]
-    assert out["state"] == "REWORK", out
+    assert out["state"] == ("BLOCKED" if path == ".env" else "REWORK"), out
     assert any(path in v for v in violations), violations
 
 

@@ -110,7 +110,7 @@ def test_ai_ignore(repo):
 # @pt.id KIT-STATE-004-config-tampering
 # @pt.item Config modifications trigger the protected path gate
 # @pt.condition Fake codex modifies project configuration during execution
-# @pt.expected Task enters REWORK with a protected config violation
+# @pt.expected Task is BLOCKED with a protected config violation
 # @pt.target Bridge._run_inner
 # @pt.method integration
 # @pt.legacy none (new kit)
@@ -121,7 +121,7 @@ def test_config_tampering(make_bridge, repo, monkeypatch):
     tid = run(b.create_task(spec(verification_commands=[])))["task_id"]
     run(b.execute_task(tid, wait=True))
     row = b.store.get(tid)
-    assert row["state"] == State.REWORK
+    assert row["state"] == State.BLOCKED
     assert "protected file changed: .ai/config.json" in row["failure"]
 
 

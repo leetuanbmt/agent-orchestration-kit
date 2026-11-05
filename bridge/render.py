@@ -196,6 +196,10 @@ def health_view(h: dict[str, Any]) -> Group:
     hints = []
     if h.get("storage_notice"):
         hints.append(h["storage_notice"])
+    if h.get("protected_dirty"):
+        hints.append("protected files differ from HEAD and would be loaded as they are: "
+                     f"{', '.join(h['protected_dirty'])}; inspect them (git diff) and restore "
+                     "what you did not change yourself")
     for name, info in h["adapters"].items():
         missing = not info["path"]
         adapters.add_row(name, Text("not installed", style="red") if missing else info["path"],

@@ -17,6 +17,7 @@ from typing import Any
 
 from . import osutil
 from .config import BridgeConfig
+from .models import PROTECTED_VIOLATION
 from .security import clean_env, matches, redact
 
 
@@ -128,7 +129,7 @@ def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig
     v = []
     for f in changed:
         if matches(f, cfg.protected_paths):
-            v.append(f"protected file changed: {f}")
+            v.append(f"{PROTECTED_VIOLATION}{f}")
         elif matches(f, spec.get("excluded_paths", [])):
             v.append(f"excluded path changed: {f}")
         elif not matches(f, spec["allowed_paths"]):
@@ -138,8 +139,22 @@ def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig
     return v
 
 
+def protected_dirty(root: Path, cfg: BridgeConfig) -> list[str]:
+    """Tracked protected files whose content differs from HEAD (e.g. a tampered .ai/config.json
+    or .mcp.json): they would be loaded by the next bridge start."""
+    out = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=no")
+    paths = [entry[3:] for entry in out.split("\0") if len(entry) > 3]
+    return sorted(p for p in paths if matches(p, cfg.protected_paths))
+
+
+# Instructions and settings that agents, shells and editors load from the project. A change to
+# one steers every later run, so it always needs a human, whatever sensitive_paths says.
+AGENT_INSTRUCTIONS = ["CLAUDE.md", "**/CLAUDE.md", "AGENTS.md", "**/AGENTS.md", ".claude/**",
+                      ".codex/**", ".envrc", "**/.envrc", ".vscode/**"]
+
+
 def touches_sensitive(changed: list[str], cfg: BridgeConfig) -> bool:
-    return any(matches(f, cfg.sensitive_paths) for f in changed)
+    return any(matches(f, cfg.sensitive_paths) or matches(f, AGENT_INSTRUCTIONS) for f in changed)
 
 
 def _shell_operators(cmd: str) -> list[str]:

@@ -302,8 +302,8 @@ def test_run_failure_state() -> None:
 
 # @pt.id KIT-UNIT-013-verification-verdict
 # @pt.item The bridge's REVIEW/REWORK gate on a verified attempt
-# @pt.condition all clean; a scope violation; a failed check; agent not completed; checks cut short; last attempt failing
-# @pt.expected only the clean case reaches REVIEW; failures name every cause; the last failing attempt is BLOCKED
+# @pt.condition all clean; a scope violation; a failed check; agent not completed; checks cut short; last attempt failing; a protected file changed on the first attempt
+# @pt.expected only the clean case reaches REVIEW; failures name every cause; the last failing attempt is BLOCKED; a protected change is BLOCKED at once with PROTECTED first
 # @pt.target bridge.models.verdict
 # @pt.method unit
 # @pt.legacy inline gate in Bridge._run_inner
@@ -319,6 +319,11 @@ def test_verdict() -> None:
     assert (passed, dst) == (False, State.REWORK)
     assert failure == "outside: x.py; check failed: ruff; agent status: blocked"
     assert verdict([], [bad], "completed", False, 3, 3)[1] == State.BLOCKED
+    protected = verdict(["protected file changed: .ai/config.json", "outside allowed paths: x"],
+                        [ok], "completed", False, 1, 3)
+    assert protected[:2] == (False, State.BLOCKED)
+    assert protected[2].startswith("PROTECTED: .ai/config.json: inspect and restore them")
+    assert "outside allowed paths: x" in protected[2]
 
 
 # @pt.id KIT-UNIT-014-store-rebind
