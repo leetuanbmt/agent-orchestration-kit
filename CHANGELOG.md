@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `agent-bridge web` requires a per-launch secret token on every API request; the printed dashboard URL carries the key.
 
 ### Added
+- CI (`.github/workflows/ci.yml`): `scripts/check.sh` on Ubuntu and macOS, and the end-to-end suite with Chromium on Ubuntu; read-only token, no secrets (audit PR-12).
 - End-to-end suite `tests/qa` (`scripts/check.sh --e2e`): the real CLI, MCP server and web dashboard (Playwright) against fake agents in a throwaway home; known defects are strict `xfail` tests. Test cases and the QA report are in `docs/qa/`.
 - Per-account limits (`accounts.<name>.limits` in `.ai/orchestrator.yaml`): 5-hour, weekly and any-window percentage thresholds, USD budgets per UTC day / week / month with an optional per-run `reserve_usd`, user-supplied token `pricing` for cost estimates, and a QUOTA-mark `cooldown_s`. Routing skips an account over its limit and the start gate refuses it; budgets are checked and reserved atomically in the machine-wide `accounts.db`, so concurrent bridges cannot overspend. Accounts without `limits` behave as before.
 - Usage ledger: every run's cost, including network-retried attempts, is recorded with its source (`actual`, `estimated` or `unavailable`); a run with unknown cost fails closed against a budget.
