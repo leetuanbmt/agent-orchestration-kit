@@ -103,6 +103,45 @@ code { font: 13px var(--font-mono); }
 .status-done { background: transparent; color: var(--st-done); border-color: var(--st-done); }
 .status-cancelled, .status-paused { background: transparent; color: var(--text); border-color: var(--st-paused); box-shadow: inset 3px 0 var(--st-paused); }
 .needs, .review_wait { color: var(--st-needs); } .failed, .blocked { color: var(--st-blocked); } .paused { color: var(--text-muted); }
+.badge .glyph { display: inline-block; min-width: 1em; margin-right: var(--sp-1); font-weight: 700; text-align: center; }
+
+/* Summary strip and the attention queue */
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.counter > button, .counter-static { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-2); width: 100%; height: 100%; padding: var(--sp-3) var(--sp-4); text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); }
+.counter > button:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.counter-glyph { font-weight: 700; }
+.counter-value { font-size: 22px; font-weight: 600; line-height: 1.1; }
+.counter-label { color: var(--text-muted); font-size: 12px; }
+.counter-needs .counter-glyph, .counter-review_wait .counter-glyph { color: var(--st-needs); }
+.counter-running .counter-glyph { color: var(--st-running); }
+.counter-done .counter-glyph { color: var(--st-done); }
+.attention { margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--st-needs); border-radius: var(--r-md); }
+.attention h2 { font-size: 15px; margin: 0; }
+.attention-hint { margin: var(--sp-1) 0 var(--sp-2); }
+.attention-item { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); padding: var(--sp-2) 0; border-top: 1px solid var(--border); cursor: pointer; min-width: 0; }
+.attention-item:first-child { border-top: 0; }
+.attention-open { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-1); flex: 1 1 320px; min-width: 0; padding: var(--sp-1) var(--sp-2); text-align: left; border-color: transparent; }
+.attention-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); }
+.attention-objective { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.attention-command { display: flex; align-items: center; gap: var(--sp-1); flex: 0 1 auto; min-width: 0; }
+.attention-command code { overflow-wrap: anywhere; min-width: 0; }
+.attention-command .copy-icon { margin-left: 0; flex-shrink: 0; }
+
+/* Board */
+.lanes { display: grid; grid-template-columns: repeat(4, minmax(240px, 1fr)); gap: var(--sp-3); overflow-x: auto; padding-bottom: var(--sp-1); }
+.lane { min-width: 0; padding: var(--sp-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md); }
+.lane h2 { font-size: 14px; margin: 0 0 var(--sp-2); }
+.lane-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); }
+.lane-empty { margin: 0; color: var(--text-muted); font-size: 12px; }
+.card { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-1); width: 100%; min-width: 0; padding: var(--sp-3); text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); }
+.card:hover { background: var(--surface); border-color: var(--border-strong); }
+.card-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); }
+.card-objective { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.card-progress { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); color: var(--text-muted); font-size: 12px; }
+.card-progress progress { flex: 1 1 80px; min-width: 0; height: 8px; accent-color: var(--st-running); }
+.finished { margin-top: var(--sp-4); }
+.finished summary { cursor: pointer; font-weight: 600; padding: var(--sp-2) 0; }
+.finished-cards { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
 
 /* Loading, empty and offline states */
 .empty { padding: var(--sp-6); text-align: center; }
@@ -153,6 +192,11 @@ code { font: 13px var(--font-mono); }
 .alert { padding: var(--sp-3); border: 1px solid var(--st-blocked); border-radius: var(--r-md); background: var(--alert-bg); }
 #drawer .alert h3 { margin-top: 0; color: var(--st-blocked); }
 .review p { margin: var(--sp-1) 0 0; }
+.final-summary, .final-status, .final-notes { margin: 0 0 var(--sp-2); overflow-wrap: anywhere; white-space: pre-wrap; }
+.final-label { font-size: 13px; margin: var(--sp-3) 0 var(--sp-1); }
+.final-list { margin: 0; padding-left: var(--sp-5); overflow-wrap: anywhere; }
+details.final-raw { margin-top: var(--sp-3); }
+details.final-raw summary { cursor: pointer; color: var(--text-muted); font-size: 12px; }
 details.technical { margin-top: var(--sp-5); border-top: 1px solid var(--border); padding-top: var(--sp-3); }
 details.technical summary { cursor: pointer; font-weight: 600; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 var(--font-mono); }
@@ -196,6 +240,14 @@ dt { color: var(--text-muted); } dd { margin: 0; overflow-wrap: anywhere; }
   #task-rows .objective { white-space: normal; max-width: none; overflow-wrap: anywhere; }
   #task-rows .copy-icon { margin-left: 0; }
   .skeleton-row { grid-template-columns: 1fr 2fr; }
+  /* Row 1: brand, live state, language, theme. Row 2: the views, one full-width row sharing the width. */
+  #views { order: 10; flex: 1 0 100%; display: flex; flex-wrap: nowrap; gap: var(--sp-1); min-width: 0; }
+  #views > * { flex: 1 1 0; min-width: 0; }
+  #views button { width: 100%; padding: 7px var(--sp-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* The board stacks its lanes instead of scrolling sideways. */
+  .lanes { grid-template-columns: minmax(0, 1fr); overflow-x: visible; }
+  .finished-cards { grid-template-columns: minmax(0, 1fr); }
+  .attention { padding: var(--sp-3); }
 }
 
 @media (prefers-reduced-motion: reduce) {

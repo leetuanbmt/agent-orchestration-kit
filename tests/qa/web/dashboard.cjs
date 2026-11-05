@@ -220,6 +220,21 @@ const scenarios = {
       return found ? { open: found.open } : null;
     });
     check('Technical details is a closed <details>', technical && technical.open === false, JSON.stringify(technical));
+    // The fake agent's final text is a JSON object whose summary is "fake ok".
+    const final = await page.evaluate(() => {
+      const section = [...document.querySelectorAll('#drawer-body .drawer-section')]
+        .find(s => /Final summary/.test(s.querySelector('h3')?.textContent || ''));
+      if (!section) return null;
+      const summary = [...section.querySelectorAll('p')].find(p => p.textContent.includes('fake ok'));
+      const raw = section.querySelector('details pre');
+      return { summary: !!summary && !summary.closest('pre'), label: section.querySelector('details summary')?.textContent,
+               raw: raw ? raw.textContent : '', status: /Status: completed/.test(section.textContent) };
+    });
+    check('final summary text shown outside a <pre>', final && final.summary, JSON.stringify(final));
+    check('final status shown as a labelled line', final && final.status, JSON.stringify(final));
+    check('raw final text kept in a Raw output <details>',
+          final && final.label === 'Raw output' && final.raw.includes('"summary"') && final.raw.includes('fake ok'),
+          JSON.stringify(final));
     check('main is inert while the drawer is open', await page.evaluate(() => document.querySelector('main').inert));
     check('top bar is inert while the drawer is open', await page.evaluate(() => document.querySelector('header').inert));
     await page.screenshot({ path: cfg.shots + '/drawer_layout.png' });
@@ -252,7 +267,117 @@ const scenarios = {
       return { tops: new Set([...box.children].map(c => c.getBoundingClientRect().top)).size, overflow: getComputedStyle(box).overflowX };
     });
     check('status chips are one scrollable row', chips.tops === 1 && chips.overflow === 'auto', JSON.stringify(chips));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(300);
+    const views = await page.locator('#views button').evaluateAll(buttons => buttons.map(b => b.getBoundingClientRect().y));
+    check('view buttons share one row at 390 px',
+          views.length === 3 && Math.max(...views) - Math.min(...views) <= 2, JSON.stringify(views));
+    const wide = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
+    check('no horizontal page scroll at 390 px', wide[0] <= wide[1], JSON.stringify(wide));
     await page.screenshot({ path: cfg.shots + '/mobile_cards.png', fullPage: true });
+  },
+
+  // The summary strip and the ranked queue lead to what needs a person.
+  async attention(page) {
+    await open(page, '#view=tasks&s=open');
+    await page.waitForFunction(() => !document.getElementById('attention').hidden, null, { timeout: 8000 })
+      .then(() => check('the queue is shown', true), e => check('the queue is shown', false, e));
+    const item = page.locator('#attention-list [role="listitem"]', { hasText: cfg.tasks.review });
+    check('the REVIEW task is in the queue', await item.count() === 1, await item.count());
+    const itemText = await item.innerText().catch(() => '');
+    check('the queue item shows its command', itemText.includes(`agent-bridge result ${cfg.tasks.review}`), itemText);
+    check('the queue badge starts with an aria-hidden glyph',
+          await item.locator('.badge > .glyph[aria-hidden="true"]').count() === 1);
+    const order = await page.evaluate(async () => {
+      const response = await fetch('/api/overview', { headers: { 'X-Bridge-Token': sessionStorage.getItem('agent-bridge-token') } });
+      return (await response.json()).attention.map(a => `${a.pid}:${a.task_id}`);
+    });
+    const shown = await page.locator('#attention-list > [data-key]').evaluateAll(nodes => nodes.map(n => n.dataset.key));
+    check('the queue keeps the server order', JSON.stringify(order) === JSON.stringify(shown), `${order} / ${shown}`);
+    const counter = page.locator('#summary [data-key="awaitingReview"]');
+    const value = (await counter.locator('.counter-value').innerText().catch(() => '')).trim();
+    check('Awaiting review counter reads 1', value === '1', value);
+    await counter.locator('button').click();
+    await page.waitForTimeout(300);
+    const pressed = await page.locator('#statuses button[aria-pressed="true"]').innerText().catch(() => '');
+    check('the counter selects the Awaiting review chip', /^Awaiting review \(/.test(pressed), pressed);
+    check('every table badge has a glyph', await page.evaluate(() => [...document.querySelectorAll('#task-rows .badge')]
+      .every(b => b.firstElementChild?.matches('.glyph[aria-hidden="true"]') && b.textContent.length > 2)));
+    await page.keyboard.press(']');
+    await page.waitForFunction(() => !document.getElementById('drawer').hidden &&
+      document.getElementById('drawer-title').textContent.includes('Set x to 2'), null, { timeout: 8000 })
+      .then(() => check('] opens the drawer of the queued task', true), e => check('] opens the drawer of the queued task', false, e));
+    const hash = decodeURIComponent(new URL(page.url()).hash);
+    check('the drawer selection is the REVIEW task', hash.includes(`t=${cfg.pid}:${cfg.tasks.review}`), hash);
+    await page.screenshot({ path: cfg.shots + '/attention.png' });
+  },
+
+  // The board: lanes by what happens next, finished work folded away.
+  async board(page) {
+    await open(page, '#view=board');
+    await page.waitForFunction(() => document.querySelectorAll('#board-view .card').length > 0, null, { timeout: 8000 })
+      .catch(() => {});
+    check('the board view is shown', await page.locator('#board-view').isVisible());
+    check('the Board button is pressed',
+          await page.getByRole('button', { name: 'Board', exact: true }).getAttribute('aria-pressed').catch(() => '') === 'true');
+    check('Projects tab still counts one project', await page.getByRole('button', { name: 'Projects (1)' }).count() === 1);
+    const headings = await page.locator('#lanes .lane h2').allInnerTexts();
+    const expected = [/^Needs you \(\d+\)$/, /^In review \(\d+\)$/, /^Running \(\d+\)$/, /^Queued \(\d+\)$/];
+    check('four lane headings in order', headings.length === 4 && expected.every((re, i) => re.test(headings[i])),
+          JSON.stringify(headings));
+    const card = page.locator('#lane-awaitingReview .card', { hasText: cfg.tasks.review });
+    check('the REVIEW card is in In review', await card.count() === 1, await card.count());
+    check('the two READY tasks are queued', await page.locator('#lane-waiting .card').count() === 2,
+          await page.locator('#lane-waiting .card').count());
+    check('an empty lane says Nothing here', /Nothing here/.test(await page.locator('#lane-running-empty').innerText().catch(() => '')));
+    check('Finished is a collapsed <details>', await page.evaluate(() => document.getElementById('finished').open === false));
+    check('Finished counts two tasks', /^Finished \(2\)/.test(await page.textContent('#finished-summary')),
+          await page.textContent('#finished-summary'));
+    check('Finished holds two cards', await page.locator('#finished-cards .card').count() === 2,
+          await page.locator('#finished-cards .card').count());
+    check('every card badge has a glyph', await page.evaluate(() => [...document.querySelectorAll('#board-view .card .badge')]
+      .every(b => b.firstElementChild?.matches('.glyph[aria-hidden="true"]'))));
+    await card.focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => !document.getElementById('drawer').hidden &&
+      document.getElementById('drawer-title').textContent.includes('Set x to 2'), null, { timeout: 8000 })
+      .then(() => check('Enter on a card opens the drawer', true), e => check('Enter on a card opens the drawer', false, e));
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.getElementById('drawer').hidden, null, { timeout: 4000 }).catch(() => {});
+    await page.reload();
+    await page.waitForFunction(() => /Live/.test(document.getElementById('live').textContent), null, { timeout: 8000 });
+    const hash = decodeURIComponent(new URL(page.url()).hash);
+    check('a reload keeps view=board', hash.includes('view=board') && await page.locator('#board-view').isVisible(), hash);
+    await page.setViewportSize({ width: 375, height: 740 });
+    await page.waitForTimeout(300);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    check('no horizontal page scroll at 375 px', overflow <= 1, `overflow ${overflow}px`);
+    await page.screenshot({ path: cfg.shots + '/board.png', fullPage: true });
+  },
+
+  // Screen readers hear about a change in the Needs-you count, and nothing at load.
+  async live_region(page) {
+    let inject = false;
+    await page.route('**/api/overview', async route => {
+      const response = await route.fetch();
+      const body = await response.json();
+      if (inject) body.attention = [{ pid: cfg.pid, task_id: 'T9999', kind: 'failed', objective: 'Injected',
+                                      since: Date.now() / 1000, reason: null, command: null }, ...body.attention];
+      await route.fulfill({ response, json: body });
+    });
+    await open(page);
+    await page.waitForTimeout(3500);
+    const region = await page.evaluate(() => {
+      const node = document.getElementById('announcer');
+      return node && { live: node.getAttribute('aria-live'), text: node.textContent, inMain: !!node.closest('main') };
+    });
+    check('a polite live region exists', region && region.live === 'polite', JSON.stringify(region));
+    check('the live region is empty after load', region && region.text === '', JSON.stringify(region));
+    check('the live region stays outside the inert main', region && !region.inMain);
+    inject = true;
+    await page.waitForFunction(() => /1 task needs you/.test(document.getElementById('announcer').textContent),
+                               null, { timeout: 8000 })
+      .then(() => check('a new Needs-you item is announced', true), e => check('a new Needs-you item is announced', false, e));
   },
 
   // Time to a usable table with every task.

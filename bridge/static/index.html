@@ -17,8 +17,15 @@
     <label class="theme-control"><span id="theme-label" class="sr-only"></span><select id="theme"></select></label>
   </header>
   <p id="offline-banner" class="banner" role="status" hidden></p>
+  <div id="announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
   <main id="content">
-    <section id="tasks-view">
+    <div id="monitor">
+      <div id="summary" class="summary" hidden></div>
+      <section id="attention" class="attention" aria-labelledby="attention-title" hidden>
+        <h2 id="attention-title"></h2>
+        <p id="attention-hint" class="muted attention-hint"></p>
+        <div id="attention-list" role="list"></div>
+      </section>
       <div id="filters" class="filter-bar" role="search">
         <label><span id="search-label"></span><input id="search" type="search"></label>
         <label><span id="project-label"></span><select id="project"></select></label>
@@ -26,6 +33,8 @@
         <button id="group-worktree" type="button" aria-pressed="false"></button>
         <button id="clear" type="button" hidden></button>
       </div>
+    </div>
+    <section id="tasks-view">
       <div id="statuses" class="pills"></div>
       <p id="task-count"></p>
       <div id="tasks-loading" class="skeleton">
@@ -41,6 +50,15 @@
         </table>
       </div>
       <div id="tasks-empty" class="empty" hidden><p id="empty-message"></p><button id="empty-clear" type="button"></button></div>
+    </section>
+    <section id="board-view" hidden>
+      <div id="lanes" class="lanes">
+        <section class="lane" aria-labelledby="lane-needsYou-title"><h2 id="lane-needsYou-title"></h2><div id="lane-needsYou" class="lane-cards" role="list"></div><p id="lane-needsYou-empty" class="lane-empty" hidden></p></section>
+        <section class="lane" aria-labelledby="lane-awaitingReview-title"><h2 id="lane-awaitingReview-title"></h2><div id="lane-awaitingReview" class="lane-cards" role="list"></div><p id="lane-awaitingReview-empty" class="lane-empty" hidden></p></section>
+        <section class="lane" aria-labelledby="lane-running-title"><h2 id="lane-running-title"></h2><div id="lane-running" class="lane-cards" role="list"></div><p id="lane-running-empty" class="lane-empty" hidden></p></section>
+        <section class="lane" aria-labelledby="lane-waiting-title"><h2 id="lane-waiting-title"></h2><div id="lane-waiting" class="lane-cards" role="list"></div><p id="lane-waiting-empty" class="lane-empty" hidden></p></section>
+      </div>
+      <details id="finished" class="finished"><summary id="finished-summary"></summary><div id="finished-cards" class="lane-cards finished-cards" role="list"></div></details>
     </section>
     <section id="projects-view" hidden><div id="project-cards"></div><p id="projects-empty"></p></section>
   </main>
