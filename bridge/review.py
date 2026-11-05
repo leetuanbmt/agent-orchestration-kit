@@ -277,7 +277,10 @@ def parse_command(cmd: str, cfg: BridgeConfig) -> list[str]:
     if ops := _shell_operators(cmd):
         raise ValueError(f"verification commands run without a shell, so {ops[0]!r} would be "
                          "passed as an argument; give each command separately")
-    exe = os.path.basename(argv[0])
+    if "/" in argv[0] or "\\" in argv[0]:
+        raise ValueError(f"verification commands name an allowlisted program, not a path: "
+                         f"{argv[0]!r} (e.g. 'npx jest' instead of './node_modules/.bin/jest')")
+    exe = argv[0]
     if exe not in cfg.verify_allowlist:
         raise ValueError(f"verification executable not allowlisted: {exe!r}")
     return argv

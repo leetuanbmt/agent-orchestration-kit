@@ -95,7 +95,11 @@ def validate_pattern(pattern: str, root: Path, protected: Iterable[str]) -> str:
     if resolved != root and root not in resolved.parents:
         raise PathError(f"path escapes the project (symlink?): {pattern!r}")
     norm = str(pure)
-    if norm in (".", "**", "*") or matches(norm, protected) or matches(norm + "/x", protected):
+    # A pattern that takes both a top-level file and a deeply nested one (e.g. **/*) is the
+    # whole project in disguise.
+    everything = matches("zz_any", [norm]) and matches("zz_any/b/c.x", [norm])
+    if (norm in (".", "**", "*") or everything or matches(norm, protected)
+            or matches(norm + "/x", protected)):
         raise PathError(f"protected or over-broad path: {pattern!r}")
     return norm
 
@@ -135,8 +139,14 @@ def redact(text: str | None, limit: int = 4000) -> str:
     return text if len(text) <= limit else "…" + text[-limit:]
 
 
+# Credential carriers stripped from agent and check environments whatever env_deny says; an
+# explicit env_allow entry still lets one through on purpose.
+ALWAYS_DENY_ENV = ["SSH_AUTH_SOCK", "*_DSN", "*DATABASE_URL*", "*CREDENTIALS*", "KUBECONFIG",
+                   "DOCKER_AUTH_CONFIG"]
+
+
 def clean_env(env: Mapping[str, str], deny: Iterable[str], allow: Iterable[str]) -> dict[str, str]:
-    deny, allow = list(deny), set(allow)
+    deny, allow = [*deny, *ALWAYS_DENY_ENV], set(allow)
     return {
         k: v for k, v in env.items()
         if k in allow or not any(fnmatch.fnmatchcase(k.upper(), d.upper()) for d in deny)
