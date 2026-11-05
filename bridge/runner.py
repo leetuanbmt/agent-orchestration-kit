@@ -13,7 +13,8 @@ from pydantic import ValidationError
 
 from .accounts import AccountLock, account_key
 from .executor import REVIEW_SCHEMA, RunRequest, RunResult, build_review_prompt, describe_event
-from .models import ACTIVE, Actor, ReviewDecision, State, run_failure_state, verdict
+from .models import ACTIVE, Actor, ReviewDecision, State, leftover_failure, run_failure_state, \
+    verdict
 from .review import EvidenceError, content_hashes, current_head, diff, recheck, run_verification, \
     scope_violations, touches_sensitive
 from .security import process_started, redact
@@ -143,6 +144,7 @@ class TaskRunner:
             adapter = b._adapter(agent.adapter)
             sandbox = (spec.get("sandbox") or b.cfg.sandbox) if agent.writes else "read-only"
             before = b._snapshot()
+            self.store.set_baseline(task_id, n, {k: before[k] for k in ("head", "tree", "files")})
             log_path = b._attempt_log(task_id, n)
             log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(log_path.parent, 0o700)
@@ -220,12 +222,26 @@ class TaskRunner:
                       final=res.final or {"raw": res.final_text[-3000:]}, usage=res.usage,
                       stderr_tail=res.stderr_tail, changes=changes)
 
-        if res.outcome == "cancelled":
+        # Without a review stage nobody reads the evidence, so ignored-file changes must gate.
+        enforce = "review" not in b.orch.workflow.stages
+        if res.outcome != "ok":
+            # An attempt that ends early is never verified, and whatever it changed becomes the
+            # next attempt's baseline: changes out of scope must stop the task now.
+            leftover = scope_violations(changes["files"], spec, b.cfg, changes["head_changed"],
+                                        changes["ignored_files"], enforce_ignored=enforce)
+            if leftover:
+                record["verification"] = {"passed": False, "scope_violations": leftover,
+                                          "checks": [], "interrupted": True}
             self.store.finish_attempt(task_id, n, **record)
+            if leftover and self.store.get(task_id)["state"] in ACTIVE:
+                self.store.transition(task_id, State.BLOCKED, Actor.BRIDGE,
+                                      {"outcome": res.outcome, "scope_violations": leftover},
+                                      failure=leftover_failure(leftover))
+                return
+        if res.outcome == "cancelled":
             self._park_if_stopping(task_id, used)
             return
         if res.outcome != "ok":
-            self.store.finish_attempt(task_id, n, **record)
             dst = run_failure_state(res.outcome, used, max_att)
             failure = f"{res.outcome.upper()}: {res.error}"[:1000]
             if dst == State.PAUSED:
@@ -238,8 +254,6 @@ class TaskRunner:
             return
 
         self.store.transition(task_id, State.VERIFYING, Actor.BRIDGE, {"attempt": n})
-        # Without a review stage nobody reads the evidence, so ignored-file changes must gate.
-        enforce = "review" not in b.orch.workflow.stages
         violations = scope_violations(changes["files"], spec, b.cfg, changes["head_changed"],
                                       changes["ignored_files"], enforce_ignored=enforce)
         agent_status = (res.final or {}).get("status", "unknown")

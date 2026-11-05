@@ -96,6 +96,13 @@ def run_failure_state(outcome: str, used: int, max_attempts: int) -> State:
 PROTECTED_VIOLATION = "protected file changed: "
 
 
+def leftover_failure(violations: list[str]) -> str:
+    """Why a task whose attempt ended early (quota, crash, timeout, shutdown) is BLOCKED: what
+    it left out of scope would become the next attempt's baseline and never be checked."""
+    return ("SCOPE: an interrupted attempt left changes outside the task: " + "; ".join(violations)
+            + "; inspect and restore them, then create a new task")[:1000]
+
+
 def verdict(violations: list[str], checks: list[dict], agent_status: str, stopped: bool,
             used: int, max_attempts: int) -> tuple[bool, State, str | None]:
     """The bridge's gate on a verified attempt: (passed, next state, failure text).
