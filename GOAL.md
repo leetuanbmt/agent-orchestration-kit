@@ -16,7 +16,8 @@ reorder; PR-1, PR-2, PR-4, PR-10 and PR-12 are independent of each other, the re
 dependencies in the plan.
 
 - [x] PR-1 Review decisions out of the audit log (REL-03, REL-06) — done in
-  `tuanvm/audit-pr-1-review-record` (from `develop`; PRs target `develop`), PR #42, 2026-11-04,
+  `tuanvm/audit-pr-1-review-record` (branched from the former `develop`; every new PR branches
+  from and targets `main`), PR #42, 2026-11-04,
   VERIFIED (T0053-T0056 DONE). Deferred review follow-ups: total event-detail size cap, private
   key split across list items, `task_result` without per-attempt review, legacy fallback event
   limits. Push as leetuanbmt over HTTPS.
@@ -26,7 +27,7 @@ dependencies in the plan.
 - [ ] PR-5 Patch truncation and evidence schema (SEC-06)
 - [ ] PR-6 Bind approval to verified content (SEC-05)
 - [ ] PR-7 Ignored-file evidence (SEC-03), measurement first
-- [ ] PR-8 Cancellable, recoverable verification (REL-02)
+- [ ] PR-8 Recoverable verification (REL-02 recovery half; the cancel half landed in `950113b`)
 - [ ] PR-10 Input hardening (SEC-07, SEC-09, SEC-10)
 - [ ] PR-11 Trust-model documentation (SEC-08)
 - [ ] PR-12 CI, approval before creating the workflow file
@@ -38,6 +39,9 @@ dependencies in the plan.
 
 Read only what the current step needs:
 
+- First the "Revalidation" section at the top of `docs/audits/implementation-plan.md`. It
+  records which findings are fixed, open or changed at `643ec2f` and where code has moved since
+  the audit. It overrides the PR sections where they disagree.
 - `docs/audits/implementation-plan.md`: the PR section (objective, design, tests, acceptance,
   compatibility, rollback) and its rows in the regression test matrix.
 - The findings it fixes in `docs/audits/security-audit.md` or
@@ -54,7 +58,9 @@ PYTHONPATH=. .venv/bin/python -m pytest docs/audits/evidence/test_audit_repro.py
 ```
 
 A pass means the defect still exists. If a finding no longer reproduces, or the planned design no
-longer fits the code, stop and report instead of improvising.
+longer fits the code, stop and report instead of improvising. Exception: the Revalidation section
+already records `test_rel02` as failing (the cancel half is fixed). PR-8 has no reproduction, and
+its acceptance is the new recover test.
 
 ## Procedure for one PR
 
@@ -105,6 +111,9 @@ longer fits the code, stop and report instead of improvising.
 ## Rules for every step
 
 - One PR per session; one writer per worktree. Parallel work needs separate worktrees.
+- Track B rewrites the same code in `bridge/service.py` that PR-2 to PR-8 and PR-13 change. Do
+  not start one of those PRs while a Track B PR is open; after Track B merges, find the moved
+  methods in `bridge/runner.py` and `bridge/gate.py`.
 - Never run human-only commands (`agent-bridge approve`, `reassign`, `account-*`), never edit
   `.ai/`, never touch account homes or global configuration (`CLAUDE.md` hard rules).
 - Keep everything local: do not publish reports or pages to claude.ai or any other service.
@@ -205,8 +214,8 @@ body.
 
 ## Verification
 
-`uv sync`, then `scripts/check.sh` must pass in full after every step (baseline on PR #48:
-504 passed, 5 skipped, plus `KIT-UNIT-012..014`). Run `uvx ruff check --select F` on the changed
+`uv sync`, then `scripts/check.sh` must pass in full after every step (baseline on `main` at
+`643ec2f`: 504 passed, 5 skipped, including `KIT-UNIT-012..014`). Run `uvx ruff check --select F` on the changed
 files. For B3, confirm with `python -c "import bridge.storage"` and grep that the cycles are gone.
 
 ## Review and report
