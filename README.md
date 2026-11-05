@@ -1,15 +1,13 @@
 <h1 align="center">agent-orchestration-kit</h1>
 
 <p align="center">
-  Run planner, executor and reviewer AI agents on separate CLIs and accounts,<br>
-  with a local MCP server that checks their work instead of trusting it.
+  <b>Multi-agent orchestration for Claude Code and Codex CLI, with evidence instead of trust.</b><br>
+  A local MCP server routes planner, executor and reviewer roles to agents on isolated accounts,<br>
+  confines what they may change and re-runs your tests itself before anything is approved.
 </p>
 
 <p align="center">
-  <b>English</b> · <a href="README.vi.md">Tiếng Việt</a>
-</p>
-
-<p align="center">
+  <a href="https://github.com/leetuanbmt/agent-orchestration-kit/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/leetuanbmt/agent-orchestration-kit/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="platform: macOS | Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
   <img alt="python: &gt;=3.12" src="https://img.shields.io/badge/python-%E2%89%A53.12-blue">
   <img alt="dependencies: mcp | pyyaml | textual" src="https://img.shields.io/badge/dependencies-mcp%20%7C%20pyyaml%20%7C%20textual-brightgreen">
@@ -18,24 +16,35 @@
 </p>
 
 <p align="center">
-  <img alt="agent-bridge dashboard" src="docs/images/dashboard.svg" width="900">
+  <a href="#quick-start"><b>Quick start</b></a> ·
+  <a href="docs/configuration.md">Configuration</a> ·
+  <a href="docs/cli-reference.md">CLI and MCP reference</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a> ·
+  <b>English</b> · <a href="README.vi.md">Tiếng Việt</a>
+</p>
+
+<p align="center">
+  <img alt="agent-bridge terminal dashboard with tasks, accounts and a task detail panel" src="docs/images/dashboard.svg" width="900">
 </p>
 
 When one AI agent both writes the code and judges it, nobody checks the work: "done" means
 whatever the agent says, even if the tests never ran or it edited files outside its assignment.
+Spread that over several CLIs and subscription accounts and you also juggle logins, quota
+windows and which agent is doing what.
 
 `agent-orchestration-kit` separates those jobs. A small MCP server, `agent-bridge`, runs inside
-your project: it hands each task to an executor agent (Codex CLI or Claude Code), confines the
-files that agent may change, re-runs the verification commands itself and only then lets a
-reviewer approve. An agent's own report is never treated as evidence, and irreversible steps
-stay with a human.
+your repository. It hands each task to an executor agent (Codex CLI or Claude Code), confines
+the files that agent may change, re-runs the verification commands itself and only then lets a
+reviewer approve. Each agent runs on its own account with its own concurrency and quota limits,
+and irreversible steps stay with a human.
 
-It is for developers who already use Claude Code and Codex CLI with subscription logins and
-want a repeatable, auditable delegation loop in one repository.
+It is for developers who already use Claude Code and Codex CLI with subscription logins and want
+a repeatable, auditable delegation loop in one repository, without a hosted service.
 
 ## Contents
 
 - [Key features](#key-features)
+- [How it compares](#how-it-compares)
 - [Architecture](#architecture)
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -46,59 +55,96 @@ want a repeatable, auditable delegation loop in one repository.
 - [Security model and limitations](#security-model-and-limitations)
 - [Monitoring](#monitoring)
 - [Troubleshooting](#troubleshooting)
+- [FAQ](#faq)
+- [Roadmap](#roadmap)
 - [Development and testing](#development-and-testing)
 - [Further documentation](#further-documentation)
 - [Contributing and license](#contributing-and-license)
 
 ## Key features
 
+**Orchestration**
+
 - **Roles, agents and accounts are separate.** `planner`, `executor` and `reviewer` map to
   agents; each agent uses one adapter (`codex-cli`, `claude-cli`, `client`, or the read-only
   `opencode-cli` / `agy-cli`) and one isolated account.
-- **The bridge decides pass or fail.** After every run it checks every changed file against the
-  task's `allowed_paths`, confirms `HEAD` did not move and re-runs the verification commands.
+- **Planner workflows.** A planner agent can split an objective into validated tasks that run in
+  dependency order.
+- **Reviewer of your choice.** You review in the Claude Code session, a reviewer agent reviews
+  read-only, or deterministic gates alone decide.
 - **Bounded work.** Each task has an attempt budget; failures go to `REWORK` and then
   `BLOCKED` with a diagnosis.
-- **Human gates.** High-risk tasks and changes to sensitive paths (migrations, auth, deploy, CI,
-  secrets) wait for `agent-bridge approve` in an interactive terminal.
+
+**Accounts, concurrency and quota**
+
+- **Isolated accounts.** Each account has its own auth home (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
+  or a whole `HOME` for agy) and a `max_concurrency` enforced across every bridge process on the
+  machine.
 - **Per-account limits.** Optional 5-hour, weekly and USD budget limits per account, enforced
   before every run and reserved atomically across bridges; `agent-bridge usage` shows what is
   used and when it resets.
-- **Isolated accounts.** Each account has its own auth home (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
-  or a whole `HOME` for agy), concurrency limit and quota tracking. Optional quota fallback moves
-  work to another account.
-- **Planner workflows.** A planner agent can split an objective into validated tasks that run in
-  dependency order.
-- **Monitoring.** A terminal dashboard, table/JSON CLI views and a read-only localhost web
-  dashboard.
+- **Quota failover.** A quota pause does not spend an attempt. With `routing.quota_fallback`
+  enabled, the bridge moves the task to the next eligible agent (never on an AUTH failure).
+
+**Verification and safety**
+
+- **The bridge decides pass or fail.** After every run it checks every changed file against the
+  task's `allowed_paths`, confirms `HEAD` did not move and re-runs the verification commands.
+- **Human gates.** High-risk tasks and changes to sensitive paths (migrations, auth, deploy, CI,
+  secrets) wait for `agent-bridge approve` in an interactive terminal.
+- **Audit trail.** Every transition, attempt, routing decision and review is an event in SQLite.
+
+**Monitoring and setup**
+
+- **Dashboards.** A terminal dashboard, table/JSON CLI views and a read-only localhost web
+  dashboard covering every project on the machine.
 - **Project-scoped setup.** `agent-bridge init` writes only project files; it never edits
   `~/.claude`, `~/.codex` or global MCP configuration.
 
+## How it compares
+
+| | One agent that writes and reports on its own work | agent-orchestration-kit |
+|---|---|---|
+| Who says the work is done | The agent's own summary | The bridge re-runs your verification commands |
+| Which files may change | Whatever the agent touches | Every changed file is checked against `allowed_paths`; `HEAD` must not move |
+| Accounts | One login per CLI | One isolated auth home per agent, with concurrency slots and limits |
+| Quota runs out | The session stops | The task is `PAUSED` without spending an attempt; optional failover to another account |
+| Irreversible steps | Up to the agent | A human runs `agent-bridge approve` in a terminal |
+| History | Chat scrollback | Every state change is an event in `bridge.db` |
+
+What it is not: a hosted service, a desktop app or a general sandbox for untrusted code. It is a
+local CLI and MCP server for one repository at a time; parallel writing tasks need separate
+worktrees (see [Roadmap](#roadmap)).
+
+**Typical uses**
+
+- Claude Code plans and reviews, Codex implements: the default when no
+  `.ai/orchestrator.yaml` exists.
+- Spread work over several Codex or Claude subscriptions, each with its own limits and failover
+  order.
+- A gates-only pipeline where tests and the scope check decide, with no LLM reviewer.
+- A second model (opencode or agy) as a read-only planner or reviewer.
+
 ## Architecture
 
-The Claude Code session talks to the bridge only through MCP tools; the bridge starts every
-other agent and gates their results.
+Claude Code talks to the bridge only through MCP tools. The bridge starts every other agent in
+its own account home, gates the result and records everything.
 
 ```mermaid
-%%{init: {"flowchart": {"wrappingWidth": 600}}}%%
-flowchart TB
-    user["<b>User / Claude Code</b><br/>requests work · monitors · approves"]
-    bridge["<b>MCP Bridge / Orchestrator</b><br/>assigns tasks · picks agents · manages accounts"]
-    planner["<b>Planner</b><br/>plans the work"]
-    executor["<b>Executor</b><br/>writes and fixes code"]
-    reviewer["<b>Reviewer</b><br/>reviews the result"]
-    gates["<b>Verification Gates + SQLite</b><br/>scope check · runs tests · stores state · audit log"]
-
-    user --> bridge
-    bridge ~~~ planner
-    bridge --> executor
-    bridge ~~~ reviewer
-    planner ~~~ gates
-    executor --> gates
-    reviewer ~~~ gates
-
-    classDef plain fill:none,stroke:none
-    class user,planner,executor,reviewer,gates plain
+flowchart LR
+    you(["You"]) --> cc["Claude Code session<br/>(MCP client)"]
+    cc -- "MCP tools over stdio" --> bridge["agent-bridge serve"]
+    human(["Human in a terminal"]) -- "approve · reassign · account-login" --> cli["agent-bridge CLI / TUI"]
+    bridge --> router["Router<br/>role → agent → account"]
+    router --> adapters["Adapters<br/>codex-cli · claude-cli · opencode-cli · agy-cli"]
+    adapters --> agents["Agent CLIs<br/>one auth home per account"]
+    agents -- "edit the worktree" --> repo[("Git worktree")]
+    bridge --> gates["Gates<br/>scope check · re-run verification"]
+    gates --> repo
+    bridge --> db[("bridge.db<br/>tasks · attempts · events")]
+    router --> acct[("~/.agent-bridge<br/>accounts · slots · usage ledger")]
+    cli --> db
+    web["agent-bridge web<br/>(read-only)"] --> db
 ```
 
 | Component | Where it lives |
@@ -150,6 +196,8 @@ runs `uv run --project <kit> agent-bridge serve`, an absolute path that breaks i
 
 ## Quick start
 
+Four commands set up a project; the fifth step is asking Claude Code for a change.
+
 **1. Set up a project.**
 
 ```bash
@@ -179,6 +227,7 @@ What `init` does:
 reviews, Codex executes on its global login).
 
 ```bash
+agent-bridge config-init                # list the shipped examples
 agent-bridge config-init orchestrator   # writes .ai/orchestrator.yaml; never overwrites
 agent-bridge config-check               # validate
 agent-bridge agents                     # who plans, executes and reviews; who is available
@@ -190,8 +239,8 @@ agent-bridge agents                     # who plans, executes and reviews; who i
 agent-bridge health          # adapters, logins, quota, task counts; exits 1 when not OK
 ```
 
-**4. Ask Claude Code for a change.** The installed `agent-orchestration` skill drives one of two
-flows:
+**4. Ask Claude Code for a change.** For example: *"Add input validation to the signup handler
+and a test for it."* The installed `agent-orchestration` skill drives one of two flows:
 
 ```text
 you plan:     bridge_create_task → bridge_execute_task → bridge_task_status(wait_s)
@@ -366,8 +415,9 @@ untrusted code.
 - **Processes.** Agents and verification commands start from argv lists in their own process
   group; timeout or cancel sends SIGTERM, then SIGKILL. The runner polls for a cancel every
   second, in any process (a CLI `execute` too): it kills the agent or the running check, skips
-  the remaining checks and frees the account, and `cancel` waits for that before it returns. Orphaned groups from a dead runner are killed on the next start,
-  only if the PID is a `codex`, `claude`, `opencode` or `agy` process.
+  the remaining checks and frees the account, and `cancel` waits for that before it returns.
+  Orphaned groups from a dead runner are killed on the next start, only if the PID is a `codex`,
+  `claude`, `opencode` or `agy` process.
 - **Environment and output.** Credential-shaped variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`,
   `*PASSWORD*`, `AWS_*`, and always `SSH_AUTH_SOCK`, `*_DSN`, `*DATABASE_URL*`, `*CREDENTIALS*`,
   `KUBECONFIG`, `DOCKER_AUTH_CONFIG`) are removed before an agent or verification command starts.
@@ -508,7 +558,7 @@ and performs no human action. It listens on `127.0.0.1` only and rejects other `
 | `not a git repository` or `Target must be a git work tree` | The bridge only runs inside a git repository; run `git init` or change directory. |
 | `claude mcp list` shows `agent-bridge: ⏸ Pending approval` | Open `claude` in the folder once and trust it. |
 | `config-check` error | The message names the field; fix `.ai/orchestrator.yaml`. |
-| `health` reports NOT OK | An adapter CLI is missing or not logged in; a human logs in. |
+| `health` reports NOT OK | An adapter CLI is missing or not logged in, or a protected file differs from `HEAD` (`protected_dirty`); a human logs in or reviews that file. |
 | `no eligible executor agent (…)` | Every executor is disabled, busy or unavailable; the reasons are listed per agent. |
 | Task `PAUSED` with `QUOTA` or `AUTH` | Wait for the quota window to reset, or fix the login; then `agent-bridge account-clear <name>` if the mark remains, and resume. With quota fallback enabled, resume may move the task to another account. |
 | Task `PAUSED` with `INTERRUPTED` | The runner was stopped by a signal or died; `bridge_resume_task` continues the session, `cancel` drops it. |
@@ -518,6 +568,45 @@ and performs no human action. It listens on `127.0.0.1` only and rejects other `
 | `account … busy in another bridge process` | The account's concurrency slots are in use elsewhere. Unpinned tasks route around it; a task pinned to it stays `READY` with no attempt spent, so start it again once a slot is free. |
 | `REWORK` with `outside allowed paths` | The executor changed files outside the task; read the patch and rework. |
 | `health` warns about legacy storage | Migrate with `agent-bridge storage status`, then `storage migrate --apply` ([details](docs/configuration.md#migrating-and-maintaining-state)). |
+
+## FAQ
+
+**Do I need API keys?** No. Every agent runs on a subscription login in its own auth home. No
+API key is needed.
+
+**Can an agent approve its own work?** No. Executors cannot approve. The client, a reviewer agent
+or (without a `review` stage) the bridge after every gate passed approves; high-risk work waits
+for a human at a terminal.
+
+**Can I use it without Codex?** Yes. The [`claude-executor`](examples/claude-executor.yaml)
+example runs Claude Code headless as the executor. Codex remains the recommended executor because
+it runs in an OS sandbox.
+
+**Can several tasks run at the same time?** Across projects and worktrees, yes, up to each
+account's `max_concurrency`. Inside one worktree only one task writes at a time; see
+[Roadmap](#roadmap).
+
+**Does running the test suite use my quota?** No. `scripts/check.sh` uses fake agent CLIs. Only
+the opt-in smoke tests call the real CLIs.
+
+**Is this a sandbox for untrusted code?** No. It narrows what agents can do and verifies what
+they did; see the [trust model](#security-model-and-limitations).
+
+**Where is my data?** Task state, logs and audit events stay on your machine under
+`~/.agent-bridge/`. The kit adds no telemetry; the agent CLIs talk to their own providers as
+usual.
+
+## Roadmap
+
+Items below are not implemented. They are listed so users know what to expect.
+
+- **Planned:** parallel writing tasks, each in its own git worktree, with results combined on a
+  branch a human merges ([draft plan](docs/plans/parallel-worktrees.md)).
+- **Under consideration:** routing strategies beyond "first eligible"; multi-reviewer voting;
+  stages for custom roles; feeding CI failures and pull-request review comments back to the
+  executor that owns the task; notifications when a task needs a human.
+
+Ideas and votes are welcome in [GitHub Issues](https://github.com/leetuanbmt/agent-orchestration-kit/issues).
 
 ## Development and testing
 
@@ -555,11 +644,16 @@ the dashboards.
 | [docs/configuration.md](docs/configuration.md) | Every `orchestrator.yaml` and `config.json` key, accounts, quota, quota fallback, state storage and migration |
 | [docs/cli-reference.md](docs/cli-reference.md) | MCP tools with parameters, every CLI command and human-only commands |
 | [docs/REPORT.md](docs/REPORT.md) | Build report: verified CLI versions, security probes, known limitations |
+| [docs/audits/executive-summary.md](docs/audits/executive-summary.md) | Architecture, security and reliability audit with reproductions |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 ## Contributing and license
 
-Before opening a pull request, run `scripts/check.sh`, add a `CHANGELOG.md` entry under
-*Unreleased*, and keep this README and [README.vi.md](README.vi.md) in sync.
+Contributions are welcome: bug reports, documentation fixes and new adapters. Read
+[CONTRIBUTING.md](CONTRIBUTING.md) for the setup, test commands and conventions. In short: run
+`scripts/check.sh`, add a `CHANGELOG.md` entry under *Unreleased*, and keep this README and
+[README.vi.md](README.vi.md) in sync.
+
+If the kit is useful to you, a star helps others find it.
 
 Released under the [MIT License](LICENSE) © leetuanbmt.
