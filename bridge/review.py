@@ -186,6 +186,15 @@ def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig
     return v
 
 
+def content_hashes(root: Path, files: list[str]) -> dict[str, str | None]:
+    """sha256 of each file as it is now (None for a missing file): what approval binds to."""
+    return {f: _hash(root / f) for f in files}
+
+
+def current_head(root: Path) -> str | None:
+    return _git(root, "rev-parse", "--verify", "-q", "HEAD", required=False).strip() or None
+
+
 def protected_dirty(root: Path, cfg: BridgeConfig) -> list[str]:
     """Tracked protected files whose content differs from HEAD (e.g. a tampered .ai/config.json
     or .mcp.json): they would be loaded by the next bridge start."""

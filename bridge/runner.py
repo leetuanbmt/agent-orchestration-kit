@@ -14,8 +14,8 @@ from pydantic import ValidationError
 from .accounts import AccountLock, account_key
 from .executor import REVIEW_SCHEMA, RunRequest, RunResult, build_review_prompt, describe_event
 from .models import ACTIVE, Actor, ReviewDecision, State, run_failure_state, verdict
-from .review import EvidenceError, diff, recheck, run_verification, scope_violations, \
-    touches_sensitive
+from .review import EvidenceError, content_hashes, current_head, diff, recheck, run_verification, \
+    scope_violations, touches_sensitive
 from .security import process_started, redact
 from .state import LimitExceeded
 
@@ -266,6 +266,9 @@ class TaskRunner:
                                   **({"changed_by_verification": later} if later else {}),
                                   **({"skipped": skipped} if skipped else {}),
                                   **({"interrupted": True} if stopped else {})}
+        # What a later approval is bound to: the verified content of every file the attempt touched.
+        changes["after_hashes"] = content_hashes(b.root, touched)
+        changes["verified_head"] = current_head(b.root)
         self.store.finish_attempt(task_id, n, **record)
         needs_human = bool(row["needs_human"]) or touches_sensitive(touched, b.cfg)
         if self._park_if_stopping(task_id, used):
