@@ -220,12 +220,12 @@ def test_bad_spec_file(sandbox: Sandbox, content: str | None) -> None:
 # @pt.target bridge.review.parse_command via the CLI
 # @pt.method e2e
 # @pt.legacy none
-@pytest.mark.xfail(strict=True, reason="QA-BUG-004: shell operators are accepted and passed as "
-                   "arguments, so the check silently differs from what was written")
 def test_shell_syntax_refused(sandbox: Sandbox) -> None:
     cmd = "python3 -c 'print(1)' && python3 -c 'raise SystemExit(1)'"
     res = sandbox.cli("create", str(sandbox.spec(verification_commands=[cmd])))
     assert res.code == 1, "accepted; the part after && is never run"
+    assert "without a shell" in res.err and "Traceback" not in res.err, res.err
+    assert sandbox.ok("list") == []
 
 
 # @pt.id QA-E2E-032-unknown-ids

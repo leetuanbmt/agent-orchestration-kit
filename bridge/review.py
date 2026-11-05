@@ -128,11 +128,21 @@ def touches_sensitive(changed: list[str], cfg: BridgeConfig) -> bool:
     return any(matches(f, cfg.sensitive_paths) for f in changed)
 
 
+def _shell_operators(cmd: str) -> list[str]:
+    """Unquoted shell operators (&&, |, ;, >, 2>&1, ...), written with or without spaces."""
+    lexer = shlex.shlex(cmd, posix=True, punctuation_chars="&|;<>")
+    lexer.whitespace_split = True
+    return [token for token in lexer if set(token) <= set("&|;<>")]
+
+
 def parse_command(cmd: str, cfg: BridgeConfig) -> list[str]:
     """argv for a verification command; no shell, executable must be allowlisted."""
     argv = shlex.split(cmd)
     if not argv:
         raise ValueError("empty verification command")
+    if ops := _shell_operators(cmd):
+        raise ValueError(f"verification commands run without a shell, so {ops[0]!r} would be "
+                         "passed as an argument; give each command separately")
     exe = os.path.basename(argv[0])
     if exe not in cfg.verify_allowlist:
         raise ValueError(f"verification executable not allowlisted: {exe!r}")
