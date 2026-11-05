@@ -1,0 +1,159 @@
+"""health explains itself: each problem and warning comes with a code, a message and a fix."""
+
+from __future__ import annotations
+
+import pytest
+
+from bridge import cli
+from bridge.models import Actor
+from tests.conftest import git, run
+from tests.integration.test_account_limits import FIVE_HOUR, config, seed
+from tests.integration.test_limit_failover import mark_quota
+
+PATH_WITHOUT_FAKES = "/usr/bin:/bin"
+
+
+def _health(b) -> dict:
+    h = run(b.health())
+    assert h["ok"] == (h["problems"] == [])
+    for entry in [*h["problems"], *h["warnings"]]:
+        assert set(entry) == {"code", "message", "fix"} and entry["message"] and entry["fix"]
+    return h
+
+
+def _codes(entries: list[dict]) -> list[str]:
+    return [e["code"] for e in entries]
+
+
+# @pt.id KIT-HEALTH-DIAG-1
+# @pt.item A healthy bridge reports no problems
+# @pt.condition the fake codex CLI is installed and logged in; the repo is clean
+# @pt.expected ok is true, problems is empty and no account warning is listed
+# @pt.target bridge.service.Bridge.health
+# @pt.method integration
+# @pt.legacy none
+def test_healthy_has_no_problems(make_bridge):
+    h = _health(make_bridge())
+    assert h["ok"] is True and h["problems"] == []
+    assert not [c for c in _codes(h["warnings"]) if c.startswith("account_")]
+
+
+# @pt.id KIT-HEALTH-DIAG-2
+# @pt.item A missing adapter is a problem
+# @pt.condition the codex CLI is not on PATH
+# @pt.expected problems is exactly adapter_missing for codex-cli with an install fix; ok is false
+# @pt.target bridge.service.Bridge.health
+# @pt.method integration
+# @pt.legacy health returned ok false without saying why
+def test_missing_adapter(make_bridge, monkeypatch):
+    b = make_bridge()
+    monkeypatch.setenv("PATH", PATH_WITHOUT_FAKES)
+    h = _health(b)
+    assert h["ok"] is False
+    assert _codes(h["problems"]) == ["adapter_missing"]
+    problem, = h["problems"]
+    assert "codex-cli" in problem["message"] and "install the codex CLI" in problem["fix"]
+
+
+# @pt.id KIT-HEALTH-DIAG-3
+# @pt.item A dirty protected file is a problem
+# @pt.condition the committed .ai/config.json differs from HEAD in the working tree
+# @pt.expected problems is protected_dirty naming the file; ok is false
+# @pt.target bridge.service.Bridge.health
+# @pt.method integration
+# @pt.legacy none
+def test_protected_dirty(make_bridge, repo):
+    (repo / ".ai").mkdir(exist_ok=True)
+    (repo / ".ai" / "config.json").write_text("{}\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "cfg")
+    (repo / ".ai" / "config.json").write_text("{ }\n")
+    h = _health(make_bridge())
+    assert h["ok"] is False
+    assert _codes(h["problems"]) == ["protected_dirty"]
+    problem, = h["problems"]
+    assert ".ai/config.json" in problem["message"] and "git diff" in problem["fix"]
+
+
+# @pt.id KIT-HEALTH-DIAG-4
+# @pt.item Stored account marks are warnings, not problems
+# @pt.condition two claude accounts; cl1 is marked quota and cl2 auth in the store
+# @pt.expected warnings list account_quota for cl1 and account_auth for cl2 with the stored error and a fix; ok and problems do not change
+# @pt.target bridge.service.Bridge.health
+# @pt.method integration
+# @pt.legacy none
+def test_account_marks_are_warnings(make_orch):
+    b = make_orch(config())
+    before = _health(b)
+    b.store.set_account_state("cl1", "quota", "usage limit reached", actor=Actor.BRIDGE,
+                              key=b._key("cl1"))
+    b.store.set_account_state("cl2", "auth", "token expired", actor=Actor.BRIDGE,
+                              key=b._key("cl2"))
+    h = _health(b)
+    assert h["ok"] == before["ok"] and h["problems"] == before["problems"]
+    marks = {e["code"]: e for e in h["warnings"] if e["code"] in ("account_quota", "account_auth")}
+    assert set(marks) == {"account_quota", "account_auth"}
+    quota, auth = marks["account_quota"], marks["account_auth"]
+    assert "cl1" in quota["message"] and "usage limit reached" in quota["message"]
+    assert "routing.quota_fallback" in quota["fix"]
+    assert "cl2" in auth["message"] and "token expired" in auth["message"]
+    assert "agent-bridge account-login cl2" in auth["fix"]
+
+
+# @pt.id KIT-HEALTH-DIAG-5
+# @pt.item An account over its limits is a warning
+# @pt.condition cl1 has five_hour_pct 80 and reports 90 % used
+# @pt.expected warnings list account_limited for cl1 with the limit reason; ok is unaffected
+# @pt.target bridge.service.Bridge.health
+# @pt.method integration
+# @pt.legacy none
+def test_limited_account_is_warning(make_orch):
+    b = make_orch(config(cl1=FIVE_HOUR))
+    seed(b, "cl1")
+    h = _health(b)
+    limited = [e for e in h["warnings"] if e["code"] == "account_limited"]
+    assert len(limited) == 1 and "cl1" in limited[0]["message"]
+    assert h["limits"]["cl1"]["reason"] in limited[0]["message"]
+    assert "account_limited" not in _codes(h["problems"])
+
+
+# @pt.id KIT-HEALTH-DIAG-7
+# @pt.item A lapsed QUOTA mark is not a warning, and health does not lift it
+# @pt.condition cl1 has limits cooldown_s 600 and no quota snapshot; it was marked QUOTA 610 s ago
+# @pt.expected warnings list no account_quota; the stored mark is still quota after health()
+# @pt.target bridge.service.Bridge.health, bridge.gate.Gate._effective_account_state
+# @pt.method integration
+# @pt.legacy health warned about a mark that routing already treated as lapsed
+def test_lapsed_quota_mark_is_not_warning(make_orch):
+    b = make_orch(config(cl1="{cooldown_s: 600}"))
+    mark_quota(b, "cl1", age_s=610)
+    h = _health(b)
+    assert "account_quota" not in _codes(h["warnings"])
+    assert b.store.account_state("cl1", key=b._key("cl1"))["state"] == "quota"
+
+
+# @pt.id KIT-HEALTH-DIAG-6
+# @pt.item The health table prints the fixes
+# @pt.condition the codex CLI is not on PATH and the default account is marked auth; health runs in a terminal
+# @pt.expected under "To fix:" the view prints the install fix of the problem and the account-login fix of the warning
+# @pt.target bridge.cli.main, bridge.render.health_view
+# @pt.method integration
+# @pt.legacy none
+def test_cli_prints_fixes(make_bridge, repo, capsys, monkeypatch):
+    monkeypatch.setenv("BRIDGE_PROJECT_ROOT", str(repo))
+    b = make_bridge()
+    b.store.set_account_state("default", "auth", "token expired", actor=Actor.BRIDGE,
+                              key=b._key("default"))
+    monkeypatch.setenv("PATH", PATH_WITHOUT_FAKES)
+    h = _health(b)
+    assert "account_auth" in _codes(h["warnings"])
+    capsys.readouterr()
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    with pytest.raises(SystemExit) as failed:
+        cli.main(["health"])
+    assert failed.value.code == 1
+    out = " ".join(capsys.readouterr().out.split())
+    assert "NOT OK" in out and "To fix:" in out
+    fixes = out.split("To fix:", 1)[1]
+    assert "install the codex CLI" in fixes
+    assert "agent-bridge account-login default" in fixes
