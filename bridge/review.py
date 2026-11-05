@@ -97,9 +97,20 @@ def snapshot(root: Path, protected: list[str]) -> dict[str, Any]:
         # A repository without commits has no HEAD; that is not an evidence failure.
         "head": _git(root, "rev-parse", "--verify", "-q", "HEAD", required=False).strip() or None,
         "tree": _worktree_tree(root),
-        "files": {f: _hash(root / f) for f in files},
+        "files": {**{f: _hash(root / f) for f in files}, **_git_internals(root)},
         "ignored": {f: s for f, s in _ignored(root).items() if f not in files},
     }
+
+
+def _git_internals(root: Path) -> dict[str, str | None]:
+    """Hooks and config of the repository, keyed as .git/... (a protected path). Anything that can
+    write the worktree can write them in a main checkout, and git runs hooks outside any sandbox."""
+    hooks = Path(_git(root, "rev-parse", "--path-format=absolute", "--git-path", "hooks").strip())
+    config = Path(_git(root, "rev-parse", "--path-format=absolute", "--git-path", "config").strip())
+    found = {".git/config": _hash(config)}
+    if hooks.is_dir():
+        found.update({f".git/hooks/{p.name}": _hash(p) for p in hooks.iterdir() if p.is_file()})
+    return found
 
 
 def _ignored(root: Path) -> dict[str, tuple[int, int] | None]:
