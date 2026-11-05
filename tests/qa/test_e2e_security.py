@@ -167,8 +167,6 @@ def test_verification_cannot_write_outside(sandbox: Sandbox) -> None:
 # @pt.target ClaudeAdapter.build, .claude/settings.json deny list
 # @pt.method e2e
 # @pt.legacy none
-@pytest.mark.xfail(strict=True, reason="QA-BUG-006: the Read denies cover Codex, agent-bridge and agy "
-                   "credentials only; Claude logins, configured Claude homes and .env stay readable")
 def test_claude_cannot_read_claude_credentials(sandbox: Sandbox) -> None:
     sandbox.orchestrator("""
 version: 1

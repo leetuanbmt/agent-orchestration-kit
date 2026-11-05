@@ -96,6 +96,10 @@ _CLASSES = [
 KILL_GRACE_S = 5.0
 POLL_S = 1.0
 _CLAUDE_READ_TOOLS = ["Read", "Glob", "Grep"]
+# Read denies the kit settings do not hold: the global Claude login and the project's secret files.
+_CLAUDE_SECRET_READS = ["Read(~/.claude/.credentials.json)", *(
+    f"Read(./{p})" for p in (".env", ".env.*", "**/.env", "**/.env.*",
+                             "*.pem", "*.key", "**/*.pem", "**/*.key"))]
 # Path-scoped rules: under dontAsk, Edit/Write outside these patterns are refused (verified by
 # probe on claude 2.1.306; unscoped Write reached files outside the working directory).
 _CLAUDE_WRITE_TOOLS = ("Edit", "Write")
@@ -108,6 +112,18 @@ def _claude_credential_denies() -> list[str]:
     from .install import KIT
     deny = json.loads((KIT / ".claude" / "settings.json").read_text())["permissions"]["deny"]
     return [rule for rule in deny if rule.startswith("Read(")]
+
+
+def _home_read_deny(home: Path) -> str:
+    """Read(...) rule for a directory: ~/ under the user's home, else // (an absolute path)."""
+    home = home.expanduser().resolve()
+    try:
+        rule = f"~/{home.relative_to(Path.home().resolve())}/**"
+    except ValueError:
+        rule = f"/{home}/**"
+    if rule_unsafe([rule]):
+        raise PathError(f"account home not expressible as a Claude permission rule: {home}")
+    return f"Read({rule})"
 
 
 def classify(text: str) -> str:
@@ -176,6 +192,8 @@ class RunRequest:
     # Project-relative globs a writing run may change, and globs it must never change.
     write_paths: list[str] = field(default_factory=list)
     deny_paths: list[str] = field(default_factory=list)
+    # Directories the agent's read tools must not open: every configured account's auth home.
+    read_deny: list[Path] = field(default_factory=list)
 
 
 @dataclass
@@ -427,7 +445,8 @@ class ClaudeAdapter(Adapter):
 
     def build(self, req: RunRequest, tmp: Path) -> list[str]:
         tools = list(_CLAUDE_READ_TOOLS)
-        denied = list(_claude_credential_denies())
+        denied = [*_claude_credential_denies(), *_CLAUDE_SECRET_READS,
+                  *(_home_read_deny(home) for home in req.read_deny)]
         if req.sandbox == "workspace-write":
             if bad := rule_unsafe([*req.write_paths, *req.deny_paths]):
                 raise PathError(f"not expressible as Claude permission rules: {bad}")
