@@ -337,7 +337,12 @@ class Adapter:
             if stop:
                 await kill_group(proc)
             dog.cancel()
-            await waiter
+            # The agent has exited (the watchdog saw its returncode). End what it left in its
+            # group before waiting for its pipes, which such a process could hold open.
+            await osutil.end_group(proc.pid, KILL_GRACE_S)
+            await asyncio.wait({waiter}, timeout=KILL_GRACE_S)
+            if not waiter.done():  # a process outside the group still holds a pipe
+                waiter.cancel()
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(io, timeout=5)
             res.exit_code = proc.returncode
