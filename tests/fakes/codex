@@ -166,6 +166,8 @@ elif scenario == "crash":
     sys.exit(139)
 elif scenario == "hang":
     child = subprocess.Popen(["sleep", "600"])
-    (state / "child.pid").write_text(str(child.pid))
-    (state / "self.pid").write_text(str(os.getpid()))
+    # Each file appears whole (rename), child.pid last: tests wait on either one.
+    for name, pid in (("self.pid", os.getpid()), ("child.pid", child.pid)):
+        (state / f"{name}.tmp").write_text(str(pid))
+        (state / f"{name}.tmp").replace(state / name)
     time.sleep(600)
