@@ -3,6 +3,25 @@
 Date: 2026-11-05. Build under test: `tuanvm/arch-p1-p2-refactor` at `19d3873` (`main` plus the
 Track B refactor in PR #50). Test cases and per-case results: [e2e-test-cases.md](e2e-test-cases.md).
 
+## Status after fixes
+
+Five of the six defects are fixed in PR #51; each fix is its own commit, and its E2E test has
+lost its `xfail` marker and passes. `scripts/check.sh --e2e` on that branch: 595 passed, 5 skipped,
+1 xfailed. The one open defect is QA-BUG-001 (audit SEC-01), which is tracked as PR-9 in
+`docs/audits/implementation-plan.md` and starts with a sandbox probe. With QA-BUG-006 fixed, the
+verdict below applies only to untrusted verification commands.
+
+| ID | Status |
+|---|---|
+| QA-BUG-006 | Fixed: Read denies for Claude logins, `.env*`/key files and every account home |
+| QA-BUG-002 | Fixed: `usage`, `account-list` and `health` use the start gate's reserve |
+| QA-BUG-003 | Fixed: one-line errors for unreadable spec files; unquoted unknown-task message |
+| QA-BUG-004 | Fixed: unquoted shell operators refused in verification commands |
+| QA-BUG-005 | Fixed: filters and chips wrap; only the table scrolls on narrow screens |
+| QA-BUG-001 | Open (PR-9) |
+
+The findings below are as found on 2026-11-05, before the fixes.
+
 ## Verdict
 
 **NO-GO** for multi-account setups with Claude CLI agents, and for running tasks or plans whose
