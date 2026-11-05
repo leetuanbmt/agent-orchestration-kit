@@ -734,6 +734,8 @@ def build_review_prompt(task_id: str, spec: dict[str, Any], attempt: dict[str, A
         "", "## Bridge verification", json.dumps(attempt.get("verification"), default=str)[:6000],
         "", "## Executor report", json.dumps(attempt.get("final"), default=str)[:4000],
         "", "## Changed files", "\n".join(changes.get("files") or []) or "(none)",
+        *(["", "## Changed git-ignored files (not in the patch; inspect them in the worktree)",
+           "\n".join(changes["ignored_files"])] if changes.get("ignored_files") else []),
         "", "## Diff stat", str(changes.get("stat", ""))[:4000],
         *(["", "## Patch is cut to fit: read these files in the worktree yourself",
            "Omitted entirely: " + (", ".join(changes.get("patch_omitted_files") or []) or "none")

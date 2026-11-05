@@ -240,7 +240,10 @@ class TaskRunner:
             return
 
         self.store.transition(task_id, State.VERIFYING, Actor.BRIDGE, {"attempt": n})
-        violations = scope_violations(changes["files"], spec, b.cfg, changes["head_changed"])
+        # Without a review stage nobody reads the evidence, so ignored-file changes must gate.
+        enforce = "review" not in b.orch.workflow.stages
+        violations = scope_violations(changes["files"], spec, b.cfg, changes["head_changed"],
+                                      changes["ignored_files"], enforce_ignored=enforce)
         agent_status = (res.final or {}).get("status", "unknown")
         # Checks cannot change the outcome of a run that gave up without touching anything, and
         # can take many minutes.
@@ -259,7 +262,8 @@ class TaskRunner:
         if commands:  # the checks ran code in the worktree: judge what they changed too
             final = recheck(b.root, before, changes, b.cfg)
             touched, later = final["files"], final["changed_by_verification"]
-            violations = scope_violations(touched, spec, b.cfg, final["head_changed"])
+            violations = scope_violations(touched, spec, b.cfg, final["head_changed"],
+                                          final["ignored_files"], enforce_ignored=enforce)
         passed, dst, failure = verdict(violations, checks, agent_status, stopped, used, max_att)
         record["verification"] = {"passed": passed, "scope_violations": violations,
                                   "checks": checks, "agent_status": agent_status,
