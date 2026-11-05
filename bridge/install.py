@@ -69,10 +69,12 @@ class _Target:
         self.root = target
 
     def path(self, name: str) -> Path:
+        """A directory symlink is followed while it stays in the work tree (a shared
+        `.claude/skills -> ../.agents/skills`); the file itself must not be a link."""
         p = self.root / name
-        if not p.resolve().is_relative_to(self.root) or any(
-                q.is_symlink() for q in [p, *p.parents]
-                if q != self.root and q.is_relative_to(self.root)):
+        real = p.resolve()
+        if (not real.is_relative_to(self.root) or real.is_relative_to(self.root / ".git")
+                or p.is_symlink()):
             sys.exit("Refusing symlink or external path: " + name)
         return p
 
@@ -184,8 +186,10 @@ def install(target: Path, force: bool = False, server: dict | None = None,
             copies[str(source.relative_to(kit))] = source
     for name in RETIRED:
         record = manifest["files"].get(name)
+        if record is None:
+            continue
         old = t.read(name)
-        if record is None or old is None:
+        if old is None:
             continue
         if hashlib.sha256(old).hexdigest() != record["sha256"]:
             print("Warning: keeping modified retired file: " + name, file=sys.stderr)
@@ -246,7 +250,7 @@ def install(target: Path, force: bool = False, server: dict | None = None,
             if data is None:
                 dest.unlink()
                 parent = dest.parent
-                while parent != target and not any(parent.iterdir()):
+                while parent != target and not parent.is_symlink() and not any(parent.iterdir()):
                     parent.rmdir()
                     parent = parent.parent
                 continue
@@ -327,7 +331,7 @@ def uninstall(target: Path, purge: bool = False) -> None:
         if hashlib.sha256(p.read_bytes()).hexdigest() == record["sha256"]:
             _restore(p, _decode(record["original"]))
             parent = p.parent
-            while parent != target and parent.name != ".ai":
+            while parent != target and parent.name != ".ai" and not parent.is_symlink():
                 try:
                     parent.rmdir()
                 except OSError:

@@ -34,18 +34,49 @@ def test_execute_reaches_review(make_bridge, fake_codex, repo, monkeypatch) -> N
     monkeypatch.setenv("FAKE_CODEX_WRITE", WRITE_OK)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-should-not-leak-1234567890")
     b = make_bridge()
+    progress = []
+    b.progress = progress.append
     t = run(b.create_task(spec()))
     assert t["state"] == State.READY
     out = run(b.execute_task(t["task_id"], wait=True))
     assert out["state"] == State.REVIEW, out
     res = run(b.task_result(t["task_id"]))
     a = res["attempts"][-1]
+    assert a["log"] and Path(a["log"]).exists()
+    assert run(b.task_status(t["task_id"]))["last_attempt"]["log"] == a["log"]
+    lines = [json.loads(line) for line in Path(a["log"]).read_text().splitlines()]
+    assert any(line["stream"] == "stdout" and "thread.started" in line["line"]
+               for line in lines)
+    assert all({"ts", "stream", "line"} <= line.keys() for line in lines)
+    assert os.stat(a["log"]).st_mode & 0o777 == 0o600
+    assert os.stat(Path(a["log"]).parent).st_mode & 0o777 == 0o700
+    assert any(f"[{t['task_id']} #1] log:" in line for line in progress)
+    assert any(f"[{t['task_id']} #1]" in line and "session started" in line
+               for line in progress)
+    assert any(f"[{t['task_id']} #1] verifying" in line for line in progress)
     assert a["changes"]["files"] == ["src/app.py"]
     assert "+x = 2" in a["changes"]["patch"] and "src/app.py" in a["changes"]["stat"]
     assert a["verification"]["passed"] and a["verification"]["checks"][0]["exit_code"] == 0
     assert a["session_id"] and res["session_id"] == a["session_id"]
     c = calls(fake_codex)[0]
     assert "Set x to 2" in c["prompt"] and c["cwd"] == str(repo) and not c["env_has_secret"]
+
+
+# @pt.id KIT-INT-LOG-002-callback-failure
+# @pt.item Progress callback failures do not change execution outcome
+# @pt.condition Bridge.progress raises for each progress event
+# @pt.expected execution reaches REVIEW and writes its attempt log
+# @pt.target bridge.service.Bridge._run_inner
+# @pt.method integration
+# @pt.legacy none (new kit)
+def test_progress_callback_failure_does_not_change_task(make_bridge, fake_codex,
+                                                        monkeypatch) -> None:
+    monkeypatch.setenv("FAKE_CODEX_WRITE", WRITE_OK)
+    b = make_bridge()
+    b.progress = lambda _line: (_ for _ in ()).throw(RuntimeError("callback failed"))
+    tid = run(b.create_task(spec()))["task_id"]
+    assert run(b.execute_task(tid, wait=True))["state"] == State.REVIEW
+    assert run(b.task_result(tid))["attempts"][0]["log"]
 
 
 # @pt.id KIT-INT-002-failing-verification

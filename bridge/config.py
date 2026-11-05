@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .install import bridge_dir, git_dir
+from . import storage
 
 AI_DIR = ".ai"
 CONFIG_FILE = "config.json"
@@ -41,6 +41,8 @@ class BridgeConfig(BaseModel):
 
     codex_bin: str = "codex"
     claude_bin: str = "claude"
+    # Owner-supplied hooks-only file: trusted code runs without a sandbox.
+    claude_hook_settings: str | None = None
     opencode_bin: str = "opencode"
     agy_bin: str = "agy"
     model: str | None = None
@@ -110,9 +112,10 @@ def load_config(root: Path) -> BridgeConfig:
 
 
 def state_dir(root: Path) -> Path:
-    """Keep mutable state in this worktree's sandbox-protected git directory."""
-    path = bridge_dir(git_dir(root))
+    """Create private mutable state for this worktree."""
+    path = storage.locate(root, create=True).dir
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.chmod(0o700)
     return path
 
 

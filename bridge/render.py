@@ -146,6 +146,8 @@ def health_view(h: dict[str, Any]) -> Group:
                 f" · sandbox {h['sandbox']}", style="dim")
     adapters = Table("Adapter", "Path", "Version", title="Adapters", title_justify="left")
     hints = []
+    if h.get("storage_notice"):
+        hints.append(h["storage_notice"])
     for name, info in h["adapters"].items():
         missing = not info["path"]
         adapters.add_row(name, Text("not installed", style="red") if missing else info["path"],
@@ -213,7 +215,8 @@ def projects_view(data: dict[str, Any], now: float | None = None) -> Group | Tex
     blocks: list[RenderableType] = []
     for p in data["projects"]:
         head = Text()
-        head.append(p["project"], style="bold")
+        head.append(p["project"] + (" (root missing)" if p.get("root_missing") else ""),
+                    style="bold")
         head.append(f"  {p['root']}", style="dim")
         head.append("\n" + " · ".join(f"{n} {s}" for s, n in sorted(p["counts"].items())),
                     style="dim")

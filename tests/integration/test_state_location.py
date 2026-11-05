@@ -1,12 +1,15 @@
 """State isolation and protected project configuration regressions."""
 
-import subprocess
+from pathlib import Path
+
+from bridge import storage
+from bridge.state import Store
 
 import pytest
 
 from bridge.accounts import Account, AccountLock
 from bridge.config import ensure_ai_dir
-from bridge.models import State
+from bridge.models import State, TaskSpec
 from bridge.state import ConflictError
 from tests.conftest import run, spec
 
@@ -14,15 +17,14 @@ from tests.conftest import run, spec
 # @pt.id KIT-STATE-001-location
 # @pt.item Mutable state is outside the workspace
 # @pt.condition A bridge executes a task in a git repository
-# @pt.expected Database, schema and health paths use the private git state directory
+# @pt.expected Database, schema and health paths use the private central state directory
 # @pt.target Bridge.__init__, Bridge.health, CodexAdapter.run
 # @pt.method integration
 # @pt.legacy none (new kit)
 def test_state_location(make_bridge, repo, monkeypatch, fake_codex):
     b = make_bridge()
-    git_dir = subprocess.check_output(
-        ["git", "-C", str(repo), "rev-parse", "--absolute-git-dir"], text=True).strip()
-    assert str(b.store.path) == git_dir + "/agent-bridge/bridge.db"
+    assert b.store.path == storage.store_dir(repo) / "bridge.db"
+    assert b.state_dir.is_relative_to(Path.home() / ".agent-bridge/projects")
     assert b.state_dir.stat().st_mode & 0o777 == 0o700
     monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n")
     tid = run(b.create_task(spec()))["task_id"]
@@ -37,6 +39,33 @@ def test_state_location(make_bridge, repo, monkeypatch, fake_codex):
     health = run(b.health())
     assert health["database"] == str(b.store.path)
     assert health["state_dir"] == str(b.state_dir)
+    assert health["storage"] == "central"
+    assert health["storage_notice"] is None
+
+
+# @pt.id T0029-legacy-state
+# @pt.item Existing state location
+# @pt.condition A git-dir database already exists
+# @pt.expected Bridge keeps its location and tasks across startups
+# @pt.target Bridge.__init__, Bridge.health
+# @pt.method integration
+# @pt.legacy agent-bridge
+def test_existing_state(make_bridge, repo):
+    path = repo / ".git/agent-bridge/bridge.db"
+    old = Store(path)
+    task, _ = old.create(TaskSpec.model_validate(spec()), "existing-task")
+    tid = task["id"]
+    old.db.close()
+    b = make_bridge()
+    assert b.store.get(tid)["spec"]["objective"] == spec()["objective"]
+    b.store.db.close()
+    fresh = make_bridge()
+    assert fresh.store.path == path
+    assert fresh.store.get(tid)["spec"]["objective"] == spec()["objective"]
+    assert run(fresh.health())["storage"] == "legacy"
+    assert run(fresh.health())["storage_notice"] == (
+        "legacy storage: run `agent-bridge storage status`, then "
+        "`agent-bridge storage migrate --apply` after closing Claude sessions")
 
 
 # @pt.id KIT-STATE-002-migration
@@ -121,3 +150,30 @@ def test_child_lock_isolation(workflow, make_bridge, fake_codex, repo, monkeypat
             test_full_lifecycle_over_mcp(repo, fake_codex, monkeypatch)
     finally:
         lock.release()
+
+
+# @pt.id T0032-split-brain
+# @pt.item Legacy writes after migration
+# @pt.condition Legacy event appended after migration
+# @pt.expected Health warns with source and event delta without changing ok
+# @pt.target Bridge.health
+# @pt.method integration
+# @pt.legacy agent-bridge
+def test_split_brain_notice(make_bridge, repo, monkeypatch):
+    import sqlite3
+    source = repo / ".git/agent-bridge/bridge.db"
+    old = Store(source)
+    old.create(TaskSpec.model_validate(spec()), "before-migration")
+    old.db.close()
+    monkeypatch.setattr(storage, "running_processes", lambda: [])
+    storage.migrate(repo, apply=True)
+    bridge = make_bridge()
+    before = run(bridge.health())
+    assert before["storage_notice"] is None
+    with sqlite3.connect(source) as db:
+        db.execute("INSERT INTO events(ts,actor,kind) VALUES (2,'system','late')")
+    after = run(bridge.health())
+    assert after["ok"] == before["ok"]
+    assert after["storage_notice"] == (
+        f"legacy database {source} has 1 events written after migration "
+        "(an old agent-bridge process is still running?)")

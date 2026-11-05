@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Claude loads no user/project settings; optional `claude_hook_settings`, set only by a human in `.ai/config.json`, loads an external hooks-only JSON file as trusted code running unsandboxed. The default remains off and `--setting-sources ""` remains enforced.
+- `agent-bridge web` requires a per-launch secret token on every API request; the printed dashboard URL carries the key.
+
+### Added
+- Human-run `storage relink <old-root> <new-root> [--apply]` reattaches central history after moving or renaming a repository or worktree, with a dry run by default.
+- `storage prune [--apply]` removes missing roots from the project registry, and
+  `storage gc --logs-older-than DAYS [--apply]` deletes old central attempt logs of terminal tasks;
+  both preview changes by default and refuse to apply while bridge processes are running.
+- Human-run `storage rollback <root> [--yes]` archives migrated central stores, and
+  `storage cleanup-legacy [--apply]` moves verified legacy state into backups without deleting files.
+- New repositories keep bridge state under `~/.agent-bridge/projects/<project>/worktrees/<worktree>/`
+  (`AGENT_BRIDGE_HOME` overrides), so history survives deleting the worktree. `storage status` and
+  `storage migrate [--apply]` copy existing git-dir state there; `health` flags legacy storage and
+  writes to a legacy database after migration.
+- `agent-bridge web [--port N] [--open]`: read-only localhost dashboard for known projects
+  and worktrees, with progress, tasks needing attention, activity and request details in VI/EN.
+- Agent executions append redacted stdout and stderr lines to per-attempt JSONL logs and report
+  meaningful progress events on stderr.
+
 ### Changed
+
+- README and README.vi restructured and checked against the code; the full configuration and
+  CLI/MCP reference moved to `docs/configuration.md` and `docs/cli-reference.md`.
+- Read-only commands (`health`, `status`, `result`, `list`, `agents`, `workflow-status`,
+  `account-list`) no longer create `.ai/`, state, databases or registry entries.
+- Updates to `~/.agent-bridge/projects.json` hold `projects.lock`, so concurrent bridges
+  and `storage prune` no longer drop each other's entries.
+- Centralize platform operations for Windows locks, process groups and process discovery; real Windows testing remains pending.
+- Share account quota/auth marks and reported quota machine-wide in `$AGENT_BRIDGE_HOME/accounts.db`; `account-clear` lifts marks across projects.
+- Account slot locks default to `~/.agent-bridge/locks` (`$AGENT_BRIDGE_HOME/locks`)
+  across projects and processes; bridge databases and WAL/SHM sidecars use private 0600 permissions.
 - Licensed under MIT (`LICENSE`, © leetuanbmt); the wheel carries it and declares
   `License-Expression: MIT`.
 - One account name can be reused across providers: the second `account-add work` for another
@@ -24,6 +55,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- Routing no longer binds an unpinned task to an account whose slots are all held by other
+  bridge processes on the machine (it then failed with `busy in another bridge process` while
+  another executor was free): such an account is now unavailable to routing and `agents`. A
+  fresh routing that still loses the slot before the run starts is undone (`agent_unrouted`)
+  and spends no attempt.
+- A stop signal (SIGTERM, SIGINT, SIGHUP, SIGALRM, e.g. a caller's timeout) to `execute`,
+  `resume`, `plan` or `run-workflow` no longer leaves the agent running with ppid 1 and the task
+  `RUNNING`: the bridge kills the agent or the running check, parks the task `PAUSED`
+  (`INTERRUPTED`, attempt given back) and exits 128 + signal. `serve` shuts down the same way.
+- `cancel` from another process now stops that process's verification too: the running check
+  is killed, the rest are skipped and the account lock is released before `cancel` returns
+  (up to 15 s). Previously the runner kept running every check and held the account.
+- An agent that reports `blocked` without changing anything no longer triggers the
+  verification commands; the attempt records `verification.skipped`.
+- The executor prompt no longer tells the agent to stop at once when part of the task is out
+  of scope: it does every in-scope step first, keeps that work, lists what is out of scope
+  last, and follows the spec's `context` on how to handle blockers.
+- Let QUOTA marks lapse when a window open at mark time has reset and snapshot quota is positive; AUTH and accounts without snapshots still require `account-clear`.
+- `init` works when `.claude/skills` (or another kit directory) is a symlink to a directory
+  inside the project, such as a shared `.agents/skills`: the link is followed and the skill is
+  installed there. Links leaving the work tree or entering `.git`, and symlinked files, are
+  still refused. Retired `codex-*` paths are only looked at when the manifest lists them.
 - `account-list`, `agents` and the dashboard no longer start agy to check a google account's
   login: run under the account's HOME, agy made macOS show "Keychain Not Found" on every
   refresh. The check reads the token file's size instead.

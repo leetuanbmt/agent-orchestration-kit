@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import fnmatch
 import functools
+import json
 import os
 import re
 import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
+
+from . import osutil
 
 GLOB_CHARS = set("*?[")
 RULE_CHARS = set(",()\"'")
@@ -16,6 +19,27 @@ RULE_CHARS = set(",()\"'")
 
 class PathError(ValueError):
     pass
+
+
+def hook_settings_error(path: str, root: Path) -> str | None:
+    """Accept only an owner-supplied hooks-only settings file outside the project."""
+    source = Path(path)
+    if not source.is_absolute():
+        return "path must be absolute"
+    try:
+        resolved = source.resolve(strict=True)
+        if resolved.is_relative_to(root.resolve()):
+            return "file must be outside the project root"
+        if not resolved.is_file():
+            return "path must be a regular file"
+        settings = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, UnicodeError, ValueError):
+        return "file must exist, be readable, and contain valid JSON"
+    if not isinstance(settings, dict) or set(settings) != {"hooks"}:
+        return "JSON must be an object with only the hooks key"
+    if not isinstance(settings["hooks"], dict):
+        return "hooks must be an object"
+    return None
 
 
 def rule_unsafe(patterns: Iterable[str]) -> list[str]:
@@ -122,6 +146,8 @@ def clean_env(env: Mapping[str, str], deny: Iterable[str], allow: Iterable[str])
 def process_started(pid: int) -> str | None:
     """The process's start time as ps prints it; with the pid it identifies one process.
     Fixed locale and zone, so the CLI, the TUI and the MCP server print the same string."""
+    if osutil.WINDOWS:
+        return None
     try:
         ps = subprocess.run(["ps", "-o", "lstart=", "-p", str(int(pid))],
                             capture_output=True, text=True, check=False,

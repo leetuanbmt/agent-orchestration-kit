@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS attempts (
     stderr_tail TEXT,
     changes TEXT,
     verification TEXT,
+    review TEXT,
     PRIMARY KEY (task_id, n)
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -83,11 +84,23 @@ class NotFound(KeyError):
     pass
 
 
+def _clean_detail(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {redact(str(k), 8000): _clean_detail(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clean_detail(v) for v in value]
+    if isinstance(value, str):
+        return redact(value, 8000)
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    return redact(str(value), 8000)
+
+
 def _row(r: sqlite3.Row | None) -> dict[str, Any] | None:
     if r is None:
         return None
     d = dict(r)
-    for k in ("spec", "final", "usage", "changes", "verification", "detail"):
+    for k in ("spec", "final", "usage", "changes", "verification", "detail", "review"):
         if d.get(k):
             try:
                 d[k] = json.loads(d[k])
@@ -113,14 +126,23 @@ def overview(path: Path, state: str | None, limit: int) -> dict[str, Any]:
 
 
 class Store:
-    def __init__(self, path: Path):
-        path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, path: Path, shared: Path | None = None):
+        memory = str(path) == ":memory:"
+        if not memory:
+            path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.db = sqlite3.connect(path, timeout=10, isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
+        if not memory:
+            path.chmod(0o600)
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(SCHEMA)
+        for suffix in (() if memory else ("-wal", "-shm")):
+            try:
+                Path(str(path) + suffix).chmod(0o600)
+            except OSError:
+                pass
         columns = {r["name"] for r in self.db.execute("PRAGMA table_info(tasks)")}
         for column in ("account", "agent", "workflow_id", "codex_started"):  # databases from older versions
             if column not in columns:
@@ -129,6 +151,31 @@ class Store:
         for column, kind in (("runner_pid", "INTEGER"), ("runner_started", "TEXT")):
             if column not in columns:
                 self.db.execute(f"ALTER TABLE workflows ADD COLUMN {column} {kind}")
+        columns = {r["name"] for r in self.db.execute("PRAGMA table_info(attempts)")}
+        for column in ("review",):
+            if column not in columns:
+                self.db.execute(f"ALTER TABLE attempts ADD COLUMN {column} TEXT")
+        self.shared = None
+        if shared is not None:
+            shared.parent.mkdir(parents=True, exist_ok=True)
+            self.shared = sqlite3.connect(shared, timeout=10, isolation_level=None,
+                                          check_same_thread=False)
+            self.shared.row_factory = sqlite3.Row
+            self.shared.execute("PRAGMA journal_mode=WAL")
+            shared.chmod(0o600)
+            self.shared.executescript("""
+                CREATE TABLE IF NOT EXISTS accounts (
+                    key TEXT PRIMARY KEY, name TEXT, state TEXT NOT NULL,
+                    last_error TEXT, updated_at REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS account_quota (
+                    key TEXT PRIMARY KEY, name TEXT, rate_limits TEXT NOT NULL,
+                    observed_at REAL NOT NULL);
+            """)
+            for suffix in ("-wal", "-shm"):
+                try:
+                    Path(str(shared) + suffix).chmod(0o600)
+                except OSError:
+                    pass
         self._started = process_started(os.getpid())
 
     @contextmanager
@@ -147,7 +194,7 @@ class Store:
             "INSERT INTO events(ts, task_id, actor, kind, from_state, to_state, detail)"
             " VALUES (?,?,?,?,?,?,?)",
             (time.time(), task_id, str(actor), kind, src, dst,
-             redact(json.dumps(detail, default=str), 8000) if detail is not None else None),
+             json.dumps(_clean_detail(detail)) if detail is not None else None),
         )
 
     def log(self, task_id: str | None, actor: Actor | str, kind: str, detail: Any = None) -> None:
@@ -155,34 +202,71 @@ class Store:
             self._event(c, task_id, actor, kind, detail=detail)
 
     def set_account_state(self, name: str, state: str, error: str | None = None, *,
-                          actor: Actor | str) -> None:
+                          actor: Actor | str, key: str | None = None) -> None:
         if state not in {"available", "quota", "auth"}:
             raise ValueError(f"invalid account state: {state}")
         error = redact(error, 1000) if error else None
+        now = time.time()
         with self.tx() as c:
             previous = self.account_state(name)["state"]
             c.execute(
                 "INSERT INTO accounts(name, state, last_error, updated_at) VALUES (?,?,?,?)"
                 " ON CONFLICT(name) DO UPDATE SET state=excluded.state,"
                 " last_error=excluded.last_error, updated_at=excluded.updated_at",
-                (name, state, error, time.time()),
+                (name, state, error, now),
             )
             self._event(c, None, actor, "account_state", previous, state,
                         {"name": name, "last_error": error})
 
-    def account_state(self, name: str) -> dict[str, Any]:
+        self._share("accounts", key, name, state=state, last_error=error,
+                    updated_at=now)
+
+    def _share(self, table: str, key: str | None, name: str, **values: Any) -> None:
+        if self.shared is None or key is None:
+            return
+        columns = ["key", "name", *values]
+        updates = ",".join(f"{column}=excluded.{column}" for column in columns[1:])
+        self.shared.execute("BEGIN IMMEDIATE")
+        try:
+            self.shared.execute(
+                f"INSERT INTO {table}({','.join(columns)})"
+                f" VALUES ({','.join('?' for _ in columns)})"
+                f" ON CONFLICT(key) DO UPDATE SET {updates}",
+                (key, name, *values.values()))
+            self.shared.execute("COMMIT")
+        except BaseException:
+            self.shared.execute("ROLLBACK")
+            raise
+
+    def account_state(self, name: str, *, key: str | None = None) -> dict[str, Any]:
+        if self.shared is not None and key is not None:
+            row = self.shared.execute(
+                "SELECT state, last_error, updated_at FROM accounts WHERE key=?", (key,)
+            ).fetchone()
+            if row is not None:
+                return {"name": name, **dict(row)}
         row = self.db.execute("SELECT * FROM accounts WHERE name=?", (name,)).fetchone()
         return dict(row) if row else {"name": name, "state": "available", "last_error": None}
 
-    def save_quota(self, name: str, rate_limits: dict[str, Any]) -> None:
+    def save_quota(self, name: str, rate_limits: dict[str, Any], *,
+                   key: str | None = None) -> None:
+        now = time.time()
         with self.tx() as c:
             c.execute("INSERT INTO account_quota(name, rate_limits, observed_at) VALUES (?,?,?)"
                       " ON CONFLICT(name) DO UPDATE SET rate_limits=excluded.rate_limits,"
                       " observed_at=excluded.observed_at",
-                      (name, json.dumps(rate_limits), time.time()))
+                      (name, json.dumps(rate_limits), now))
 
-    def quota(self, name: str) -> dict[str, Any] | None:
-        row = self.db.execute("SELECT * FROM account_quota WHERE name=?", (name,)).fetchone()
+        self._share("account_quota", key, name, rate_limits=json.dumps(rate_limits),
+                    observed_at=now)
+
+    def quota(self, name: str, *, key: str | None = None) -> dict[str, Any] | None:
+        row = None
+        if self.shared is not None and key is not None:
+            row = self.shared.execute(
+                "SELECT * FROM account_quota WHERE key=?", (key,)).fetchone()
+        if row is None:
+            row = self.db.execute("SELECT * FROM account_quota WHERE name=?", (name,)).fetchone()
         if row is None:
             return None
         return {"rate_limits": json.loads(row["rate_limits"]), "observed_at": row["observed_at"]}
@@ -284,6 +368,8 @@ class Store:
 
     def transition(self, tid: str, dst: State, actor: Actor, detail: Any = None,
                    expect: set[State] | None = None, account_limit: int = 1,
+                   *, attempt_review: dict | None = None,
+                   extra_event: tuple[str, Any] | None = None,
                    **fields: Any) -> dict[str, Any]:
         """Validated state change + audit event in one transaction."""
         with self.tx() as c:
@@ -316,6 +402,15 @@ class Store:
                 f"UPDATE tasks SET {', '.join(f'{k}=?' for k in sets)} WHERE id=?",
                 (*sets.values(), tid),
             )
+            if attempt_review is not None:
+                c.execute(
+                    "UPDATE attempts SET review=? WHERE task_id=? AND n="
+                    "(SELECT MAX(n) FROM attempts WHERE task_id=?)",
+                    (json.dumps(_clean_detail(attempt_review)), tid, tid),
+                )
+                self._event(c, tid, actor, "review", detail=attempt_review)
+            if extra_event is not None:
+                self._event(c, tid, actor, extra_event[0], detail=extra_event[1])
             self._event(c, tid, actor, "transition", src, dst, detail)
             if dst == State.DONE:
                 self._promote_dependents(c)
