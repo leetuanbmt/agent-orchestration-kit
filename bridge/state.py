@@ -5,6 +5,7 @@ WAL + BEGIN IMMEDIATE so the MCP server and the CLI can share one database safel
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -594,6 +595,26 @@ class Store:
         if r is None:
             raise NotFound(f"unknown task: {tid}")
         return r
+
+    def rebind(self, tid: str, expect: set[State],
+               change: Callable[[dict[str, Any]], tuple[str, str, TaskSpec, dict[str, Any]]],
+               actor: Actor | str, kind: str) -> dict[str, Any]:
+        """Move a task to another agent and account, with its audit event, in one transaction.
+
+        `change(row)` returns (agent, account, spec, event detail) from the row read under the
+        write lock. The session id is cleared: a session belongs to the old account home."""
+        with self.tx() as c:
+            row = self.get(tid)
+            if row["state"] not in expect:
+                raise TransitionError(f"cannot reassign account while task is {row['state']}")
+            agent, account, spec, detail = change(row)
+            data = spec.model_dump_json()
+            c.execute("UPDATE tasks SET agent=?, account=?, spec=?, spec_hash=?, session_id=NULL,"
+                      " updated_at=? WHERE id=?",
+                      (agent, account, data, hashlib.sha256(data.encode()).hexdigest(),
+                       time.time(), tid))
+            self._event(c, tid, actor, kind, detail=detail)
+        return self.get(tid)
 
     def list(self, state: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         q, args = "SELECT * FROM tasks", ()
