@@ -341,27 +341,39 @@ untrusted code.
 **Enforced by the bridge, for every adapter:**
 
 - **Paths.** Checked at task creation (absolute paths, `..`, `~`, symlink escape, protected
-  paths, over-broad globs) and after each run (hash snapshot, full worktree diff, `HEAD` must not
-  move). Protected paths (`.env*`, keys, `.git/`, `.ai/`, `.mcp.json`, `.claude/settings*.json`)
-  can never be allowed. The after-run check sees the files `git status` lists, so git-ignored
-  output (a build directory, `tools/bin/…`) is neither a scope violation nor part of the patch.
-  Top-level protected files and `.ai/config.json` / `.ai/orchestrator.yaml` are checked even
-  when ignored; an output path that is not ignored counts as an out-of-scope change.
-- **Verification.** Re-run by the bridge with argv lists only (no shell), allowlisted
-  executables and a timeout.
+  paths, globs that cover the whole project such as `**/*`) and after each run (hash snapshot,
+  full worktree diff, `HEAD` must not move). Protected paths (`.env*`, keys, `.git/`, `.ai/`,
+  `.mcp.json`, `.claude/settings*.json`) can never be allowed; a run that changes one, the
+  repository's git hooks or `.git/config` is BLOCKED for a human (`PROTECTED: …`). Git-ignored
+  files are tracked by size and mtime: changes are listed as `ignored_files`, protected ones block,
+  and without a `review` stage any change outside `allowed_paths` is a violation (tool caches
+  excepted).
+- **Verification.** Re-run by the bridge with argv lists only (no shell operators, no paths as
+  the program), allowlisted executables and a timeout. On Linux with Landlock the checks may
+  write only to the worktree, a private `TMPDIR` and `workflow.verify_writable`
+  (`workflow.verify_sandbox`: `auto` by default, `strict` also cuts TCP, `none`); the worktree is
+  diffed again afterwards and what the checks changed is judged like the agent's changes. Nothing
+  the agent or a check started outlives it (its process group is ended).
+- **Evidence.** A failing git command pauses the task (`EVIDENCE_ERROR`) instead of yielding an
+  empty diff. The stored patch keeps every file from its start and names what it had to omit. An
+  attempt that ends early (quota, crash, timeout, a dead runner) and left changes outside the task
+  blocks it (`SCOPE: …`), so a resume never takes them as its baseline.
 - **Approval.** Executors cannot approve. The client or a reviewer agent approves; the bridge
-  approves only when the workflow has no `review` stage. High-risk or sensitive-path tasks need a
-  human at an interactive terminal.
+  approves only when the workflow has no `review` stage. High-risk or sensitive-path tasks, and
+  changes to agent instructions (`CLAUDE.md`, `AGENTS.md`, `.claude/**`, `.codex/**`, `.envrc`,
+  `.vscode/**`), need a human at an interactive terminal. Approving or closing requires every file
+  the attempt touched to still have its verified content.
 - **Processes.** Agents and verification commands start from argv lists in their own process
   group; timeout or cancel sends SIGTERM, then SIGKILL. The runner polls for a cancel every
   second, in any process (a CLI `execute` too): it kills the agent or the running check, skips
   the remaining checks and frees the account, and `cancel` waits for that before it returns. Orphaned groups from a dead runner are killed on the next start,
   only if the PID is a `codex`, `claude`, `opencode` or `agy` process.
 - **Environment and output.** Credential-shaped variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`,
-  `*PASSWORD*`, `AWS_*`) are removed before an agent or verification command starts. Stored output
-  passes through secret redaction.
-- **Recursion guard.** Every agent process gets `AGENT_BRIDGE_AGENT=1`; the server and CLI refuse
-  to start under it.
+  `*PASSWORD*`, `AWS_*`, and always `SSH_AUTH_SOCK`, `*_DSN`, `*DATABASE_URL*`, `*CREDENTIALS*`,
+  `KUBECONFIG`, `DOCKER_AUTH_CONFIG`) are removed before an agent or verification command starts.
+  Stored output passes through secret redaction.
+- **Recursion guard.** Every agent process gets `AGENT_BRIDGE_AGENT=1`; the server, the CLI and
+  the `Bridge` Python API refuse to start under it.
 - **Audit.** Every transition, attempt, routing decision, review, account change and workflow
   state is an event in `bridge.db`.
 
@@ -374,7 +386,9 @@ untrusted code.
   servers), `--setting-sources ""` (no user or project settings, allow rules or hooks),
   `--permission-mode dontAsk` and an allowlist of Read/Glob/Grep. With `allow_write: true` it also
   gets Edit/Write scoped to the task's `allowed_paths`, with excluded and protected paths denied.
-  Read tools can still read anything your user can, and `allow_bash: true` is not path-confined.
+  Reads of Codex/agent-bridge/agy credentials, `~/.claude/.credentials.json`, every configured
+  account home and the project's `.env*`/key files are denied; other files your user can read
+  remain readable, and `allow_bash: true` is not path-confined.
   Prefer Codex as the executor and never combine `allow_bash` with untrusted work.
 - **opencode and agy** are read-only. opencode runs with edit, bash, webfetch and external
   directories denied through `OPENCODE_CONFIG_CONTENT`; agy runs with `--mode plan --sandbox` and
@@ -388,14 +402,22 @@ untrusted code.
 another profile's tokens. The bridge reads only Codex `rate_limits` events from
 `<home>/sessions/**/rollout-*.jsonl`; it never reads `auth.json` or other credential files.
 
+**Trust model.** Everything the kit runs runs as your user. Human approval guards against
+mistakes and model overreach; it is not a boundary against code running as you. Anything that
+can run as your user can write the bridge's database or unset `AGENT_BRIDGE_AGENT`, so human-only
+steps rely on the agents being confined (the Codex sandbox, Claude permission rules, the
+verification sandbox), not on a permission check inside the bridge.
+
 **Known limitations:**
 
 - Deny rules in `.claude/settings.json` guide Claude Code; they are not a security boundary. The
   interactive-terminal check for human-only commands can be defeated by an agent that allocates
   a pseudo-terminal.
-- Verification commands run outside the Codex sandbox, with your permissions.
-- The post-run snapshot covers tracked, modified and top-level protected files; a change to a
-  nested, git-ignored secret file is not detected.
+- Verification commands are confined only where Landlock exists (Linux 5.13+); elsewhere they run
+  with your permissions unless `verify_sandbox: strict` refuses them. Even confined they can read
+  your files, and under `auto` they keep the network.
+- Git-ignored files are compared by size and mtime, not content; with a reviewer, changed ignored
+  files are listed for the reviewer rather than refused.
 - Codex and Claude still write their own session files (`~/.codex/sessions`, `~/.claude.json`).
 - Files under `.ai/` other than `config.json` are git-ignored and writable by Codex; treat them
   as convenience copies, not trusted input.

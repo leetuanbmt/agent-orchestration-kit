@@ -20,8 +20,8 @@ from . import osutil, progress, storage
 from .accounts import Account, AccountLock, account_key, binary, discover, load_registry, \
     login_status, resolve, resolve_profile
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
-from .executor import ADAPTERS, PLAN_SCHEMA, Adapter, RunRequest, RunResult, build_plan_prompt, \
-    build_prompt, build_rework_prompt, kill_stale
+from .executor import ADAPTERS, AGENT_ENV, PLAN_SCHEMA, Adapter, RunRequest, RunResult, \
+    build_plan_prompt, build_prompt, build_rework_prompt, kill_stale
 from .gate import LIMIT_REPORT_TTL_S as LIMIT_REPORT_TTL_S
 from .gate import AccountGate
 from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError, \
@@ -64,6 +64,13 @@ def resolve_account(orch: OrchestratorConfig, cfg: BridgeConfig, root: Path,
 class Bridge:
     def __init__(self, root: str | Path | None = None, cfg: BridgeConfig | None = None,
                  orch: OrchestratorConfig | None = None, *, create: bool = True):
+        if os.environ.get(AGENT_ENV):
+            # Every agent the bridge starts carries this variable, so do its children. An agent
+            # that imports the bridge (e.g. to call human_approve) is refused here as the CLI and
+            # the MCP server already refuse it. A process that unsets the variable gets past
+            # this: approval is a human-only step by process discipline, not an OS boundary.
+            raise RuntimeError("agent-bridge refuses to run inside an agent it started "
+                               f"({AGENT_ENV} is set)")
         self.root = find_root(root)
         self.cfg = cfg or load_config(self.root)
         self.orch = orch or load_orchestrator(self.root, self.cfg)

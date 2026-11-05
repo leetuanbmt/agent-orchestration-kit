@@ -43,14 +43,16 @@ human CLI ────────────▶ bridge/cli.py ────┴�
 
 | Threat | Control |
 |---|---|
-| Codex edits outside its task | allowed/excluded/protected path check after every run; `HEAD` must not move; violation → `REWORK` |
+| Codex edits outside its task | allowed/excluded/protected path check after every run, after verification and for attempts that end early; `HEAD` must not move; violation → `REWORK`, protected file or leftover from an interrupted attempt → `BLOCKED`; git-ignored files tracked by size/mtime |
 | Codex forges its own task state | state in `<git-dir>/agent-bridge/` (sandbox cannot write `.git/`); `.ai/config.json` tracked so changes show in the diff |
 | Codex approves itself | only Claude (MCP) approves; high-risk / sensitive-path tasks need `agent-bridge approve` from a TTY with the task id typed back |
 | Claude bypasses the human gate | `.claude/settings.json` deny rules for approve/reassign/login/switch commands, `sqlite3`, edits under `.ai/` |
-| Credential leakage | credential-shaped env vars scrubbed; output redacted before storage; profiles listed by name only; `Read` denied on `~/.codex/auth.json` and `~/.codex-accounts/**` |
+| Credential leakage | credential-shaped env vars scrubbed (plus `SSH_AUTH_SOCK`, `*_DSN`, `*DATABASE_URL*`, `*CREDENTIALS*`, `KUBECONFIG`, `DOCKER_AUTH_CONFIG`); output redacted before storage; profiles listed by name only; Claude agents' `Read` denied on Codex/agent-bridge/agy credentials, `~/.claude/.credentials.json`, every configured account home and `.env*`/key files |
 | Silent account switch | task bound to its account for life; reassign is human-only; global `~/.codex` never written (login fails loudly if its fingerprint changes) |
-| Runaway process | argv only, no shell; process-group SIGTERM→SIGKILL on timeout/cancel; stale Codex groups killed on start after a PID-name check |
-| Unsafe verification | allowlisted executables, argv parsing without a shell, timeout |
+| Runaway process | argv only, no shell; process-group SIGTERM→SIGKILL on timeout/cancel and whatever is left in the group when an agent or check exits; stale agent and verification groups killed on start after a PID and start-time check |
+| Unsafe verification | allowlisted executable names (no paths, no shell operators), argv parsing without a shell, timeout; Landlock write confinement to the worktree, a private TMPDIR and `verify_writable` (`workflow.verify_sandbox`, `auto` by default, `strict` also denies TCP); the worktree is diffed again after the checks |
+| Approval of changed content | approval and closing require every file the attempt touched to keep its verified sha256 |
+| Agent uses the Python API | `Bridge()` refuses under `AGENT_BRIDGE_AGENT`; this is process discipline, not an OS boundary: everything runs as the same user |
 
 ## 4. Multi-account execution
 
@@ -64,8 +66,8 @@ human CLI ────────────▶ bridge/cli.py ────┴�
 - Availability per account: `available`, `quota`, `auth`. QUOTA/AUTH pauses the task and blocks
   the account until a human clears it. Quota is read from session rollouts, and an opt-in
   `auto_switch` can move a task to a fallback account (see README → Accounts).
-- Concurrency: one active task per account (cross-process `flock`), one `workspace-write` task
-  per worktree, read-only tasks in parallel.
+- Concurrency: one active task per account (cross-process `flock`) and one active task per
+  worktree, read-only ones included; parallel work needs separate worktrees.
 
 ## 5. Verification
 
