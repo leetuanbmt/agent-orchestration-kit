@@ -91,7 +91,9 @@ Role rules:
 - A task pinned with `agent` (or `account`) runs there.
 - Otherwise, when the task first starts, the bridge picks the role's `default`, then the first
   eligible agent in role order: enabled, CLI installed, able to write, account available and
-  under `max_concurrency`. The choice is logged as `agent_routed`.
+  under `max_concurrency`, counting slots held by other bridge processes on the machine. The
+  choice is logged as `agent_routed`. If another process takes the last slot before the run
+  starts, the choice is undone (`agent_unrouted`) and no attempt is spent.
 - The task then keeps that agent and its session for retries and resumes.
 - `strategy: explicit` requires every task to name its agent.
 

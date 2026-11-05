@@ -55,6 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- Routing no longer binds an unpinned task to an account whose slots are all held by other
+  bridge processes on the machine (it then failed with `busy in another bridge process` while
+  another executor was free): such an account is now unavailable to routing and `agents`. A
+  fresh routing that still loses the slot before the run starts is undone (`agent_unrouted`)
+  and spends no attempt.
 - A stop signal (SIGTERM, SIGINT, SIGHUP, SIGALRM, e.g. a caller's timeout) to `execute`,
   `resume`, `plan` or `run-workflow` no longer leaves the agent running with ppid 1 and the task
   `RUNNING`: the bridge kills the agent or the running check, parks the task `PAUSED`

@@ -263,6 +263,7 @@ Full reference: every key and default, accounts, quota, quota fallback and state
   `bridge_review_task`.
 - **Routing.** A task pinned with `agent` or `account` runs there. Otherwise the bridge picks
   the role's `default`, then the first eligible agent in role order, when the task first starts.
+  An account whose slots are all held by other bridge processes on the machine is not eligible.
   The task keeps that agent and session for retries.
 
 ## Workflow lifecycle
@@ -487,7 +488,7 @@ and performs no human action. It listens on `127.0.0.1` only and rejects other `
 | `agent_review_failed` event | The reviewer agent errored; the task waits in `REVIEW` for `bridge_review_task`. |
 | Workflow `WAITING` | `detail.waiting` and the task states say what needs attention; run `bridge_run_workflow` again afterwards. |
 | `ConflictError … already writing` | One writer per worktree; wait, or use another worktree. |
-| `account … busy in another bridge process` | The account's concurrency slots are in use elsewhere. |
+| `account … busy in another bridge process` | The account's concurrency slots are in use elsewhere. Unpinned tasks route around it; a task pinned to it stays `READY` with no attempt spent, so start it again once a slot is free. |
 | `REWORK` with `outside allowed paths` | The executor changed files outside the task; read the patch and rework. |
 | `health` warns about legacy storage | Migrate with `agent-bridge storage status`, then `storage migrate --apply` ([details](docs/configuration.md#migrating-and-maintaining-state)). |
 
