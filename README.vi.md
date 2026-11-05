@@ -315,8 +315,8 @@ Trạng thái: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPRO
 | Chuyển trạng thái | Ai | Khi nào |
 |---|---|---|
 | `RUNNING → VERIFYING` | bridge | agent thoát bình thường |
-| `VERIFYING → REVIEW` / `REWORK` | bridge | scope sạch và mọi lệnh verification pass / có check fail |
-| `RUNNING → PAUSED` | bridge | quota, auth, network, thiếu CLI, runner bị ngắt (không tính vào số lần thử) |
+| `VERIFYING → REVIEW` / `REWORK` | bridge | scope sạch và mọi lệnh verification pass / có check fail; agent báo `blocked` mà không thay đổi gì thì sang `REWORK` và không chạy check (`verification.skipped`) |
+| `RUNNING` / `VERIFYING → PAUSED` | bridge | quota, auth, network, thiếu CLI, runner bị ngắt: nhận tín hiệu dừng hoặc runner chết (không tính vào số lần thử) |
 | `REVIEW → APPROVED` / `REWORK` / `BLOCKED` | client hoặc reviewer agent | `bridge_review_task` / lượt chạy reviewer |
 | `REVIEW → APPROVED` | bridge | không có stage review và mọi gate đã pass |
 | `APPROVED → DONE` | bridge, hoặc **người** với task rủi ro cao | quality gate được kiểm tra lại |
@@ -511,11 +511,20 @@ là sự cho phép của user; block `auto_switch` legacy trong `config.json` đ
    khi có biến này.
 5. **Process:** argv list, không shell; process group riêng, SIGTERM rồi SIGKILL khi timeout hoặc
    huỷ; process group agent mồ côi của runner đã chết bị kill ở lần khởi động sau (chỉ khi PID là
-   process `codex`, `claude`, `opencode` hoặc `agy`).
+   process `codex`, `claude`, `opencode` hoặc `agy`). SIGTERM, SIGINT, SIGHUP hoặc SIGALRM (timeout
+   của bên gọi) gửi tới `execute`, `resume`, `plan` hoặc `run-workflow` sẽ kill agent hoặc check
+   đang chạy trong khoảng một giây, đưa task về `PAUSED` (`INTERRUPTED`, trả lại lần thử) và thoát
+   với mã 128 + số hiệu tín hiệu; `serve` cũng dừng theo cách đó. Chỉ SIGKILL mới để task ở
+   `RUNNING` tới lần khởi động sau. Lệnh `cancel` từ process khác cũng được runner nhận theo cách
+   đó (kill agent hoặc lệnh verification, bỏ các check còn lại, giải phóng account); `cancel` chờ
+   tối đa 15 s rồi mới trả về.
 6. **Environment:** biến trông giống credential (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, …) bị xoá.
 7. **Path:** kiểm tra khi tạo task (tuyệt đối, `..`, `~`, symlink thoát ra ngoài, protected, quá
    rộng) và sau mỗi lượt chạy với mọi adapter (hash snapshot, diff toàn worktree, `HEAD` không
-   được đổi).
+   được đổi). Kiểm tra sau lượt chạy chỉ thấy các file `git status` liệt kê, nên output bị
+   git-ignore (thư mục build, `tools/bin/…`) không bị tính là vi phạm scope và không nằm trong
+   patch. File protected ở thư mục gốc (`.env*`, key) và `.ai/config.json` / `.ai/orchestrator.yaml`
+   vẫn được kiểm tra dù bị ignore; output không bị ignore thì bị tính là thay đổi ngoài scope.
 8. **Verification:** bridge tự chạy lại, chỉ argv, file chạy nằm trong allowlist, có timeout.
 9. **Duyệt:** executor không tự approve được. Client hoặc reviewer agent approve; bridge chỉ
    approve trong workflow gates-only. Task rủi ro cao hoặc đụng path nhạy cảm cần người ở terminal
@@ -574,7 +583,7 @@ cô lập account, slot chạy song song, ánh xạ legacy, nâng cấp schema, 
 | task PAUSED `QUOTA` / `AUTH` | chờ hoặc đăng nhập lại, rồi `agent-bridge account-clear <name>` và resume; bật quota fallback thì resume một lần pause QUOTA sẽ chuyển task |
 | event `agent_review_failed` | reviewer agent lỗi; task chờ ở REVIEW để `bridge_review_task` |
 | workflow `WAITING` | `detail.waiting` và trạng thái task cho biết cần xử lý gì; xử lý xong chạy lại `bridge_run_workflow` |
-| task PAUSED `INTERRUPTED` | runner đã chết; `bridge_resume_task` chạy tiếp session |
+| task PAUSED `INTERRUPTED` | runner bị dừng bằng tín hiệu hoặc đã chết; `bridge_resume_task` chạy tiếp session, `cancel` huỷ nó |
 | `ConflictError … already writing` | mỗi worktree một writer; chờ hoặc dùng worktree khác |
 | `account … busy in another bridge process` | slot của account đang bị dùng ở nơi khác |
 | REWORK `outside allowed paths` | executor sửa file ngoài spec; đọc patch, rework |

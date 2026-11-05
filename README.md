@@ -313,8 +313,8 @@ States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED →
 | Move | Who | Trigger |
 |---|---|---|
 | `RUNNING → VERIFYING` | bridge | the agent exited cleanly |
-| `VERIFYING → REVIEW` / `REWORK` | bridge | scope clean and every verification command passed / any check failed |
-| `RUNNING → PAUSED` | bridge | quota, auth, network, missing CLI, interrupted runner (does not consume the attempt budget) |
+| `VERIFYING → REVIEW` / `REWORK` | bridge | scope clean and every verification command passed / any check failed; an agent that reports `blocked` and changed nothing goes to `REWORK` without running the checks (`verification.skipped`) |
+| `RUNNING` / `VERIFYING → PAUSED` | bridge | quota, auth, network, missing CLI, interrupted runner: a stop signal or a dead runner (does not consume the attempt budget) |
 | `REVIEW → APPROVED` / `REWORK` / `BLOCKED` | client or reviewer agent | `bridge_review_task` / reviewer run |
 | `REVIEW → APPROVED` | bridge | no review stage and every gate passed |
 | `APPROVED → DONE` | bridge, or a **human** for high risk | quality gates re-checked |
@@ -508,10 +508,20 @@ the user's authorisation; the legacy `auto_switch` block in `config.json` maps o
    to start under it.
 5. **Processes:** argv lists, no shell; own process group, SIGTERM then SIGKILL on timeout or
    cancel; orphaned agent groups from a dead runner are killed on the next start (only if the
-   PID is a `codex`, `claude`, `opencode` or `agy` process).
+   PID is a `codex`, `claude`, `opencode` or `agy` process). SIGTERM, SIGINT, SIGHUP or SIGALRM
+   (a caller's timeout) to `execute`, `resume`, `plan` or `run-workflow` kills the agent or the
+   running check within about a second, parks the task `PAUSED` (`INTERRUPTED`, attempt given
+   back) and exits with 128 + the signal number; `serve` shuts down the same way. Only SIGKILL
+   leaves the task `RUNNING` until the next start. A `cancel` from another process is picked up
+   by the runner the same way (agent or verification command killed, remaining checks skipped,
+   account freed); `cancel` waits up to 15 s for that before it returns.
 6. **Environment:** credential-shaped variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, …) are removed.
 7. **Paths:** checked at creation (absolute, `..`, `~`, symlink escape, protected, over-broad) and
    after each run for every adapter (hash snapshot, full worktree diff, `HEAD` must not move).
+   The after-run check sees the files `git status` lists, so git-ignored output (a build
+   directory, `tools/bin/…`) is neither a scope violation nor part of the patch. Top-level
+   protected files (`.env*`, keys) and `.ai/config.json` / `.ai/orchestrator.yaml` are checked
+   even when ignored; an output path that is not ignored counts as an out-of-scope change.
 8. **Verification:** re-run by the bridge, argv only, allowlisted executables, timeout.
 9. **Approval:** executors cannot approve. The client or a reviewer agent approves; the bridge
    approves only in gates-only workflows. High-risk or sensitive-path tasks need a human at an
@@ -569,7 +579,7 @@ validation, account isolation, concurrency slots, legacy mapping, schema upgrade
 | task PAUSED `QUOTA` / `AUTH` | wait or re-login, then `agent-bridge account-clear <name>` and resume; with quota fallback on, resuming a QUOTA pause moves it |
 | `agent_review_failed` event | the reviewer agent errored; the task waits in REVIEW for `bridge_review_task` |
 | workflow `WAITING` | `detail.waiting` and task states say what needs attention; run `bridge_run_workflow` again after |
-| task PAUSED `INTERRUPTED` | the runner died; `bridge_resume_task` continues the session |
+| task PAUSED `INTERRUPTED` | the runner was stopped by a signal or died; `bridge_resume_task` continues the session, `cancel` drops it |
 | `ConflictError … already writing` | one writer per worktree; wait or use another worktree |
 | `account … busy in another bridge process` | the account's slots are in use elsewhere |
 | REWORK `outside allowed paths` | the executor touched files outside the spec; read the patch, rework |

@@ -9,8 +9,10 @@ import hashlib
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -137,11 +139,18 @@ def parse_command(cmd: str, cfg: BridgeConfig) -> list[str]:
     return argv
 
 
-async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig) -> list[dict[str, Any]]:
+async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
+                           should_cancel: Callable[[], bool] | None = None
+                           ) -> list[dict[str, Any]]:
+    """Run each command in its own process group. A cancel (polled every second) kills the
+    running command and skips the rest."""
     results = []
     # No .pyc litter from the bridge's own checks in the next attempt's baseline.
     env = {**clean_env(os.environ, cfg.env_deny, cfg.env_allow), "PYTHONDONTWRITEBYTECODE": "1"}
+    loop = asyncio.get_running_loop()
     for cmd in cmds:
+        if should_cancel and should_cancel():
+            break
         r: dict[str, Any] = {"command": cmd, "passed": False}
         try:
             argv = parse_command(cmd, cfg)
@@ -149,16 +158,33 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig) -> li
                 *argv, cwd=root, env=env, start_new_session=True, stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             )
-            try:
-                out, _ = await asyncio.wait_for(proc.communicate(), cfg.verify_timeout_s)
+            io = asyncio.ensure_future(proc.communicate())
+            deadline = loop.time() + cfg.verify_timeout_s
+            stop = ""
+            while not io.done():
+                if should_cancel and should_cancel():
+                    stop = "cancelled"
+                elif loop.time() >= deadline:
+                    stop = f"timed out after {cfg.verify_timeout_s}s"
+                if stop:
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    break
+                await asyncio.wait({io}, timeout=min(1.0, max(deadline - loop.time(), 0)))
+            if stop:  # a process that left the group may still hold the pipe open
+                await asyncio.wait({io}, timeout=5)
+            if io.done():
+                out, _ = io.result()
+            else:
+                io.cancel()
+                out = b""
+                await proc.wait()
+            if stop:
+                r["error"] = stop
+            else:
                 r["exit_code"] = proc.returncode
                 r["passed"] = proc.returncode == 0
-            except TimeoutError:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(proc.pid, 9)
-                await proc.wait()
-                out, r["error"] = b"", f"timed out after {cfg.verify_timeout_s}s"
-            r["output_tail"] = redact(out.decode(errors="replace"), 3000)
+            r["output_tail"] = redact((out or b"").decode(errors="replace"), 3000)
         except (ValueError, OSError) as e:
             r["error"] = str(e)
         results.append(r)

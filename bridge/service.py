@@ -36,6 +36,8 @@ from .state import ConflictError, Store, overview
 # Outcomes that mean "the environment, not the code": park the task, never auto-retry.
 PAUSE_OUTCOMES = {"quota", "auth", "network", "missing_binary"}
 REBINDABLE = {State.READY, State.REWORK, State.FAILED, State.PAUSED}
+# How long cancel waits for the runner to stop: one poll plus the agent's TERM and KILL grace.
+CANCEL_WAIT_S = 15
 
 
 def _alive(pid: int | None) -> bool:
@@ -548,6 +550,8 @@ class Bridge:
                             failure=f"BRIDGE_ERROR: {redact(repr(e), 500)}")
             finally:
                 lock.release()
+                # Tells a cancel_task in another process that this run let go of the account.
+                self.store.update(task_id, runner_pid=None)
             if self.store.get(task_id)["state"] == State.REVIEW and not self._stopping:
                 await self._review_stage(task_id)
         finally:
@@ -597,10 +601,7 @@ class Bridge:
 
         if res.outcome == "cancelled":
             self.store.finish_attempt(task_id, n, **record)
-            if self._stopping and self.store.get(task_id)["state"] in ACTIVE:
-                self.store.transition(task_id, State.PAUSED, Actor.BRIDGE,
-                                      {"reason": "bridge shutdown"},
-                                      failure="INTERRUPTED: bridge shut down during execution")
+            self._park_if_stopping(task_id, used)
             return
         if res.outcome in PAUSE_OUTCOMES:
             self.store.finish_attempt(task_id, n, **record)
@@ -618,15 +619,23 @@ class Bridge:
 
         self.store.transition(task_id, State.VERIFYING, Actor.BRIDGE, {"attempt": n})
         violations = scope_violations(changes["files"], spec, self.cfg, changes["head_changed"])
-        checks = (await run_verification(spec.get("verification_commands", []), self.root,
-                                         self.cfg)
-                  if "test" in self.orch.workflow.stages else [])
         agent_status = (res.final or {}).get("status", "unknown")
+        # Checks cannot change the outcome of a run that gave up without touching anything, and
+        # can take many minutes.
+        skipped = ("agent reported blocked and changed nothing"
+                   if agent_status == "blocked" and not changes["files"]
+                   and not changes["head_changed"] else None)
+        checks = (await run_verification(spec.get("verification_commands", []), self.root,
+                                         self.cfg, should_cancel=cancelled)
+                  if "test" in self.orch.workflow.stages and not skipped else [])
         passed = not violations and all(c["passed"] for c in checks) and agent_status == "completed"
         record["verification"] = {"passed": passed, "scope_violations": violations,
-                                  "checks": checks, "agent_status": agent_status}
+                                  "checks": checks, "agent_status": agent_status,
+                                  **({"skipped": skipped} if skipped else {})}
         self.store.finish_attempt(task_id, n, **record)
         needs_human = bool(row["needs_human"]) or touches_sensitive(changes["files"], self.cfg)
+        if self._park_if_stopping(task_id, used):
+            return  # stopped while verifying: the checks were cut short, not failed
         if self.store.get(task_id)["state"] != State.VERIFYING:
             return  # cancelled while verifying
         if passed:
@@ -639,6 +648,21 @@ class Bridge:
                                    if agent_status != "completed" else []))[:1000]
         self.store.transition(task_id, dst, Actor.BRIDGE, record["verification"],
                               failure=failure, needs_human=int(needs_human))
+
+    def _park_if_stopping(self, task_id: str, used: int) -> bool:
+        """PAUSE a run this bridge stopped (shutdown or a stop signal). An interrupted run is an
+        environment failure, so it gives its attempt back."""
+        if not self._stopping or self.store.get(task_id)["state"] not in ACTIVE:
+            return False
+        self.store.transition(task_id, State.PAUSED, Actor.BRIDGE, {"reason": "bridge shutdown"},
+                              failure="INTERRUPTED: bridge shut down during execution",
+                              attempts=used - 1)
+        return True
+
+    def stop(self) -> None:
+        """Stop every run of this process within ~1 s: agents and checks are killed, the tasks
+        are PAUSED (INTERRUPTED) and can be resumed or cancelled."""
+        self._stopping = True
 
     # ---- review ----------------------------------------------------------------------------
 
@@ -756,14 +780,25 @@ class Bridge:
     # ---- task queries ----------------------------------------------------------------------
 
     async def cancel_task(self, task_id: str, reason: str) -> dict[str, Any]:
+        running = self.store.get(task_id)["state"] in ACTIVE
         row = self.store.transition(task_id, State.CANCELLED, Actor.CLIENT, {"reason": reason},
                                     failure=f"CANCELLED: {reason}"[:500])
-        if row["runner_pid"] != os.getpid() and not _alive(row["runner_pid"]):
+        owner = row["runner_pid"]
+        if owner != os.getpid() and not _alive(owner):
             kill_stale(row["codex_pid"], row["codex_started"])  # orphan from a dead runner
+        elif running:
+            # The runner (this process or another one, e.g. a CLI `execute`) polls the state,
+            # kills its agent or verification process group within ~1 s, then releases the
+            # account lock and clears runner_pid. Signalling it instead could stop an MCP server
+            # that owns other runs.
+            deadline = time.monotonic() + CANCEL_WAIT_S
+            while (self.store.get(task_id)["runner_pid"] == owner
+                   and time.monotonic() < deadline):
+                await asyncio.sleep(0.2)
         task = self._runs.get(task_id)
-        if task:  # the runner polls the state and kills the process group within ~1s
+        if task:  # a background run here, maybe in its review stage
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(asyncio.shield(task), 15)
+                await asyncio.wait_for(asyncio.shield(task), CANCEL_WAIT_S)
         return self._summary(self.store.get(task_id))
 
     async def task_status(self, task_id: str, wait_s: float = 0) -> dict[str, Any]:
