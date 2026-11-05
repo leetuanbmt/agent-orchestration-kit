@@ -150,6 +150,7 @@ tbody tr:focus-visible { outline-offset: -2px; background: var(--surface-2); }
 .counter-review_wait .counter-glyph { color: var(--st-review); }
 .counter-running .counter-glyph { color: var(--st-running); }
 .counter-done .counter-glyph { color: var(--st-done); }
+.counter.counter-zero .counter-glyph, .counter.counter-zero .counter-value { color: var(--text-muted); }
 .attention { margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); }
 .attention h2 { font-size: var(--fs-lg); margin: 0; font-variant-numeric: tabular-nums; }
 .attention-hint { margin: var(--sp-1) 0 var(--sp-2); }
@@ -195,7 +196,9 @@ tbody tr:focus-visible { outline-offset: -2px; background: var(--surface-2); }
 .card-header { display: flex; justify-content: space-between; align-items: start; gap: var(--sp-4); margin-bottom: var(--sp-3); }
 .card-header h2 { margin: 0 0 var(--sp-1); font-size: var(--fs-lg); }
 .card-header p { margin: var(--sp-2) 0 0; font-variant-numeric: tabular-nums; }
-.root { overflow-wrap: anywhere; }
+.card-header > .card-title { flex: 1 1 auto; min-width: 0; }
+.card-header > button { flex: 0 0 auto; white-space: nowrap; }
+.root { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .toggle-worktrees { margin-top: var(--sp-3); }
 
 /* Overview and Accounts: one centered column of sections. */
@@ -360,6 +363,8 @@ dt { color: var(--text-muted); } dd { margin: 0; overflow-wrap: anywhere; }
   #views button { font-size: var(--fs-sm); }
   .panel { padding: var(--sp-3); }
   .capacity-quota { flex-basis: 100%; text-align: left; }
+  .card-header { flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); }
+  .card-header > .card-title { flex: 1 1 14rem; }
   .attention { padding: var(--sp-3); }
 }
 

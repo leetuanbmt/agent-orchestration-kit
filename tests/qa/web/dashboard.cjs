@@ -548,6 +548,34 @@ const scenarios = {
       .map(id => document.getElementById(id).getBoundingClientRect().top));
     check('tiles, queue, In progress, accounts, projects from top to bottom',
           tops.every((top, i) => i === 0 || top > tops[i - 1]), JSON.stringify(tops));
+    // A tile at 0 is drawn muted; a tile with a value keeps its state color.
+    const tiles = await page.locator('#summary > [data-key]').evaluateAll(nodes => nodes.map(n => {
+      const glyph = n.querySelector('.counter-glyph'), label = n.querySelector('.counter-label');
+      return { key: n.dataset.key, value: n.querySelector('.counter-value').textContent.trim(),
+               zero: n.classList.contains('counter-zero'),
+               mutedGlyph: getComputedStyle(glyph).color === getComputedStyle(label).color };
+    }));
+    check('a zero tile carries the muted class and a muted glyph',
+          tiles.some(t => t.value === '0') && tiles.filter(t => t.value === '0').every(t => t.zero && t.mutedGlyph), JSON.stringify(tiles));
+    const review = tiles.find(t => t.key === 'awaitingReview');
+    check('a non-zero tile has no muted class and keeps its color',
+          review && review.value !== '0' && !review.zero && !review.mutedGlyph &&
+          tiles.filter(t => t.value !== '0').every(t => !t.zero), JSON.stringify(tiles));
+    const root = page.locator('#project-cards .project-card .root').first();
+    const rootText = (await root.textContent().catch(() => '')) || '';
+    check('the project root has a title equal to its text',
+          rootText.length > 0 && await root.getAttribute('title').catch(() => null) === rootText, rootText);
+    // Far resets read as a date, near ones as a duration (fixed clock, English).
+    const resets = await page.evaluate(() => {
+      const now = new Date(2026, 0, 10, 12).getTime(), late = new Date(2026, 11, 20, 12).getTime(), s = now / 1000;
+      return { near: resetText(s + 2 * 86400, now), far: resetText(s + 30 * 86400, now),
+               farDate: new Date((s + 30 * 86400) * 1000).toLocaleDateString('en', { month: 'short', day: 'numeric' }),
+               nextYear: resetText(late / 1000 + 30 * 86400, late), due: resetText(s - 5, now) };
+    });
+    check('a reset over a week away shows a short date, never a day count',
+          resets.far === `resets ${resets.farDate}` && !/\d+d\b/.test(resets.far), JSON.stringify(resets));
+    check('a reset in the next year shows the year', /2027/.test(resets.nextYear) && !/\d+d\b/.test(resets.nextYear), resets.nextYear);
+    check('a near reset keeps the duration text', /^resets in /.test(resets.near) && resets.due === 'resets now', JSON.stringify(resets));
     await page.screenshot({ path: cfg.shots + '/overview.png', fullPage: true });
 
     // Old links to the projects view land on the overview at the projects section.
@@ -576,6 +604,22 @@ const scenarios = {
     await page.waitForTimeout(300);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     check('no horizontal page scroll at 375 px', overflow <= 1, `overflow ${overflow}px`);
+    const fit = await page.evaluate(() => {
+      const card = document.querySelector('#project-cards .project-card');
+      const box = card.getBoundingClientRect(), header = card.querySelector('.card-header');
+      const root = card.querySelector('.root'), action = header.querySelector(':scope > button');
+      // Count the line boxes of a node's text by their distinct tops.
+      const lines = node => { const range = document.createRange(); range.selectNodeContents(node);
+        return new Set([...range.getClientRects()].filter(r => r.width > 0).map(r => Math.round(r.top))).size; };
+      return { cardOverflow: card.scrollWidth - card.clientWidth, headerOverflow: header.scrollWidth - header.clientWidth,
+               right: Math.max(...[...header.children].map(c => c.getBoundingClientRect().right)) - box.right,
+               rootLines: lines(root), rootEllipsis: getComputedStyle(root).textOverflow,
+               actionWrap: getComputedStyle(action).whiteSpace, actionLines: lines(action) };
+    });
+    check('the project card does not overflow at 375 px',
+          fit.cardOverflow <= 1 && fit.headerOverflow <= 1 && fit.right <= 1, JSON.stringify(fit));
+    check('the project root is one line with an ellipsis', fit.rootLines === 1 && fit.rootEllipsis === 'ellipsis', JSON.stringify(fit));
+    check('the View tasks button does not wrap', fit.actionWrap === 'nowrap' && fit.actionLines === 1, JSON.stringify(fit));
   },
 
   // Capacity after a real quota failover: cl1 ran out, the task moved to claude2 on cl2.
