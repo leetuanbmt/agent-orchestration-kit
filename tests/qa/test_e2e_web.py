@@ -170,12 +170,13 @@ def test_web_log(dashboard: Dashboard) -> None:
     assert dashboard.request("GET", f"/api/projects/{dashboard.pid}/tasks/{review}/log?n=x")[0] == 404
 
 
-SCENARIOS = ["load", "drawer", "no_token", "xss", "live", "language", "search", "offline", "mobile"]
+SCENARIOS = ["load", "drawer", "no_token", "xss", "live", "language", "search", "offline", "mobile",
+             "loading", "theme", "drawer_layout", "mobile_cards"]
 
 
 # @pt.id QA-E2E-073-web-browser
 # @pt.item The dashboard in a real browser
-# @pt.condition one scenario each: load, drawer, no_token, xss, live, language, search, mobile, offline (see tests/qa/web/dashboard.cjs)
+# @pt.condition one scenario each: load, drawer, no_token, xss, live, language, search, mobile, offline, loading, theme, drawer_layout, mobile_cards (see tests/qa/web/dashboard.cjs)
 # @pt.expected every check of the scenario passes and the page raises no JavaScript error
 # @pt.target bridge/static/app.js, bridge.webui
 # @pt.method e2e (Playwright)

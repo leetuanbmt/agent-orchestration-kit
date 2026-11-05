@@ -37,7 +37,16 @@ const I18N = {
     exit_code: 'Exit code', kind: 'Kind', outcome: 'Outcome', decision: 'Decision', notes: 'Notes', actor: 'Actor', n: 'Run', error: 'Error',
     BACKLOG: 'Backlog', READY: 'Ready', RUNNING: 'Running', REWORK: 'Rework', VERIFYING: 'Verifying',
     REVIEW: 'Review', APPROVED: 'Approved', DONE: 'Done', CANCELLED: 'Cancelled', PAUSED: 'Paused',
-    FAILED: 'Failed', BLOCKED: 'Blocked', low: 'Low', medium: 'Medium', high: 'High'
+    FAILED: 'Failed', BLOCKED: 'Blocked', low: 'Low', medium: 'Medium', high: 'High',
+    theme: 'Theme', themeSystem: 'System', themeLight: 'Light', themeDark: 'Dark', filters: 'Filter tasks',
+    noTasksYet: 'No tasks yet. Create one in a terminal with `agent-bridge create <spec.json>`; it appears here within a few seconds.',
+    staleData: 'Cannot reach agent-bridge. Showing data from {time}; retrying every 5 s.',
+    noData: 'Cannot reach agent-bridge yet; retrying every 5 s.',
+    staleTitle: 'No update for {n} days', lifecycle: 'Lifecycle', stepDone: 'completed', risk: 'Risk: {level}',
+    nextResult: 'Open the result to see what the agent did and decide what happens next.',
+    nextApprove: 'This task is waiting for your approval before it can finish.',
+    nextResume: 'Resume the task when you are ready for the agent to continue.',
+    checkFailed: 'Failed'
   },
   vi: {
     log: 'Nhật ký', messagesOnly: 'Chỉ tin nhắn agent', logTail: 'Đang hiển thị 256 KB cuối', noLog: 'Không có nhật ký cho lần chạy này',
@@ -69,7 +78,16 @@ const I18N = {
     exit_code: 'Mã thoát', kind: 'Loại', outcome: 'Kết quả', decision: 'Quyết định', notes: 'Ghi chú', actor: 'Người đánh giá', n: 'Lần chạy', error: 'Lỗi',
     BACKLOG: 'Tồn đọng', READY: 'Sẵn sàng', RUNNING: 'Đang chạy', REWORK: 'Làm lại', VERIFYING: 'Đang xác minh',
     REVIEW: 'Duyệt', APPROVED: 'Đã duyệt', DONE: 'Xong', CANCELLED: 'Đã hủy', PAUSED: 'Tạm dừng',
-    FAILED: 'Lỗi', BLOCKED: 'Bị chặn', low: 'Thấp', medium: 'Trung bình', high: 'Cao'
+    FAILED: 'Lỗi', BLOCKED: 'Bị chặn', low: 'Thấp', medium: 'Trung bình', high: 'Cao',
+    theme: 'Giao diện', themeSystem: 'Theo hệ thống', themeLight: 'Sáng', themeDark: 'Tối', filters: 'Lọc tác vụ',
+    noTasksYet: 'Chưa có tác vụ nào. Hãy tạo tác vụ trong terminal bằng `agent-bridge create <spec.json>`; tác vụ sẽ xuất hiện ở đây sau vài giây.',
+    staleData: 'Không kết nối được agent-bridge. Đang hiển thị dữ liệu lúc {time}; tự thử lại mỗi 5 giây.',
+    noData: 'Chưa kết nối được agent-bridge; tự thử lại mỗi 5 giây.',
+    staleTitle: 'Không có cập nhật trong {n} ngày', lifecycle: 'Vòng đời', stepDone: 'đã xong', risk: 'Rủi ro: {level}',
+    nextResult: 'Mở kết quả để xem agent đã làm gì và quyết định bước tiếp theo.',
+    nextApprove: 'Tác vụ này đang chờ bạn phê duyệt trước khi hoàn tất.',
+    nextResume: 'Tiếp tục tác vụ khi bạn sẵn sàng để agent làm tiếp.',
+    checkFailed: 'Không đạt'
   }
 };
 const $ = id => document.getElementById(id);
@@ -80,7 +98,16 @@ try { const saved = localStorage.getItem('dashboard-language'); if (['vi', 'en']
 let state = {view: 'tasks', p: '', w: '', s: 'open', q: '', t: '', g: '', lang: language};
 let overview = null, timer = null, inFlight = false, disconnected = false, tokenRequired = false;
 let detailVersion = 0, taskData = null, detailError = '', returnFocus = null;
-let attemptLog = null;
+let attemptLog = null, lastOk = null, technicalOpen = '';
+const FLOW = ['BACKLOG', 'READY', 'RUNNING', 'VERIFYING', 'REVIEW', 'APPROVED', 'DONE'];
+const THEMES = ['system', 'light', 'dark'];
+let theme = 'system';
+try { const saved = localStorage.getItem('dashboard-theme'); if (THEMES.includes(saved)) theme = saved; } catch {}
+function applyTheme() {
+  if (theme === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', theme);
+}
+applyTheme();
 const tr = (key, values = {}) => {
   let value = I18N[state.lang][key] ?? key;
   for (const [name, replacement] of Object.entries(values)) value = value.replaceAll(`{${name}}`, String(replacement));
@@ -207,6 +234,13 @@ function statusLabel(task) {
   return task.exception === 'needs' ? `${tr(task.state)} · ${tr('needs')}`
     : `${tr(task.exception || task.state)}${task.exception === 'paused' && task.reason ? ` · ${tr(task.reason)}` : ''}`;
 }
+function statusClass(task) {
+  return `badge status-${task.exception || (matches(task, 'running') ? 'running' : String(task.state || '').toLowerCase())}`;
+}
+function pauseReason(failure) {
+  const prefix = (failure || '').split(':')[0];
+  return ['QUOTA', 'AUTH', 'NETWORK', 'INTERRUPTED', 'MISSING_BINARY'].includes(prefix) ? prefix : 'OTHER';
+}
 function taskLocation(task, full = false) {
   const group = projectGroups().find(g => g.members.some(p => p.pid === task.pid));
   const checkout = group?.members.find(p => p.pid === task.pid);
@@ -219,6 +253,12 @@ function renderOverview() {
   text($('live'), tr(tokenRequired ? 'tokenRequired' : disconnected ? 'offline' : overview ? 'live' : 'loading'));
   attr($('live'), 'class', disconnected ? 'live offline' : 'live'); $('content').classList.toggle('disconnected', disconnected);
   text($('footer'), tr('viewOnly')); attr($('languages'), 'aria-label', tr('language')); attr($('views'), 'aria-label', tr('views'));
+  text($('theme-label'), tr('theme'));
+  selectOptions($('theme'), [['system', tr('themeSystem')], ['light', tr('themeLight')], ['dark', tr('themeDark')]], theme);
+  attr($('filters'), 'aria-label', tr('filters'));
+  const banner = $('offline-banner');
+  banner.hidden = !disconnected || tokenRequired;
+  text(banner, lastOk ? tr('staleData', {time: lastOk.toLocaleTimeString(state.lang)}) : tr('noData'));
   patch($('languages'), ['en', 'vi'], x => x, x => [x, state.lang], (node, lang) => {
     node.replaceChildren(button(tr(lang), () => setState({lang}))); attr(node.firstChild, 'aria-pressed', lang === state.lang);
   });
@@ -245,7 +285,7 @@ function renderOverview() {
     attr(chip, 'aria-pressed', state.s === group); node.replaceChildren(chip);
   });
   const shown = filtered.filter(t => matches(t, state.s)).sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
-  text($('task-count'), tr(shown.length === 1 ? 'taskCountOne' : 'taskCount', {n: shown.length})); headers($('columns'), ['status', 'task', 'location', 'agent', 'updated', 'nextStep']);
+  text($('task-count'), overview ? tr(shown.length === 1 ? 'taskCountOne' : 'taskCount', {n: shown.length}) : ''); headers($('columns'), ['status', 'task', 'location', 'agent', 'updated', 'nextStep']);
   let rows = shown;
   if (state.g === '1') {
     const worktrees = new Map();
@@ -261,8 +301,7 @@ function renderOverview() {
       attr(cell, 'colspan', '6'); attr(cell, 'scope', 'rowgroup'); attr(row, 'class', 'worktree-header'); row.append(cell); return;
     }
     activate(row, () => openItem(task.pid, task.task_id));
-    const label = statusLabel(task);
-    const status = el('td'); status.append(el('span', label, `badge status-${task.exception || (matches(task, 'running') ? 'running' : task.state.toLowerCase())}`));
+    const status = el('td'); status.append(el('span', statusLabel(task), statusClass(task)));
     const name = el('td', undefined, 'task-cell'), line = el('div', undefined, 'task-line');
     const objective = el('span', (task.objective || '').split('\n')[0], 'objective');
     attr(objective, 'title', task.objective || ''); line.append(el('code', task.task_id), objective); name.append(line);
@@ -270,16 +309,25 @@ function renderOverview() {
     const next = el('td', undefined, 'next-step');
     if (task.command) {
       const copy = button('⧉', event => { event.stopPropagation(); copyCommand(task.command, event.currentTarget); }, 'copy-icon');
-      attr(copy, 'aria-label', 'Copy command'); attr(copy, 'title', task.command);
+      attr(copy, 'aria-label', tr('copy')); attr(copy, 'title', task.command);
       next.append(el('span', tr(task.command.split(' ')[1])), copy);
-    }
+    } else next.append(el('span', tr('dash'), 'muted'));
     const updated = timeCell(task.updated_at), age = Date.now() / 1000 - task.updated_at;
     if (matches(task, 'open') && task.updated_at != null && age > 7 * 86400) {
-      const stale = el('span', tr('stale'), 'muted stale'); attr(stale, 'title', `No update for ${Math.floor(age / 86400)} days`); updated.append(' ', stale);
+      const stale = el('span', tr('stale'), 'muted stale'); attr(stale, 'title', tr('staleTitle', {n: Math.floor(age / 86400)})); updated.append(' ', stale);
     }
-    row.replaceChildren(status, name, place, el('td', task.agent ?? task.account ?? tr('dash')), updated, next);
+    const cells = [status, name, place, el('td', task.agent ?? task.account ?? tr('dash')), updated, next];
+    // The phone layout shows these labels next to each value (CSS attr(data-label)).
+    ['status', 'task', 'location', 'agent', 'updated', 'nextStep'].forEach((key, i) => attr(cells[i], 'data-label', tr(key)));
+    row.replaceChildren(...cells);
   });
-  $('tasks-empty').hidden = shown.length > 0; text($('empty-message'), tr('noMatches')); text($('empty-clear'), tr('clear'));
+  // Before the first answer there is nothing to judge: show placeholders, never "no matches".
+  const loaded = !!overview, none = loaded && tasks.length === 0;
+  $('tasks-loading').hidden = loaded || disconnected || tokenRequired; text($('loading-text'), tr('loading'));
+  $('tasks-table').hidden = !loaded;
+  $('tasks-empty').hidden = !loaded || shown.length > 0;
+  text($('empty-message'), tr(none ? 'noTasksYet' : 'noMatches')); text($('empty-clear'), tr('clear'));
+  $('empty-clear').hidden = none;
   groups.sort((a, b) => totals(b.members).needs - totals(a.members).needs || Math.max(...b.members.map(p => p.updated_at || 0)) - Math.max(...a.members.map(p => p.updated_at || 0)));
   patch($('project-cards'), groups, g => g.project.pid, g => [g, tasks, expanded.has(g.project.pid), Math.floor(Date.now() / 1000)], (card, group) => {
     attr(card, 'class', 'project-card'); const project = group.project, count = totals(group.members);
@@ -446,9 +494,53 @@ function records(parent, key, records, fields) {
     parent.append(list);
   }
 }
+function drawerHead(task) {
+  const head = el('div', undefined, 'drawer-head');
+  head.append(el('code', task.task_id), el('span', statusLabel(task), statusClass(task)));
+  if (task.risk_level) head.append(el('span', tr('risk', {level: tr(task.risk_level)}), 'chip'));
+  const who = [task.agent, task.account].filter(Boolean).join(' · ');
+  if (who) head.append(el('span', who, 'muted'));
+  return head;
+}
+// Where the task sits in its normal path, or why it left that path.
+function lifecycle(task) {
+  const index = FLOW.indexOf(task.state);
+  if (index < 0) {
+    const box = el('div', undefined, 'state-box');
+    const reason = task.state === 'PAUSED' ? tr(task.reason || pauseReason(task.failure)) : '';
+    box.append(el('span', `${tr(task.state)}${reason ? ` · ${reason}` : ''}`, statusClass(task)));
+    if (task.failure) box.append(el('h3', tr('failure')), el('pre', task.failure));
+    return box;
+  }
+  const list = el('ol', undefined, 'stepper'); attr(list, 'aria-label', tr('lifecycle'));
+  FLOW.forEach((step, i) => {
+    const item = el('li', undefined, i < index ? 'step done' : i === index ? 'step current' : 'step');
+    const mark = el('span', i < index ? '✓' : String(i + 1), 'step-mark'); attr(mark, 'aria-hidden', 'true');
+    item.append(mark, el('span', tr(step), 'step-name'));
+    if (i < index) item.append(el('span', ` (${tr('stepDone')})`, 'sr-only'));
+    if (i === index) attr(item, 'aria-current', 'step');
+    list.append(item);
+  });
+  if (!task.failure) return list;
+  const box = el('div'); box.append(list, el('h3', tr('failure')), el('pre', task.failure));
+  return box;
+}
+function section(key, className) {
+  const node = el('section', undefined, className ? `drawer-section ${className}` : 'drawer-section');
+  node.append(el('h3', tr(key))); return node;
+}
+function codeList(items) {
+  const list = el('ul', undefined, 'plain-list');
+  for (const item of items) { const li = el('li'); li.append(el('code', item)); list.append(li); }
+  return list;
+}
+function setInert(value) {
+  for (const node of [$('content'), $('topbar'), $('footer')]) if (node.inert !== value) node.inert = value;
+}
 function renderDetail() {
   const drawer = $('drawer'), wasHidden = drawer.hidden;
   drawer.hidden = !state.t;
+  setInert(!drawer.hidden);
   text($('close'), tr('closeSymbol')); attr($('close'), 'aria-label', tr('close'));
   if (drawer.hidden) { stopLog(); if (!wasHidden && returnFocus?.isConnected) returnFocus.focus(); return; }
   if (attemptLog && attemptLog.task !== state.t) stopLog();
@@ -463,33 +555,69 @@ function renderDetail() {
   const task = taskData;
   if (task.preview) {
     const details = el('dl');
-    labeled(details, 'task', task.task_id); labeled(details, 'status', statusLabel(task));
     labeled(details, 'location', taskLocation(task, true).label);
-    labeled(details, 'agent', task.agent ?? task.account ?? tr('dash'));
     labeled(details, 'updated', task.updated_at == null ? null : new Date(task.updated_at * 1000).toLocaleString(state.lang));
-    body.append(details, el('p', tr('loading'))); return;
+    body.append(drawerHead(task), details, el('p', tr('loading'))); return;
   }
-  body.append(el('h3', tr('technical')), el('p', `${task.task_id} · ${task.objective}`));
-  if (task.exception) body.append(el('p', `${tr(task.exception)}${task.state === 'PAUSED' ? ` · ${tr((task.failure || '').split(':')[0] in I18N.en ? task.failure.split(':')[0] : 'OTHER')}` : ''}`, task.exception));
-  const details = el('dl');
-  for (const field of ['state', 'risk_level', 'agent', 'account']) labeled(details, field, task[field] == null ? null : ['state', 'risk_level'].includes(field) ? tr(task[field]) : task[field]);
+  // (a) who and what, (b) where it is, (c) what to do now.
+  body.append(drawerHead(task), lifecycle(task));
+  if (task.command) {
+    const verb = task.command.split(' ')[1];
+    const callout = section('nextStep', 'callout');
+    const field = el('textarea', task.command, 'command'); field.readOnly = true; field.rows = 2; attr(field, 'aria-label', tr('command'));
+    const copy = button(tr('copy'), () => copyCommand(task.command, copy, field));
+    callout.append(el('p', tr({approve: 'nextApprove', resume: 'nextResume'}[verb] || 'nextResult')), field, copy);
+    body.append(callout);
+  }
+  // (d) evidence: checks, scope, changes, summary, reviews.
+  const checks = section('checks');
+  if (!task.checks?.length) checks.append(el('p', tr('none'), 'muted'));
+  else {
+    const list = el('ul', undefined, 'check-list');
+    for (const check of task.checks) {
+      const result = check.passed === true ? 'pass' : check.passed === false ? 'fail' : 'unknown';
+      const item = el('li', undefined, `check ${result}`);
+      const mark = el('span', {pass: '✓', fail: '✗', unknown: '–'}[result], 'check-mark'); attr(mark, 'aria-hidden', 'true');
+      item.append(mark, el('span', tr({pass: 'passed', fail: 'checkFailed', unknown: 'unknown'}[result]), 'check-state'),
+        el('code', check.command || tr('dash')));
+      if (result !== 'pass' && check.error) item.append(el('pre', check.error, 'check-error'));
+      list.append(item);
+    }
+    checks.append(list);
+  }
+  const violations = task.scope_violations || [];
+  const scope = section('scope_violations', violations.length ? 'alert' : '');
+  scope.append(violations.length ? codeList(violations) : el('p', tr('none'), 'muted'));
+  const files = section('files');
+  files.append(task.files?.length ? codeList(task.files) : el('p', tr('none'), 'muted'));
+  const summary = section('final');
+  summary.append(task.final ? el('pre', task.final) : el('p', tr('none'), 'muted'));
+  const reviews = section('reviews');
+  if (!task.reviews?.length) reviews.append(el('p', tr('none'), 'muted'));
+  else {
+    const list = el('ul', undefined, 'plain-list');
+    for (const review of task.reviews) {
+      const item = el('li', undefined, 'review'), when = review.ts == null ? tr('unknown') : new Date(review.ts * 1000).toLocaleString(state.lang);
+      item.append(el('strong', review.decision || tr('unknown')), el('span', ` · ${review.actor || tr('unknown')} · ${when}`, 'muted'));
+      if (review.notes) item.append(el('p', review.notes));
+      list.append(item);
+    }
+    reviews.append(list);
+  }
+  body.append(checks, scope, files, summary, reviews);
+  // (e) attempts and the live log.
+  records(body, 'attempts', task.attempts, ['n', 'kind', 'outcome', 'started_at', 'ended_at', 'exit_code']);
+  renderLog(body, task);
+  // (f) raw fields, closed unless the reader opened them for this task.
+  const technical = el('details', undefined, 'technical'), details = el('dl');
+  technical.open = technicalOpen === state.t;
+  technical.addEventListener('toggle', () => { technicalOpen = technical.open ? state.t : ''; });
+  labeled(details, 'state', task.state);
   labeled(details, 'needs_human', tr(task.needs_human ? 'yes' : 'no'));
   labeled(details, 'attempts', tr('run', {n: task.attempts_used, max: task.max_attempts}));
-  labeled(details, 'head_changed', tr(task.head_changed ? 'yes' : 'no')); body.append(details);
-  if (task.failure) body.append(el('h3', tr('failure')), el('pre', task.failure));
-  records(body, 'attempts', task.attempts, ['n', 'kind', 'outcome', 'started_at', 'ended_at', 'exit_code']);
-  records(body, 'checks', task.checks, ['command', 'passed', 'error']);
-  for (const key of ['scope_violations', 'files', 'stat', 'final']) {
-    const value = Array.isArray(task[key]) ? task[key].join('\n') : task[key];
-    body.append(el('h3', tr(key)), el('pre', value || tr('none')));
-    if (key === 'final') renderLog(body, task);
-  }
-  records(body, 'reviews', task.reviews, ['decision', 'notes', 'actor', 'ts']);
-  if (task.command) {
-    const field = el('textarea', task.command, 'command'); field.readOnly = true; attr(field, 'aria-label', tr('command'));
-    const copy = button(tr('copy'), () => copyCommand(task.command, copy, field));
-    body.append(el('h3', tr('command')), field, copy);
-  }
+  labeled(details, 'head_changed', tr(task.head_changed ? 'yes' : 'no'));
+  technical.append(el('summary', tr('technical')), details, el('h3', tr('stat')), el('pre', task.stat || tr('none')));
+  body.append(technical);
 }
 async function poll() {
   clearTimeout(timer);
@@ -497,7 +625,7 @@ async function poll() {
   inFlight = true;
   try {
     const previous = overview;
-    overview = await getJSON('/api/overview'); disconnected = false;
+    overview = await getJSON('/api/overview'); disconnected = false; lastOk = new Date();
     if (previous && state.t) {
       const relevant = data => JSON.stringify(data.tasks.find(t => `${t.pid}:${t.task_id}` === state.t));
       if (relevant(previous) !== relevant(overview)) loadDetail(true);
@@ -514,12 +642,18 @@ $('project').onchange = event => setState({p: event.target.value, w: ''});
 $('worktree').onchange = event => setState({w: event.target.value});
 $('group-worktree').onclick = () => setState({g: state.g === '1' ? '' : '1'});
 $('clear').onclick = clearFilters; $('empty-clear').onclick = clearFilters;
+$('theme').onchange = event => {
+  theme = THEMES.includes(event.target.value) ? event.target.value : 'system';
+  try { if (theme === 'system') localStorage.removeItem('dashboard-theme'); else localStorage.setItem('dashboard-theme', theme); } catch {}
+  applyTheme();
+};
 $('close').addEventListener('click', closeDrawer);
 document.addEventListener('keydown', event => {
   if ($('drawer').hidden) return;
   if (event.key === 'Escape') { event.preventDefault(); closeDrawer(); }
   if (event.key === 'Tab') {
-    const nodes = Array.from($('drawer').querySelectorAll('button, textarea, select, input, [tabindex="0"]'));
+    const nodes = Array.from($('drawer').querySelectorAll('button, textarea, select, input, summary, [tabindex="0"]'))
+      .filter(node => !node.disabled && node.getClientRects().length);
     const first = nodes[0], last = nodes[nodes.length - 1];
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }

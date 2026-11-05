@@ -156,6 +156,105 @@ const scenarios = {
     await page.screenshot({ path: cfg.shots + '/mobile.png', fullPage: true });
   },
 
+  // Before the first answer arrives the page shows placeholders, never "no matches".
+  async loading(page) {
+    await page.route('**/api/overview', async route => {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      await route.continue().catch(() => {});
+    });
+    await page.goto(cfg.url);
+    await page.waitForTimeout(600);
+    check('skeleton shown while the first overview loads', await page.locator('#tasks-loading').isVisible());
+    check('skeleton rows hidden from screen readers',
+          await page.locator('#tasks-loading .skeleton-row[aria-hidden="true"]').count() === 3);
+    check('loading text for screen readers', /Loading/.test(await page.textContent('#loading-text') || ''));
+    check('no empty state before data arrives', !(await page.locator('#tasks-empty').isVisible()));
+    check('no task rows yet', (await page.locator('#task-rows tr').count()) === 0);
+    await page.waitForFunction(() => /Live/.test(document.getElementById('live').textContent), null, { timeout: 8000 });
+    await page.waitForFunction(() => document.querySelectorAll('#task-rows tr').length > 0, null, { timeout: 8000 })
+      .then(() => check('task rows after the delay', true), e => check('task rows after the delay', false, e));
+    check('skeleton gone once data is there', !(await page.locator('#tasks-loading').isVisible()));
+    check('empty state still hidden', !(await page.locator('#tasks-empty').isVisible()));
+  },
+
+  // Light and dark themes: from the system setting, and chosen in the top bar, kept after a reload.
+  async theme(page) {
+    const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    await page.emulateMedia({ colorScheme: 'light' });
+    await open(page);
+    const light = await background();
+    await page.emulateMedia({ colorScheme: 'dark' });
+    const dark = await background();
+    check('system light and dark give different backgrounds', light !== dark, `${light} / ${dark}`);
+    await page.emulateMedia({ colorScheme: 'light' });
+    check('theme control is labelled', await page.getByLabel('Theme').count() === 1);
+    await page.selectOption('#theme', 'dark');
+    const chosen = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+    check('choosing Dark sets data-theme', chosen === 'dark', chosen);
+    check('Dark wins over a light system setting', await background() === dark, await background());
+    await page.reload();
+    await page.waitForFunction(() => /Live/.test(document.getElementById('live').textContent), null, { timeout: 8000 });
+    const kept = await page.evaluate(() => [document.documentElement.getAttribute('data-theme'),
+                                            document.getElementById('theme').value]);
+    check('Dark kept after a reload', kept[0] === 'dark' && kept[1] === 'dark', kept);
+  },
+
+  // The drawer leads with status and the next step; raw fields stay folded away.
+  async drawer_layout(page) {
+    await open(page, '#view=tasks&s=all');
+    await page.locator('#task-rows tr', { hasText: cfg.tasks.review }).click();
+    await page.waitForFunction(() => !document.getElementById('drawer').hidden &&
+      /Verification checks/.test(document.getElementById('drawer-body').innerText), null, { timeout: 8000 });
+    const current = await page.locator('#drawer-body [aria-current="step"]').innerText().catch(() => '');
+    check('stepper marks Review as the current step', /Review/.test(current), current);
+    const earlier = await page.locator('#drawer-body .stepper li.done').count();
+    check('earlier steps are marked done', earlier === 4, earlier);
+    const body = await page.locator('#drawer-body').innerText();
+    const next = body.indexOf('Next step'), checks = body.indexOf('Verification checks');
+    check('Next step comes before the verification checks', next >= 0 && next < checks, `${next} / ${checks}`);
+    const command = await page.locator('#drawer-body .callout textarea.command').inputValue().catch(() => '');
+    check('the callout holds the command', command.includes(`agent-bridge result ${cfg.tasks.review}`), command);
+    const technical = await page.evaluate(() => {
+      const found = [...document.querySelectorAll('#drawer-body details')]
+        .find(d => /Technical details/.test(d.querySelector('summary')?.textContent || ''));
+      return found ? { open: found.open } : null;
+    });
+    check('Technical details is a closed <details>', technical && technical.open === false, JSON.stringify(technical));
+    check('main is inert while the drawer is open', await page.evaluate(() => document.querySelector('main').inert));
+    check('top bar is inert while the drawer is open', await page.evaluate(() => document.querySelector('header').inert));
+    await page.screenshot({ path: cfg.shots + '/drawer_layout.png' });
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.getElementById('drawer').hidden, null, { timeout: 4000 }).catch(() => {});
+    check('main is not inert after Escape', await page.evaluate(() => !document.querySelector('main').inert));
+    check('focus returns to the task row', await page.evaluate(() => !!document.activeElement?.closest('#task-rows')));
+  },
+
+  // On a phone each task is a card: every field, including the next step, is on screen.
+  async mobile_cards(page) {
+    await page.setViewportSize({ width: 375, height: 740 });
+    await open(page, '#view=tasks&s=all');
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    check('no horizontal page scroll at 375 px', overflow <= 1, `overflow ${overflow}px`);
+    check('one row per task', (await rows(page).count()) === cfg.total, await rows(page).count());
+    const row = page.locator('#task-rows tr', { hasText: cfg.tasks.review });
+    const next = row.locator('td.next-step span').first();
+    await next.scrollIntoViewIfNeeded();
+    const box = await next.boundingBox();
+    check('next step of the REVIEW task is inside the viewport',
+          box && box.x >= 0 && box.x + box.width <= 375 && box.y >= 0 && box.y + box.height <= 740, JSON.stringify(box));
+    const cells = await row.locator('td').evaluateAll(tds => tds.map(td => {
+      const r = td.getBoundingClientRect(); return { left: r.left, right: r.right, label: td.dataset.label };
+    }));
+    check('every field of the card fits the screen width',
+          cells.length === 6 && cells.every(c => c.left >= 0 && c.right <= 375 && c.label), JSON.stringify(cells));
+    const chips = await page.evaluate(() => {
+      const box = document.getElementById('statuses');
+      return { tops: new Set([...box.children].map(c => c.getBoundingClientRect().top)).size, overflow: getComputedStyle(box).overflowX };
+    });
+    check('status chips are one scrollable row', chips.tops === 1 && chips.overflow === 'auto', JSON.stringify(chips));
+    await page.screenshot({ path: cfg.shots + '/mobile_cards.png', fullPage: true });
+  },
+
   // Time to a usable table with every task.
   async performance(page) {
     const started = Date.now();
