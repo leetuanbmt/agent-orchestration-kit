@@ -262,7 +262,8 @@ thái có trong [docs/configuration.md](docs/configuration.md) (tiếng Anh).
   `bridge_review_task`.
 - **Định tuyến.** Task được ghim bằng `agent` hoặc `account` sẽ chạy ở đó. Nếu không, khi task
   khởi động lần đầu, bridge chọn agent `default` của role, rồi đến agent đủ điều kiện đầu tiên
-  theo thứ tự trong role. Task giữ agent và session đó cho các lần thử lại.
+  theo thứ tự trong role. Account mà các bridge process khác trên máy đã chiếm hết slot thì không
+  đủ điều kiện. Task giữ agent và session đó cho các lần thử lại.
 
 ## Vòng đời workflow
 
@@ -489,7 +490,7 @@ các header `Host` khác.
 | Event `agent_review_failed` | Reviewer agent gặp lỗi; task chờ ở `REVIEW` để gọi `bridge_review_task`. |
 | Workflow `WAITING` | `detail.waiting` và trạng thái task cho biết cần xử lý gì; xử lý xong thì chạy lại `bridge_run_workflow`. |
 | `ConflictError … already writing` | Mỗi worktree chỉ một tiến trình ghi; chờ, hoặc dùng worktree khác. |
-| `account … busy in another bridge process` | Slot chạy song song của account đang được dùng ở nơi khác. |
+| `account … busy in another bridge process` | Slot chạy song song của account đang được dùng ở nơi khác. Task không ghim sẽ được định tuyến sang agent khác; task ghim vào account này vẫn ở `READY` và không mất attempt, nên chạy lại khi có slot trống. |
 | `REWORK` với `outside allowed paths` | Executor sửa file ngoài phạm vi task; đọc patch rồi yêu cầu rework. |
 | `health` cảnh báo storage legacy | Migrate bằng `agent-bridge storage status`, rồi `storage migrate --apply` ([chi tiết](docs/configuration.md#migrating-and-maintaining-state)). |
 
