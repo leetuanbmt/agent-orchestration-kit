@@ -193,26 +193,13 @@ def health_view(h: dict[str, Any]) -> Group:
     head.append(f"config {orch['source']} · stages {' → '.join(orch['stages'])}"
                 f" · sandbox {h['sandbox']}", style="dim")
     adapters = Table("Adapter", "Path", "Version", title="Adapters", title_justify="left")
-    hints = []
-    if h.get("storage_notice"):
-        hints.append(h["storage_notice"])
-    if "unavailable" in str(h.get("verify_sandbox", "")):
-        hints.append(f"verification sandbox: {h['verify_sandbox']}")
-    if h.get("protected_dirty"):
-        hints.append("protected files differ from HEAD and would be loaded as they are: "
-                     f"{', '.join(h['protected_dirty'])}; inspect them (git diff) and restore "
-                     "what you did not change yourself")
     for name, info in h["adapters"].items():
         missing = not info["path"]
         adapters.add_row(name, Text("not installed", style="red") if missing else info["path"],
                          info["version"] or "-")
-        if missing:
-            hints.append(f"install the {name.removesuffix('-cli')} CLI (or set its *_bin in "
-                         ".ai/config.json)")
-    codex = h["codex"]
-    if "codex-cli" in h["adapters"] and codex.get("path") and not codex.get("logged_in"):
-        hints.append("codex is not logged in: run `codex login` yourself, or "
-                     "`agent-bridge account-add <name> --provider openai`")
+    # Problems first (they make the result NOT OK), then warnings; each fix with its cause.
+    hints = [f"{entry['message']}: {entry['fix']}"
+             for entry in [*h.get("problems", []), *h.get("warnings", [])]]
     quota = Table("Account", "Quota", title="Quota", title_justify="left")
     for name, value in h["quota"].items():
         quota.add_row(name, quota_text(value))

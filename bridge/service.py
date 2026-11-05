@@ -418,18 +418,78 @@ class Bridge:
             if self.gate._limits(name) is not None:
                 report = self._limit_report(name, reserve=self.gate._next_run_reserve(name))
                 limits[name] = {"status": report["status"], "reason": report["reason"]}
-        storage_notice = None
+        storage_notice = storage_fix = None
         if self.storage == "legacy":
             storage_notice = ("legacy storage: run `agent-bridge storage status`, then "
                               "`agent-bridge storage migrate --apply` after closing Claude sessions")
+            storage_fix = ("run `agent-bridge storage status`, then "
+                           "`agent-bridge storage migrate --apply` after closing Claude sessions")
         elif written := storage.legacy_writes(self.state_dir):
             source, count = written
             storage_notice = (f"legacy database {source} has {count} events written after "
                               "migration (an old agent-bridge process is still running?)")
+            storage_fix = ("stop the old agent-bridge process (close the Claude sessions that "
+                           "still run it), then check `agent-bridge storage status`")
         try:
             dirty = protected_dirty(self.root, self.cfg)
         except EvidenceError as e:  # cannot tell: do not report the project as fine
             dirty = [f"(git status failed: {redact(str(e), 200)})"]
+        verify_sandbox = describe_sandbox(self.orch.workflow.verify_sandbox)
+
+        def item(code: str, message: str, fix: str) -> dict[str, str]:
+            return {"code": code, "message": message, "fix": fix}
+
+        # Exactly the causes of `ok` being false, in a stable order.
+        problems = [item("adapter_missing", f"{name} is not installed",
+                         f"install the {name.removesuffix('-cli')} CLI (or set its *_bin in "
+                         ".ai/config.json)")
+                    for name, info in adapters.items() if not info["path"]]
+        if "codex-cli" in used and adapters["codex-cli"]["path"] \
+                and not codex.get("logged_in", False):
+            problems.append(item("codex_logged_out", "codex is not logged in",
+                                 "run `codex login` yourself, or "
+                                 "`agent-bridge account-add <name> --provider openai`"))
+        if dirty:
+            problems.append(item("protected_dirty",
+                                 "protected files differ from HEAD and would be loaded as they "
+                                 f"are: {', '.join(dirty)}",
+                                 "inspect them (git diff) and restore what you did not change "
+                                 "yourself"))
+        # Worth knowing, but never a reason for `ok` to be false.
+        warnings = []
+        if storage_notice:
+            message = ("the project still uses legacy storage" if self.storage == "legacy"
+                       else storage_notice)
+            warnings.append(item("storage", message, storage_fix or storage_notice))
+        if "unavailable" in verify_sandbox:
+            warnings.append(item("verify_unconfined", f"verification sandbox: {verify_sandbox}",
+                                 "confine verification commands by running the bridge on a "
+                                 "Linux kernel with Landlock, or have a human set "
+                                 "workflow.verify_sandbox in .ai/orchestrator.yaml"))
+        for name in self.orch.accounts:
+            try:
+                key = account_key(self._account(name))
+            except ValueError:  # misconfigured: list_accounts reports it
+                continue
+            mark, _ = self.gate._effective_account_state(name, key=key)  # lapsed QUOTA: available
+            error = redact(mark.get("last_error") or "", 200)
+            detail = f": {error}" if error else ""
+            if mark.get("state") == "quota":
+                warnings.append(item("account_quota",
+                                     f"account {name} is marked out of quota{detail}",
+                                     "wait for the quota window to reset, or enable "
+                                     "routing.quota_fallback in .ai/orchestrator.yaml"))
+            elif mark.get("state") == "auth":
+                warnings.append(item("account_auth",
+                                     f"account {name} needs a new login{detail}",
+                                     "a human logs the account in again with "
+                                     f"`agent-bridge account-login {name}`"))
+        for name, info in limits.items():
+            if info["status"] == "limited":
+                warnings.append(item("account_limited",
+                                     f"account {name} is over its limits: {info['reason']}",
+                                     "wait for the limit window to reset, or have a human "
+                                     f"change accounts.{name}.limits in .ai/orchestrator.yaml"))
         return {
             "project_root": str(self.root),
             "database": str(self.store.path),
@@ -441,13 +501,15 @@ class Bridge:
             "codex": codex,
             "adapters": adapters,
             "sandbox": self.cfg.sandbox,
-            "verify_sandbox": describe_sandbox(self.orch.workflow.verify_sandbox),
+            "verify_sandbox": verify_sandbox,
             "quota": quota,
             "limits": limits,
             "active_tasks": active,
             "task_counts": counts,
             "ok": all(a["path"] for a in adapters.values())
                   and ("codex-cli" not in used or codex.get("logged_in", False)) and not dirty,
+            "problems": problems,
+            "warnings": warnings,
         }
 
     # ---- tasks -----------------------------------------------------------------------------
