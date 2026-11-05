@@ -40,8 +40,8 @@ jobs:
       - name: Install
         run: |
           uv sync
-          npm install --global playwright@1.49.1
-          npx --yes playwright@1.49.1 install --with-deps chromium
+          npm install --global playwright@1.63.0
+          npx --yes playwright@1.63.0 install --with-deps chromium
       - name: Test suite with the end-to-end tests (real CLI, MCP server, dashboard in Chromium)
         run: |
           export NODE_PATH="$(npm root --global)"
