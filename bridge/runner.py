@@ -255,8 +255,12 @@ class TaskRunner:
         if b.progress and commands:
             with contextlib.suppress(Exception):
                 b.progress(f"[{task_id} #{n}] verifying ({len(commands)} commands)")
-        checks = (await run_verification(commands, b.root, b.cfg, should_cancel=cancelled)
-                  if commands else [])
+        def check_started(pid: int | None) -> None:  # recover() kills it if this runner dies
+            self.store.update(task_id, codex_pid=pid,
+                              codex_started=process_started(pid) if pid else None)
+
+        checks = (await run_verification(commands, b.root, b.cfg, should_cancel=cancelled,
+                                         on_start=check_started) if commands else [])
         stopped = cancelled()  # checks cut short (or never started) prove nothing
         touched, later = changes["files"], []
         if commands:  # the checks ran code in the worktree: judge what they changed too

@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- A verification command whose runner died (crash, `kill -9`, closed terminal) is killed on the next bridge start: the running check's pid and start time are recorded like the agent's, so `recover` finds it (audit REL-02, recovery half).
 - Processes opening a project (or the machine-wide ledger) for the first time at the same moment no longer crash with `duplicate column name` or `database is locked`: missing columns are added inside one `BEGIN IMMEDIATE` transaction, and switching a new file to WAL is retried (QA-BUG-007).
 - A failing git command while the bridge reads the worktree (snapshot or diff) pauses the task with `EVIDENCE_ERROR` and gives the attempt back, instead of yielding empty evidence that passed every gate (audit REL-01).
 - The web dashboard fits a phone screen: filters and status chips wrap and only the task table scrolls sideways, in its own box; the whole page scrolled 541 px sideways at 375 px wide (QA-BUG-005).

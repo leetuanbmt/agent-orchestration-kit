@@ -288,10 +288,12 @@ def recheck(root: Path, before: dict[str, Any], changes: dict[str, Any],
 
 
 async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
-                           should_cancel: Callable[[], bool] | None = None
+                           should_cancel: Callable[[], bool] | None = None,
+                           on_start: Callable[[int | None], None] | None = None
                            ) -> list[dict[str, Any]]:
     """Run each command in its own process group. A cancel (polled every second) kills the
-    running command and skips the rest."""
+    running command and skips the rest. `on_start` gets each command's pid when it starts and
+    None once its group has ended, so a dead runner's check can be found and killed."""
     results = []
     # No .pyc litter from the bridge's own checks in the next attempt's baseline.
     env = {**clean_env(os.environ, cfg.env_deny, cfg.env_allow), "PYTHONDONTWRITEBYTECODE": "1"}
@@ -306,6 +308,8 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
                 *argv, cwd=root, env=env, **osutil.GROUP_KWARGS, stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             )
+            if on_start:
+                on_start(proc.pid)
             io = asyncio.ensure_future(proc.communicate())
             deadline = loop.time() + cfg.verify_timeout_s
             stop = ""
@@ -322,6 +326,8 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
                     break
                 await asyncio.wait({io}, timeout=min(0.1, max(deadline - loop.time(), 0)))
             await osutil.end_group(proc.pid)  # nothing the check started outlives it
+            if on_start:
+                on_start(None)
             await asyncio.wait({io}, timeout=5)  # a process that left the group may hold it
             if io.done():
                 out, _ = io.result()
