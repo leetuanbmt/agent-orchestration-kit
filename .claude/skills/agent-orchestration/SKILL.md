@@ -26,7 +26,8 @@ yourself.
   `.claude/rules/delegation.md` and create each task with `bridge_create_task`.
 - Planner is an agent: `bridge_plan(objective, context)`, then
   `bridge_workflow_status(workflow_id, wait_s=55)` until it leaves PLANNING. FAILED → read
-  `detail.error`, fix the objective or context, plan again. READY → read every planned task.
+  `detail.error`, fix the objective or context, plan again. READY → read every planned task,
+  including its `verification_commands`: they run as code on this machine during the test stage.
 Show the user the task list when there is more than one task or any high-risk task.
 
 ## 4. Execute

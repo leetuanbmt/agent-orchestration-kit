@@ -808,7 +808,10 @@ class Bridge:
         wf = self.store.workflow(wid)
         return {"workflow_id": wid, "objective": wf["objective"], "state": wf["state"],
                 "planner": wf["planner"], "detail": wf["detail"],
-                "tasks": [self._summary(r) for r in self.store.workflow_tasks(wid)]}
+                # Planned commands run on this machine: show them before run_workflow.
+                "tasks": [{**self._summary(r),
+                           "verification_commands": r["spec"].get("verification_commands", [])}
+                          for r in self.store.workflow_tasks(wid)]}
 
     async def run_workflow(self, wid: str, wait: bool = False) -> dict[str, Any]:
         """Drive a workflow's tasks through execute, test and review until it needs a decision."""

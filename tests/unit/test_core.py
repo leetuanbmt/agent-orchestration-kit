@@ -471,3 +471,31 @@ def test_concurrent_schema_creation(tmp_path: Path) -> None:
     from bridge.state import Store
     columns = [r["name"] for r in Store(db).db.execute("PRAGMA table_info(tasks)")]
     assert columns.count("codex_started") == 1 and "workflow_id" in columns
+
+
+# @pt.id KIT-UNIT-054-input-hardening
+# @pt.item Paths, commands and environment a spec cannot abuse
+# @pt.condition a verification command naming a path (/tmp/x/pytest, ./node_modules/.bin/jest); an allowlisted name; credential carriers in the environment; env_allow re-allowing one; over-broad patterns **/* and */**; ordinary patterns
+# @pt.expected paths are refused with a hint; names pass; SSH_AUTH_SOCK, *_DSN, *DATABASE_URL*, *CREDENTIALS*, KUBECONFIG and DOCKER_AUTH_CONFIG are stripped unless explicitly allowed; **/* and */** are refused, src/** and **/*.py kept
+# @pt.target bridge.review.parse_command, bridge.security.clean_env, bridge.security.validate_pattern
+# @pt.method unit
+# @pt.legacy audit SEC-07, SEC-09, SEC-10
+def test_input_hardening(tmp_path: Path) -> None:
+    cfg = BridgeConfig()
+    for path in ("/tmp/anything/pytest", "./node_modules/.bin/jest"):
+        with pytest.raises(ValueError, match="not a path"):
+            parse_command(path, cfg)
+    with pytest.raises(ValueError):  # shlex drops the backslash: never the allowlisted name
+        parse_command("bin\\pytest", cfg)
+    assert parse_command("pytest -q", cfg) == ["pytest", "-q"]
+    env = {"PATH": "/bin", "SSH_AUTH_SOCK": "s", "SENTRY_DSN": "d", "DATABASE_URL": "u",
+           "MY_DATABASE_URL_RO": "u", "GOOGLE_APPLICATION_CREDENTIALS": "c", "KUBECONFIG": "k",
+           "DOCKER_AUTH_CONFIG": "a"}
+    assert clean_env(env, cfg.env_deny, []) == {"PATH": "/bin"}
+    assert "KUBECONFIG" in clean_env(env, cfg.env_deny, ["KUBECONFIG"])
+    root = tmp_path.resolve()
+    for broad in ("**/*", "*/**"):
+        with pytest.raises(PathError, match="over-broad"):
+            validate_pattern(broad, root, PROTECTED)
+    assert validate_pattern("src/**", root, PROTECTED) == "src/**"
+    assert validate_pattern("**/*.py", root, PROTECTED) == "**/*.py"
