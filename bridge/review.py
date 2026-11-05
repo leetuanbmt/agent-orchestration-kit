@@ -149,6 +149,23 @@ def parse_command(cmd: str, cfg: BridgeConfig) -> list[str]:
     return argv
 
 
+# Files a test run leaves behind; created by verification alone they are not scope violations.
+VERIFICATION_NOISE = ["__pycache__/**", "**/__pycache__/**", "*.pyc", "**/*.pyc",
+                      ".pytest_cache/**", "**/.pytest_cache/**"]
+
+
+def recheck(root: Path, before: dict[str, Any], changes: dict[str, Any],
+            cfg: BridgeConfig) -> dict[str, Any]:
+    """The worktree again after verification, against the same snapshot. Whatever the checks
+    changed or left behind is judged like the agent's own changes, except test-cache files."""
+    final = diff(root, before, cfg.protected_paths)
+    later = [f for f in final["files"] if f not in changes["files"]]
+    return {"files": sorted({*changes["files"],
+                             *(f for f in later if not matches(f, VERIFICATION_NOISE))}),
+            "changed_by_verification": later,
+            "head_changed": changes["head_changed"] or final["head_changed"]}
+
+
 async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
                            should_cancel: Callable[[], bool] | None = None
                            ) -> list[dict[str, Any]]:
@@ -171,7 +188,9 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
             io = asyncio.ensure_future(proc.communicate())
             deadline = loop.time() + cfg.verify_timeout_s
             stop = ""
-            while not io.done():
+            # returncode is set when the command exits; proc.wait() would also wait for every
+            # pipe to close, which a child left behind can delay for as long as it likes.
+            while proc.returncode is None:
                 if should_cancel and should_cancel():
                     stop = "cancelled"
                 elif loop.time() >= deadline:
@@ -180,15 +199,16 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
                     with contextlib.suppress(ProcessLookupError, PermissionError):
                         osutil.kill_group(proc.pid, force=True)
                     break
-                await asyncio.wait({io}, timeout=min(1.0, max(deadline - loop.time(), 0)))
-            if stop:  # a process that left the group may still hold the pipe open
-                await asyncio.wait({io}, timeout=5)
+                await asyncio.wait({io}, timeout=min(0.1, max(deadline - loop.time(), 0)))
+            await osutil.end_group(proc.pid)  # nothing the check started outlives it
+            await asyncio.wait({io}, timeout=5)  # a process that left the group may hold it
             if io.done():
                 out, _ = io.result()
             else:
                 io.cancel()
                 out = b""
-                await proc.wait()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(proc.wait(), 5)
             if stop:
                 r["error"] = stop
             else:

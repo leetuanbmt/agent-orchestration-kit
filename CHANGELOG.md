@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- The scope check also covers the verification step: after the checks run, the worktree is diffed again against the same snapshot and anything they changed or left behind is judged like the agent's changes (test caches excepted, listed as `changed_by_verification`). When an agent or a check exits, whatever it left running in its process group is ended (TERM, grace, KILL) before its pipes are awaited, so background processes can no longer write after the snapshot (audit SEC-01 fixes 1-2, SEC-04).
 - Claude agents' read tools can no longer open `~/.claude/.credentials.json`, the project's `.env*`, `*.pem` and `*.key` files, or any configured account's auth home (`--disallowedTools` now denies them on every run; a home that cannot be written as a permission rule stops the run). Before, only Codex, agent-bridge and agy credentials were denied (QA-BUG-006).
 - Claude loads no user/project settings; optional `claude_hook_settings`, set only by a human in `.ai/config.json`, loads an external hooks-only JSON file as trusted code running unsandboxed. The default remains off and `--setting-sources ""` remains enforced.
 - `agent-bridge web` requires a per-launch secret token on every API request; the printed dashboard URL carries the key.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import json
 import os
@@ -48,6 +49,36 @@ def kill_group(pid: int, force: bool = False):
                             capture_output=True, check=False)
     if result.returncode == 128:
         raise ProcessLookupError(pid)
+
+
+async def end_group(pgid: int, grace: float = 5.0) -> None:
+    """End what is left of a process group after its leader exited (TERM, `grace`, KILL): an
+    agent's or a check's background processes must not keep writing after the snapshot."""
+    loop = asyncio.get_running_loop()
+    for force in (False, True):
+        try:
+            kill_group(pgid, force=force)
+        except (ProcessLookupError, PermissionError):
+            return
+        deadline = loop.time() + grace
+        while group_alive(pgid) and loop.time() < deadline:
+            await asyncio.sleep(0.05)
+        if not group_alive(pgid):
+            return
+
+
+def group_alive(pgid: int) -> bool:
+    """True while any process of the group runs (POSIX). Windows has no process groups to probe:
+    taskkill /T already ends the tree while its root runs."""
+    if WINDOWS:
+        return False
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def alive(pid: int | None) -> bool:

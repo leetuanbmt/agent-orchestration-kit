@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from .accounts import AccountLock, account_key
 from .executor import REVIEW_SCHEMA, RunRequest, RunResult, build_review_prompt, describe_event
 from .models import ACTIVE, Actor, ReviewDecision, State, run_failure_state, verdict
-from .review import diff, run_verification, scope_violations, touches_sensitive
+from .review import diff, recheck, run_verification, scope_violations, touches_sensitive
 from .security import process_started, redact
 from .state import LimitExceeded
 
@@ -252,13 +252,19 @@ class TaskRunner:
         checks = (await run_verification(commands, b.root, b.cfg, should_cancel=cancelled)
                   if commands else [])
         stopped = cancelled()  # checks cut short (or never started) prove nothing
+        touched, later = changes["files"], []
+        if commands:  # the checks ran code in the worktree: judge what they changed too
+            final = recheck(b.root, before, changes, b.cfg)
+            touched, later = final["files"], final["changed_by_verification"]
+            violations = scope_violations(touched, spec, b.cfg, final["head_changed"])
         passed, dst, failure = verdict(violations, checks, agent_status, stopped, used, max_att)
         record["verification"] = {"passed": passed, "scope_violations": violations,
                                   "checks": checks, "agent_status": agent_status,
+                                  **({"changed_by_verification": later} if later else {}),
                                   **({"skipped": skipped} if skipped else {}),
                                   **({"interrupted": True} if stopped else {})}
         self.store.finish_attempt(task_id, n, **record)
-        needs_human = bool(row["needs_human"]) or touches_sensitive(changes["files"], b.cfg)
+        needs_human = bool(row["needs_human"]) or touches_sensitive(touched, b.cfg)
         if self._park_if_stopping(task_id, used):
             return  # stopped while verifying: the checks were cut short, not failed
         if self.store.get(task_id)["state"] != State.VERIFYING:
