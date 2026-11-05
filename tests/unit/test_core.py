@@ -286,8 +286,8 @@ def test_kill_stale_needs_matching_start_time() -> None:
 # @pt.method unit
 # @pt.legacy inline branches in Bridge._run_inner
 def test_run_failure_state() -> None:
-    from bridge.models import PAUSE_OUTCOMES, run_failure_state
-    for outcome in PAUSE_OUTCOMES:
+    from bridge.models import run_failure_state
+    for outcome in ("quota", "auth", "network", "missing_binary"):
         assert run_failure_state(outcome, 3, 3) == State.PAUSED
     for outcome in ("timeout", "crash"):
         assert run_failure_state(outcome, 1, 3) == State.FAILED
@@ -307,6 +307,8 @@ def test_verdict() -> None:
     assert verdict([], [ok], "completed", False, 1, 3) == (True, State.REVIEW, None)
     assert verdict([], [], "completed", False, 1, 3) == (True, State.REVIEW, None)
     assert verdict([], [ok], "completed", True, 1, 3)[:2] == (False, State.REWORK)
+    assert verdict([], [ok], "unknown", False, 1, 3) == (False, State.REWORK,
+                                                         "agent status: unknown")
     passed, dst, failure = verdict(["outside: x.py"], [ok, bad], "blocked", False, 1, 3)
     assert (passed, dst) == (False, State.REWORK)
     assert failure == "outside: x.py; check failed: ruff; agent status: blocked"
