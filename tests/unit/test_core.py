@@ -276,3 +276,67 @@ def test_kill_stale_needs_matching_start_time() -> None:
     finally:
         proc.kill()
         proc.wait()
+
+
+# @pt.id KIT-UNIT-012-run-failure-state
+# @pt.item Where a run that did not finish cleanly goes
+# @pt.condition each environment outcome, then timeout/crash with budget left and with the budget spent
+# @pt.expected environment outcomes pause regardless of budget; timeout/crash is FAILED, BLOCKED on the last attempt
+# @pt.target bridge.models.run_failure_state
+# @pt.method unit
+# @pt.legacy inline branches in Bridge._run_inner
+def test_run_failure_state() -> None:
+    from bridge.models import run_failure_state
+    for outcome in ("quota", "auth", "network", "missing_binary"):
+        assert run_failure_state(outcome, 3, 3) == State.PAUSED
+    for outcome in ("timeout", "crash"):
+        assert run_failure_state(outcome, 1, 3) == State.FAILED
+        assert run_failure_state(outcome, 3, 3) == State.BLOCKED
+
+
+# @pt.id KIT-UNIT-013-verification-verdict
+# @pt.item The bridge's REVIEW/REWORK gate on a verified attempt
+# @pt.condition all clean; a scope violation; a failed check; agent not completed; checks cut short; last attempt failing
+# @pt.expected only the clean case reaches REVIEW; failures name every cause; the last failing attempt is BLOCKED
+# @pt.target bridge.models.verdict
+# @pt.method unit
+# @pt.legacy inline gate in Bridge._run_inner
+def test_verdict() -> None:
+    from bridge.models import verdict
+    ok, bad = {"command": "pytest", "passed": True}, {"command": "ruff", "passed": False}
+    assert verdict([], [ok], "completed", False, 1, 3) == (True, State.REVIEW, None)
+    assert verdict([], [], "completed", False, 1, 3) == (True, State.REVIEW, None)
+    assert verdict([], [ok], "completed", True, 1, 3)[:2] == (False, State.REWORK)
+    assert verdict([], [ok], "unknown", False, 1, 3) == (False, State.REWORK,
+                                                         "agent status: unknown")
+    passed, dst, failure = verdict(["outside: x.py"], [ok, bad], "blocked", False, 1, 3)
+    assert (passed, dst) == (False, State.REWORK)
+    assert failure == "outside: x.py; check failed: ruff; agent status: blocked"
+    assert verdict([], [bad], "completed", False, 3, 3)[1] == State.BLOCKED
+
+
+# @pt.id KIT-UNIT-014-store-rebind
+# @pt.item Moving a task to another agent and account
+# @pt.condition a READY task with a session is rebound; then a rebind that does not allow READY
+# @pt.expected agent, account, spec and spec hash change, the session is dropped and one event is logged; the refused rebind changes nothing
+# @pt.target bridge.state.Store.rebind
+# @pt.method unit
+# @pt.legacy raw UPDATE in Bridge._rebind
+def test_store_rebind(tmp_path: Path) -> None:
+    from bridge.state import Store
+    store = Store(tmp_path / "bridge.db")
+    spec = TaskSpec(objective="o", allowed_paths=["src"], acceptance_criteria=["a"], agent="a1")
+    row, _ = store.create(spec, "h0", agent="a1", account="acc1")
+    store.update(row["id"], session_id="s1")
+
+    def change(current: dict) -> tuple:
+        moved = TaskSpec.model_validate({**current["spec"], "agent": "a2"})
+        return "a2", "acc2", moved, {"from": current["agent"], "to": "a2"}
+
+    out = store.rebind(row["id"], {State.READY}, change, Actor.HUMAN, "account_reassigned")
+    assert (out["agent"], out["account"], out["spec"]["agent"]) == ("a2", "acc2", "a2")
+    assert out["session_id"] is None and out["spec_hash"] != "h0"
+    assert store.count_events(row["id"], "account_reassigned") == 1
+    with pytest.raises(TransitionError, match="cannot reassign"):
+        store.rebind(row["id"], {State.PAUSED}, change, Actor.HUMAN, "account_reassigned")
+    assert store.count_events(row["id"], "account_reassigned") == 1

@@ -26,7 +26,8 @@ from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config,
 from .executor import ADAPTERS, PLAN_SCHEMA, REVIEW_SCHEMA, Adapter, RunRequest, RunResult, \
     build_plan_prompt, build_prompt, build_review_prompt, build_rework_prompt, describe_event, \
     kill_stale
-from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError
+from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError, \
+    run_failure_state, verdict
 from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AccountLimits, AgentConfig, \
     OrchestratorConfig
 from .orchestrator import load as load_orchestrator
@@ -37,8 +38,6 @@ from .review import diff, parse_command, run_verification, scope_violations, sna
 from .security import hook_settings_error, PathError, process_started, redact, rule_unsafe, validate_pattern
 from .state import ConflictError, LimitExceeded, Store, overview
 
-# Outcomes that mean "the environment, not the code": park the task, never auto-retry.
-PAUSE_OUTCOMES = {"quota", "auth", "network", "missing_binary"}
 REBINDABLE = {State.READY, State.REWORK, State.FAILED, State.PAUSED}
 # How long cancel waits for the runner to stop: one poll plus the agent's TERM and KILL grace.
 CANCEL_WAIT_S = 15
@@ -477,10 +476,8 @@ class Bridge:
         if not agent.enabled or not agent.can("write"):
             raise ValueError(f"agent {name} cannot execute tasks")
         new = self._account(agent.account or "")
-        with self.store.tx() as c:
-            row = self.store.get(task_id)
-            if row["state"] not in REBINDABLE:
-                raise TransitionError(f"cannot reassign account while task is {row['state']}")
+
+        def change(row: dict[str, Any]) -> tuple[str, str, TaskSpec, dict[str, Any]]:
             old_agent = self._agent_of(row)
             old_account = row["account"] or ("default" if self.legacy else None)
             data = dict(row["spec"])
@@ -488,18 +485,12 @@ class Bridge:
                 data["agent"] = name
             if data.get("account"):
                 data["account"] = new.name
-            spec = TaskSpec.model_validate(data)
-            # Sessions belong to the old account home and cannot move between accounts.
-            c.execute("UPDATE tasks SET agent=?, account=?, spec=?, spec_hash=?, session_id=NULL,"
-                      " updated_at=? WHERE id=?",
-                      (name, new.name, spec.model_dump_json(),
-                       hashlib.sha256(spec.model_dump_json().encode()).hexdigest(),
-                       time.time(), task_id))
             moved = {"from": old_agent, "to": name}
             if old_agent != old_account or name != new.name:
                 moved |= {"from_account": old_account, "to_account": new.name}
-            self.store._event(c, task_id, actor, event_kind, detail={**moved, **detail})
-        return self._summary(self.store.get(task_id))
+            return name, new.name, TaskSpec.model_validate(data), {**moved, **detail}
+
+        return self._summary(self.store.rebind(task_id, REBINDABLE, change, actor, event_kind))
 
     def _quota_fallback(self, task_id: str) -> None:
         """Opt-in: move a task off an account in QUOTA state, below the quota threshold or over
@@ -621,20 +612,10 @@ class Bridge:
         if self.storage == "legacy":
             storage_notice = ("legacy storage: run `agent-bridge storage status`, then "
                               "`agent-bridge storage migrate --apply` after closing Claude sessions")
-        else:
-            try:
-                migration = json.loads((self.state_dir / "migration.json").read_text())
-                source = Path(migration["source"])
-                if source.exists():
-                    with contextlib.closing(sqlite3.connect(
-                            f"file:{source}?mode=ro", uri=True)) as legacy:
-                        maximum = legacy.execute("SELECT max(id) FROM events").fetchone()[0] or 0
-                    count = maximum - (migration["source_max_event_id"] or 0)
-                    if count > 0:
-                        storage_notice = (f"legacy database {source} has {count} events written after "
-                                          "migration (an old agent-bridge process is still running?)")
-            except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
-                pass
+        elif written := storage.legacy_writes(self.state_dir):
+            source, count = written
+            storage_notice = (f"legacy database {source} has {count} events written after "
+                              "migration (an old agent-bridge process is still running?)")
         return {
             "project_root": str(self.root),
             "database": str(self.store.path),
@@ -949,18 +930,17 @@ class Bridge:
             self.store.finish_attempt(task_id, n, **record)
             self._park_if_stopping(task_id, used)
             return
-        if res.outcome in PAUSE_OUTCOMES:
+        if res.outcome != "ok":
             self.store.finish_attempt(task_id, n, **record)
-            # The attempt did not consume work budget when the environment failed.
-            self.store.transition(task_id, State.PAUSED, Actor.BRIDGE, {"error": res.error},
-                                  failure=f"{res.outcome.upper()}: {res.error}"[:1000],
-                                  attempts=used - 1)
-            return
-        if res.outcome != "ok":  # timeout / crash
-            self.store.finish_attempt(task_id, n, **record)
-            dst = State.BLOCKED if used >= max_att else State.FAILED
-            self.store.transition(task_id, dst, Actor.BRIDGE, {"outcome": res.outcome},
-                                  failure=f"{res.outcome.upper()}: {res.error}"[:1000])
+            dst = run_failure_state(res.outcome, used, max_att)
+            failure = f"{res.outcome.upper()}: {res.error}"[:1000]
+            if dst == State.PAUSED:
+                # The attempt did not consume work budget when the environment failed.
+                self.store.transition(task_id, dst, Actor.BRIDGE, {"error": res.error},
+                                      failure=failure, attempts=used - 1)
+            else:  # timeout / crash
+                self.store.transition(task_id, dst, Actor.BRIDGE, {"outcome": res.outcome},
+                                      failure=failure)
             return
 
         self.store.transition(task_id, State.VERIFYING, Actor.BRIDGE, {"attempt": n})
@@ -979,8 +959,7 @@ class Bridge:
         checks = (await run_verification(commands, self.root, self.cfg, should_cancel=cancelled)
                   if commands else [])
         stopped = cancelled()  # checks cut short (or never started) prove nothing
-        passed = (not violations and not stopped and all(c["passed"] for c in checks)
-                  and agent_status == "completed")
+        passed, dst, failure = verdict(violations, checks, agent_status, stopped, used, max_att)
         record["verification"] = {"passed": passed, "scope_violations": violations,
                                   "checks": checks, "agent_status": agent_status,
                                   **({"skipped": skipped} if skipped else {}),
@@ -991,14 +970,6 @@ class Bridge:
             return  # stopped while verifying: the checks were cut short, not failed
         if self.store.get(task_id)["state"] != State.VERIFYING:
             return  # cancelled while verifying
-        if passed:
-            dst, failure = State.REVIEW, None
-        else:
-            dst = State.REWORK if used < max_att else State.BLOCKED
-            failure = "; ".join(violations + [f"check failed: {c['command']}" for c in checks
-                                              if not c["passed"]]
-                                + ([f"agent status: {agent_status}"]
-                                   if agent_status != "completed" else []))[:1000]
         self.store.transition(task_id, dst, Actor.BRIDGE, record["verification"],
                               failure=failure, needs_human=int(needs_human))
 

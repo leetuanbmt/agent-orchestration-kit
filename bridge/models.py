@@ -81,6 +81,35 @@ def check_transition(src: State, dst: State, actor: Actor) -> None:
         raise TransitionError(f"{actor} may not move a task {src} -> {dst}")
 
 
+# Outcomes that mean "the environment, not the code": park the task, never auto-retry.
+PAUSE_OUTCOMES = frozenset({"quota", "auth", "network", "missing_binary"})
+
+
+def run_failure_state(outcome: str, used: int, max_attempts: int) -> State:
+    """Where a run that ended neither "ok" nor "cancelled" goes. An environment failure pauses
+    (the attempt is given back); a timeout or crash spends it, BLOCKED once the budget is gone."""
+    if outcome in PAUSE_OUTCOMES:
+        return S.PAUSED
+    return S.BLOCKED if used >= max_attempts else S.FAILED
+
+
+def verdict(violations: list[str], checks: list[dict], agent_status: str, stopped: bool,
+            used: int, max_attempts: int) -> tuple[bool, State, str | None]:
+    """The bridge's gate on a verified attempt: (passed, next state, failure text).
+
+    Only a clean scope, every check passed, checks not cut short and the agent reporting
+    `completed` reach REVIEW; anything else is REWORK, BLOCKED once the budget is gone."""
+    passed = (not violations and not stopped and all(c["passed"] for c in checks)
+              and agent_status == "completed")
+    if passed:
+        return True, S.REVIEW, None
+    failure = "; ".join(violations + [f"check failed: {c['command']}" for c in checks
+                                      if not c["passed"]]
+                        + ([f"agent status: {agent_status}"]
+                           if agent_status != "completed" else []))[:1000]
+    return False, S.REWORK if used < max_attempts else S.BLOCKED, failure
+
+
 class TaskSpec(BaseModel):
     """What the planner hands to an executor agent. The bridge assigns the task id."""
 

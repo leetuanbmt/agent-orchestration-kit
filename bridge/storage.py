@@ -450,6 +450,22 @@ def rollback(root: Path, yes: bool = False) -> dict:
         return {"root": str(root), "moved_to": str(destination), "hidden_events": hidden}
 
 
+def legacy_writes(central: Path) -> tuple[Path, int] | None:
+    """(source, count) of events the legacy database got after `central` was migrated from it,
+    i.e. an old bridge process still writes there; None when there are none or it is unreadable."""
+    try:
+        metadata = json.loads((central / "migration.json").read_text())
+        source = Path(metadata["source"])
+        if not source.exists():
+            return None
+        with closing(_readonly(source)) as conn:
+            maximum = conn.execute("SELECT max(id) FROM events").fetchone()[0] or 0
+        count = maximum - (metadata["source_max_event_id"] or 0)
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
+        return None
+    return (source, count) if count > 0 else None
+
+
 def cleanup_legacy(apply: bool = False) -> dict:
     if not apply:
         return _cleanup_legacy(False)
