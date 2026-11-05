@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- `usage`, `account-list` and `health` include the next run's `reserve_usd` when judging a budget, as routing and the start gate do; they showed an account as `ok` while the bridge refused it (QA-BUG-002).
 - Routing no longer binds an unpinned task to an account whose slots are all held by other
   bridge processes on the machine (it then failed with `busy in another bridge process` while
   another executor was free): such an account is now unavailable to routing and `agents`. A

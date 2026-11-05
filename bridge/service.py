@@ -266,7 +266,8 @@ class Bridge:
         for account in listing["accounts"]:
             account["quota"] = self._account_quota(account["name"])
             if self.gate._limits(account["name"]) is not None:
-                account["limits"] = self._limit_report(account["name"])
+                account["limits"] = self._limit_report(
+                    account["name"], reserve=self.gate._next_run_reserve(account["name"]))
             state, _ = self.gate._effective_account_state(account["name"],
                                                           key=self._key(account["name"]))
             account.update(state=state["state"], last_error=state["last_error"],
@@ -294,7 +295,8 @@ class Bridge:
         return {"accounts": [
             {"name": n, "provider": self.orch.accounts[n].provider,
              "state": self.store.account_state(n, key=self._key(n)),
-             "limits": self.gate._evaluate(n, expire=False), "quota": self._account_quota(n)}
+             "limits": self.gate._evaluate(n, self.gate._next_run_reserve(n), expire=False),
+             "quota": self._account_quota(n)}
             for n in names], "generated_at": time.time()}
 
     def list_agents(self, logins: dict[str, bool | None] | None = None) -> dict[str, Any]:
@@ -398,7 +400,7 @@ class Bridge:
         limits: dict[str, dict[str, Any]] = {}
         for name in self.orch.accounts:
             if self.gate._limits(name) is not None:
-                report = self._limit_report(name)
+                report = self._limit_report(name, reserve=self.gate._next_run_reserve(name))
                 limits[name] = {"status": report["status"], "reason": report["reason"]}
         storage_notice = None
         if self.storage == "legacy":

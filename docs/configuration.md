@@ -245,7 +245,7 @@ accounts:
 | `five_hour_pct`, `weekly_pct` | Used percent (0–100] of the provider window whose `window_minutes` is 300 or 10080. |
 | `any_window_pct` | Used percent applied to every window the provider reports. |
 | `budget_usd` | `day`, `week` and/or `month` caps in USD. Periods are UTC calendar periods: the day from 00:00 UTC, the ISO week from Monday, the month from the 1st. |
-| `reserve_usd` | Amount held for each run on a budgeted account until its cost is known (needs `budget_usd`, at most the smallest cap). A run starts only when `spent + reserved + reserve_usd` stays within every cap. |
+| `reserve_usd` | Amount held for each run on a budgeted account until its cost is known (needs `budget_usd`, at most the smallest cap). A run starts only when `spent + reserved + reserve_usd` stays within every cap; `usage`, `account-list` and `health` judge the next run the same way, so an account they show as `limited` is one the bridge will refuse. |
 | `pricing` | USD per million tokens (`input_per_mtok`, `output_per_mtok`, optional `cached_input_per_mtok`), used to estimate cost when the CLI reports tokens but no cost. The kit ships no price table. |
 | `cooldown_s` | 60–604800. Lifts a QUOTA mark after this many seconds when the snapshot has no future reset time to wait for. |
 
