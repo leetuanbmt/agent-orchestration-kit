@@ -98,7 +98,21 @@ def snapshot(root: Path, protected: list[str]) -> dict[str, Any]:
         "head": _git(root, "rev-parse", "--verify", "-q", "HEAD", required=False).strip() or None,
         "tree": _worktree_tree(root),
         "files": {f: _hash(root / f) for f in files},
+        "ignored": {f: s for f, s in _ignored(root).items() if f not in files},
     }
+
+
+def _ignored(root: Path) -> dict[str, tuple[int, int] | None]:
+    """(size, mtime_ns) of every git-ignored file. No hashing: 100 000 files take ~0.2 s."""
+    out = _git(root, "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+    stats: dict[str, tuple[int, int] | None] = {}
+    for name in filter(None, out.split("\0")):
+        try:
+            st = os.lstat(root / name)
+            stats[name] = (st.st_size, st.st_mtime_ns)
+        except OSError:
+            stats[name] = None
+    return stats
 
 
 class Changes(TypedDict):
@@ -112,6 +126,7 @@ class Changes(TypedDict):
     patch: str
     patch_truncated: bool
     patch_omitted_files: list[str]
+    ignored_files: list[str]  # git-ignored files added, removed or modified (size or mtime)
 
 
 _FILE_DIFF = re.compile(r"(?m)^(?=diff --git )")
@@ -156,6 +171,8 @@ def diff(root: Path, before: dict[str, Any], protected: list[str]) -> Changes:
         stat = _git(root, "diff", "--stat", *trees)  # type: ignore[arg-type]
         patch = _git(root, "diff", "--no-color", *trees)  # type: ignore[arg-type]
     shown, truncated, omitted = bounded_patch(patch, PATCH_LIMIT)
+    ig_b, ig_a = before.get("ignored") or {}, after["ignored"]
+    ignored = sorted(f for f in set(ig_b) | set(ig_a) if ig_b.get(f) != ig_a.get(f))
     return {
         "files": changed,
         "head_before": before["head"],
@@ -165,14 +182,29 @@ def diff(root: Path, before: dict[str, Any], protected: list[str]) -> Changes:
         "patch": shown,
         "patch_truncated": truncated,
         "patch_omitted_files": omitted,
+        "ignored_files": ignored,
     }
 
 
 PATCH_LIMIT = 30000
 
 
+# Files a test run leaves behind; created by verification alone they are not scope violations.
+VERIFICATION_NOISE = ["__pycache__/**", "**/__pycache__/**", "*.pyc", "**/*.pyc",
+                      ".pytest_cache/**", "**/.pytest_cache/**"]
+
+
+# Git-ignored files tools rewrite all the time; changes to them are never violations.
+IGNORED_NOISE = [*VERIFICATION_NOISE, ".mypy_cache/**", "**/.mypy_cache/**", ".ruff_cache/**",
+                 "**/.ruff_cache/**", "node_modules/.cache/**", ".coverage", "**/.coverage"]
+
+
 def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig,
-                     head_changed: bool) -> list[str]:
+                     head_changed: bool, ignored: list[str] | None = None, *,
+                     enforce_ignored: bool = False) -> list[str]:
+    """Violations among changed files. Changed git-ignored files are violations when they are
+    protected, and also when outside allowed_paths if `enforce_ignored` (no reviewer will read
+    the evidence); otherwise they are only reported."""
     v = []
     for f in changed:
         if matches(f, cfg.protected_paths):
@@ -181,6 +213,12 @@ def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig
             v.append(f"excluded path changed: {f}")
         elif not matches(f, spec["allowed_paths"]):
             v.append(f"outside allowed paths: {f}")
+    for f in ignored or []:
+        if matches(f, cfg.protected_paths):
+            v.append(f"{PROTECTED_VIOLATION}{f}")
+        elif (enforce_ignored and not matches(f, IGNORED_NOISE)
+              and not matches(f, spec["allowed_paths"])):
+            v.append(f"ignored file changed outside allowed paths: {f}")
     if head_changed:
         v.append("git HEAD moved: the executor must not commit")
     return v
@@ -234,20 +272,18 @@ def parse_command(cmd: str, cfg: BridgeConfig) -> list[str]:
     return argv
 
 
-# Files a test run leaves behind; created by verification alone they are not scope violations.
-VERIFICATION_NOISE = ["__pycache__/**", "**/__pycache__/**", "*.pyc", "**/*.pyc",
-                      ".pytest_cache/**", "**/.pytest_cache/**"]
-
-
 def recheck(root: Path, before: dict[str, Any], changes: dict[str, Any],
             cfg: BridgeConfig) -> dict[str, Any]:
     """The worktree again after verification, against the same snapshot. Whatever the checks
     changed or left behind is judged like the agent's own changes, except test-cache files."""
     final = diff(root, before, cfg.protected_paths)
     later = [f for f in final["files"] if f not in changes["files"]]
+    later_ignored = [f for f in final["ignored_files"] if f not in changes["ignored_files"]]
     return {"files": sorted({*changes["files"],
                              *(f for f in later if not matches(f, VERIFICATION_NOISE))}),
-            "changed_by_verification": later,
+            "ignored_files": sorted({*changes["ignored_files"], *(
+                f for f in later_ignored if not matches(f, IGNORED_NOISE))}),
+            "changed_by_verification": later + later_ignored,
             "head_changed": changes["head_changed"] or final["head_changed"]}
 
 
