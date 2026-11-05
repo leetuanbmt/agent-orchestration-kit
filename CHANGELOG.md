@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- `agent-bridge create` reports a missing, unreadable or non-object spec file as one `error:` line naming the file instead of a Python traceback, and unknown-task errors no longer print in quotes (QA-BUG-003).
 - `usage`, `account-list` and `health` include the next run's `reserve_usd` when judging a budget, as routing and the start gate do; they showed an account as `ok` while the bridge refused it (QA-BUG-002).
 - Routing no longer binds an unpinned task to an account whose slots are all held by other
   bridge processes on the machine (it then failed with `busy in another bridge process` while
