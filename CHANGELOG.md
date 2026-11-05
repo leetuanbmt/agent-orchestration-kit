@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- Claude agents' read tools can no longer open `~/.claude/.credentials.json`, the project's `.env*`, `*.pem` and `*.key` files, or any configured account's auth home (`--disallowedTools` now denies them on every run; a home that cannot be written as a permission rule stops the run). Before, only Codex, agent-bridge and agy credentials were denied (QA-BUG-006).
 - Claude loads no user/project settings; optional `claude_hook_settings`, set only by a human in `.ai/config.json`, loads an external hooks-only JSON file as trusted code running unsandboxed. The default remains off and `--setting-sources ""` remains enforced.
 - `agent-bridge web` requires a per-launch secret token on every API request; the printed dashboard URL carries the key.
 
