@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import accounts, config, install, orchestrator, quota, storage
+from . import accounts, config, install, orchestrator, quota, registry, storage
 from .security import redact
 from .executor import describe_event
 
@@ -30,16 +30,8 @@ def project_id(root: str) -> str:
 
 
 def discover_roots(here: Path | None = None) -> list[str]:
-    roots: dict[str, None] = {}
-    for root in dict.fromkeys([*accounts.known_projects(), *([str(here)] if here else [])]):
-        if not Path(root).is_dir():
-            continue
-        out = subprocess.run(["git", "-C", root, "worktree", "list", "--porcelain"],
-                             capture_output=True, text=True, check=False)
-        roots |= dict.fromkeys([root, *(line.removeprefix("worktree ")
-                                        for line in out.stdout.splitlines()
-                                        if line.startswith("worktree ")
-                                        and Path(line.removeprefix("worktree ")).is_dir())])
+    roots = dict.fromkeys(registry.with_worktrees(
+        [*accounts.known_projects(), *([str(here)] if here else [])]))
     try:
         roots |= dict.fromkeys(storage.central_stores())
     except (OSError, ValueError):

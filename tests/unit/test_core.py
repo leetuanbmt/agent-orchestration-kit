@@ -340,3 +340,40 @@ def test_store_rebind(tmp_path: Path) -> None:
     with pytest.raises(TransitionError, match="cannot reassign"):
         store.rebind(row["id"], {State.PAUSED}, change, Actor.HUMAN, "account_reassigned")
     assert store.count_events(row["id"], "account_reassigned") == 1
+
+
+# @pt.id KIT-UNIT-045-effective-account-state
+# @pt.item Which account state work sees, without writing it
+# @pt.condition available and AUTH states; QUOTA without a mark time; QUOTA past its cooldown with no readable reset and with a reset still ahead; QUOTA whose window reset after the mark with quota left, with none left, and with an unknown snapshot
+# @pt.expected only the elapsed cooldown and the proven reset lift the mark (to available with no error, naming why); every other state is returned as stored; the input is never changed
+# @pt.target bridge.quota.effective_account_state
+# @pt.method unit
+# @pt.legacy computed and stored inline in Bridge._account_state, so listings wrote account state
+def test_effective_account_state() -> None:
+    from bridge.quota import effective_account_state
+    marked, now = 1000.0, 2000.0
+    quota = {"state": "quota", "last_error": "limit", "updated_at": marked}
+    before = dict(quota)
+
+    def window(used: float, resets_at: object) -> dict:
+        return {"used_percent": used, "window_minutes": 300, "resets_at": resets_at}
+
+    for stored in ({"state": "available", "last_error": None},
+                   {"state": "auth", "last_error": "401", "updated_at": marked},
+                   {"state": "quota", "last_error": "limit"}):
+        assert effective_account_state(stored, "UNKNOWN", 1, now) == (stored, None)
+    lifted = {**quota, "state": "available", "last_error": None}
+    assert effective_account_state(quota, "UNKNOWN", 600, now) == (lifted, "cooldown")
+    assert effective_account_state(quota, {"primary": window(100, True)}, 600, now) == (
+        lifted, "cooldown")
+    ahead = {"primary": window(100, now + 60)}
+    assert effective_account_state(quota, ahead, 600, now) == (quota, None)
+    assert effective_account_state(quota, "UNKNOWN", 1500, now) == (quota, None)
+    assert effective_account_state(quota, "UNKNOWN", None, now) == (quota, None)
+    reset = {"primary": window(100, marked + 10), "secondary": window(62, now + 9999)}
+    assert effective_account_state(quota, reset, None, now) == (lifted, "reset")
+    spent = {"primary": window(100, marked + 10), "secondary": window(100, now + 9999)}
+    assert effective_account_state(quota, spent, None, now) == (quota, None)
+    early = {"primary": window(100, marked - 1), "secondary": window(62, now + 9999)}
+    assert effective_account_state(quota, early, None, now) == (quota, None)
+    assert quota == before

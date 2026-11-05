@@ -3,7 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event, current_thread
 
-from bridge import accounts, osutil, storage
+from bridge import accounts, osutil, registry, storage
 
 
 # @pt.id T0042-concurrent-additions
@@ -63,7 +63,7 @@ def test_remember_waits_for_lock(tmp_path, monkeypatch):
 # @pt.item Concurrent pruning and addition
 # @pt.condition Remember starts after prune reads the registry
 # @pt.expected Prune removes stale roots while preserving the new addition
-# @pt.target bridge.storage.prune bridge.accounts.remember_project
+# @pt.target bridge.storage.prune bridge.registry.remember_project
 # @pt.method unit
 # @pt.legacy None
 def test_prune_with_remember(tmp_path, monkeypatch):
@@ -75,7 +75,7 @@ def test_prune_with_remember(tmp_path, monkeypatch):
     read = Event()
     release = Event()
     attempted = Event()
-    original_read = accounts.known_projects
+    original_read = registry.known_projects
     original_lock = osutil.lock
     prune_thread = None
 
@@ -96,7 +96,7 @@ def test_prune_with_remember(tmp_path, monkeypatch):
         prune_thread = current_thread()
         return storage.prune(apply=True)
 
-    monkeypatch.setattr(accounts, "known_projects", known_projects)
+    monkeypatch.setattr(registry, "known_projects", known_projects)
     monkeypatch.setattr(osutil, "lock", lock)
     with ThreadPoolExecutor(max_workers=2) as pool:
         pruning = pool.submit(prune)

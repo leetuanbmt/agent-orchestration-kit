@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import subprocess
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from . import storage
+from .registry import find_root as find_root
 
 AI_DIR = ".ai"
 CONFIG_FILE = "config.json"
@@ -90,18 +89,6 @@ class BridgeConfig(BaseModel):
             if name != "default" and name not in self.accounts:
                 raise ValueError(f"unknown fallback account: {name}")
         return self
-
-
-def find_root(start: str | os.PathLike[str] | None = None) -> Path:
-    """Project root = git toplevel of BRIDGE_PROJECT_ROOT (or cwd). Refuses non-git dirs."""
-    base = Path(start or os.environ.get("BRIDGE_PROJECT_ROOT") or os.getcwd()).resolve()
-    out = subprocess.run(
-        ["git", "-C", str(base), "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, check=False,
-    )
-    if out.returncode != 0:
-        raise RuntimeError(f"not a git repository: {base}")
-    return Path(out.stdout.strip()).resolve()
 
 
 def load_config(root: Path) -> BridgeConfig:

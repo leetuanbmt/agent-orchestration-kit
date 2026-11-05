@@ -18,7 +18,9 @@ through the bridge, including two accounts in parallel.
 
 ```
 MCP client ─MCP stdio─▶ bridge/server.py ─┐
-human CLI ────────────▶ bridge/cli.py ────┴▶ bridge/service.py (Bridge: routing, review, workflows)
+human CLI ────────────▶ bridge/cli.py ────┴▶ bridge/service.py (Bridge: facade, review, workflows)
+                                               ├ gate.py         account state, limits, usage ledger, routing
+                                               ├ runner.py       start gate, agent run, verification, review stage
                                                ├ orchestrator.py roles → agents → accounts, workflow stages (YAML)
                                                ├ state.py        SQLite WAL, tasks, workflows, quota, events
                                                ├ executor.py     Adapter base; CodexAdapter, ClaudeAdapter; process group

@@ -134,10 +134,17 @@ PR into `main` is open, its whole diff has been re-reviewed and every problem fo
 
 ## Progress
 
-- [ ] B1 Pure account-state reads
-- [ ] B2 `AccountGate` and `TaskRunner` behind the `Bridge` facade
-- [ ] B3 Project registry module, no import cycles around `storage`
-- [ ] B4 Optional: split `Store` into task, account and usage parts
+- [x] B1 Pure account-state reads — `tuanvm/arch-p1-p2-refactor`, 2026-11-05. `_account_state`
+  keeps its name and lifting behaviour (KIT-FAILOVER-009 and KIT-HARDEN-018 call it and expect
+  the `account_cooldown_elapsed` event); listings use the non-writing view.
+- [x] B2 `AccountGate` and `TaskRunner` behind the `Bridge` facade — same branch. `_account_quota`
+  stays on `Bridge` (tests replace it there and expect the gate to see it).
+- [x] B3 Project registry module, no import cycles around `storage` — same branch. `storage` now
+  imports only `install`, `osutil`, `registry` and `models`; `find_root` moved to `registry` too
+  (re-exported from `config`). With the user's approval, `test_statuses` and
+  `test_prune_with_remember` now patch `registry` instead of `accounts`/`progress`.
+- [ ] B4 Optional: split `Store` into task, account and usage parts — skipped: the PR diff is
+  already about 1,550 changed lines, over the 600-line limit.
 
 ## Mode and branch
 

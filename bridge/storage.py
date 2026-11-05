@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import install, osutil
+from . import install, osutil, registry
+from .models import ACTIVE, TERMINAL
 
 HOME_ENV = "AGENT_BRIDGE_HOME"
 Location = NamedTuple("Location", [("dir", Path), ("kind", str)])
@@ -130,8 +131,6 @@ def find_store(root: str | Path) -> Path:
 
 
 def relink(old_root: str, new_root: Path, apply: bool = False) -> dict:
-    from . import config
-
     old = Path(old_root).resolve()
     new_root = new_root.resolve()
 
@@ -139,7 +138,7 @@ def relink(old_root: str, new_root: Path, apply: bool = False) -> dict:
         source = central_stores().get(str(old))
         if source is None:
             raise RuntimeError("no central store for old root")
-        if config.find_root(new_root) != new_root:
+        if registry.find_root(new_root) != new_root:
             raise RuntimeError("new root must be a worktree top level")
         gdir, common, target = _paths(new_root)
         if (target / "bridge.db").exists():
@@ -215,11 +214,13 @@ def _readonly(path: Path):
 
 
 def plan(here: Path | None = None) -> list[dict]:
-    from . import accounts, config, progress
-    from .models import ACTIVE
-
-    roots = dict.fromkeys(str(Path(r).resolve()) for r in
-                          [*accounts.known_projects(), *progress.discover_roots(here)])
+    known = registry.known_projects()
+    found = registry.with_worktrees([*known, *([str(here)] if here else [])])
+    try:
+        found += central_stores()
+    except (OSError, ValueError):
+        pass
+    roots = dict.fromkeys(str(Path(r).resolve()) for r in [*known, *found])
     entries = []
     for value in roots:
         root = Path(value)
@@ -229,7 +230,7 @@ def plan(here: Path | None = None) -> list[dict]:
         if not root.is_dir():
             continue
         try:
-            top_level = config.find_root(root) == root.resolve()
+            top_level = registry.find_root(root) == root.resolve()
         except RuntimeError:
             top_level = False
         if not top_level:
@@ -365,21 +366,12 @@ def prune(apply: bool = False) -> dict:
 
 
 def _prune(apply: bool) -> dict:
-    from . import accounts
-
-    with accounts._projects_lock() if apply else nullcontext():
-        roots = accounts.known_projects()
+    with registry.projects_lock() if apply else nullcontext():
+        roots = registry.known_projects()
         removed = [root for root in roots if not Path(root).is_dir()]
         kept = [root for root in roots if root not in removed]
         if apply:
-            base = accounts.registry_dir()
-            base.mkdir(mode=0o700, parents=True, exist_ok=True)
-            temporary = base / f"projects.json.{os.getpid()}.tmp"
-            try:
-                temporary.write_text(json.dumps(sorted(kept), indent=2) + "\n")
-                os.replace(temporary, base / "projects.json")
-            finally:
-                temporary.unlink(missing_ok=True)
+            registry.save_projects(kept)
     return {"applied": apply, "removed": removed, "kept": len(kept)}
 
 
@@ -393,8 +385,6 @@ def gc(days: float, apply: bool = False) -> dict:
 
 
 def _gc(days: float, apply: bool) -> dict:
-    from .models import TERMINAL
-
     cutoff = time.time() - days * 86400
     files = []
     total = 0
