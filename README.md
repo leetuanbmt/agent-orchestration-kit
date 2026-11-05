@@ -509,12 +509,12 @@ the user's authorisation; the legacy `auto_switch` block in `config.json` maps o
 5. **Processes:** argv lists, no shell; own process group, SIGTERM then SIGKILL on timeout or
    cancel; orphaned agent groups from a dead runner are killed on the next start (only if the
    PID is a `codex`, `claude`, `opencode` or `agy` process). SIGTERM, SIGINT, SIGHUP or SIGALRM
-   (a caller's timeout) to `execute`, `resume`, `plan` or `run-workflow` kills the agent or the
-   running check within about a second, parks the task `PAUSED` (`INTERRUPTED`, attempt given
+   (a caller's timeout) to `execute`, `resume`, `plan` or `run-workflow` starts stopping the agent
+   or the running check within about a second (SIGKILL after a 5 s grace), parks the task `PAUSED` (`INTERRUPTED`, attempt given
    back) and exits with 128 + the signal number; `serve` shuts down the same way. Only SIGKILL
    leaves the task `RUNNING` until the next start. A `cancel` from another process is picked up
    by the runner the same way (agent or verification command killed, remaining checks skipped,
-   account freed); `cancel` waits up to 15 s for that before it returns.
+   account freed); `cancel` waits for that (15 s per wait) before it returns.
 6. **Environment:** credential-shaped variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, …) are removed.
 7. **Paths:** checked at creation (absolute, `..`, `~`, symlink escape, protected, over-broad) and
    after each run for every adapter (hash snapshot, full worktree diff, `HEAD` must not move).

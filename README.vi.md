@@ -512,12 +512,12 @@ là sự cho phép của user; block `auto_switch` legacy trong `config.json` đ
 5. **Process:** argv list, không shell; process group riêng, SIGTERM rồi SIGKILL khi timeout hoặc
    huỷ; process group agent mồ côi của runner đã chết bị kill ở lần khởi động sau (chỉ khi PID là
    process `codex`, `claude`, `opencode` hoặc `agy`). SIGTERM, SIGINT, SIGHUP hoặc SIGALRM (timeout
-   của bên gọi) gửi tới `execute`, `resume`, `plan` hoặc `run-workflow` sẽ kill agent hoặc check
-   đang chạy trong khoảng một giây, đưa task về `PAUSED` (`INTERRUPTED`, trả lại lần thử) và thoát
+   của bên gọi) gửi tới `execute`, `resume`, `plan` hoặc `run-workflow` sẽ bắt đầu dừng agent hoặc
+   check đang chạy trong khoảng một giây (SIGKILL sau 5 s chờ), đưa task về `PAUSED` (`INTERRUPTED`, trả lại lần thử) và thoát
    với mã 128 + số hiệu tín hiệu; `serve` cũng dừng theo cách đó. Chỉ SIGKILL mới để task ở
    `RUNNING` tới lần khởi động sau. Lệnh `cancel` từ process khác cũng được runner nhận theo cách
    đó (kill agent hoặc lệnh verification, bỏ các check còn lại, giải phóng account); `cancel` chờ
-   tối đa 15 s rồi mới trả về.
+   việc đó (mỗi lần chờ tối đa 15 s) rồi mới trả về.
 6. **Environment:** biến trông giống credential (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, …) bị xoá.
 7. **Path:** kiểm tra khi tạo task (tuyệt đối, `..`, `~`, symlink thoát ra ngoài, protected, quá
    rộng) và sau mỗi lượt chạy với mọi adapter (hash snapshot, diff toàn worktree, `HEAD` không

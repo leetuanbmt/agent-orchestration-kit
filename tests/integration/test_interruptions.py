@@ -124,6 +124,8 @@ def test_cancel_stops_verification_in_another_process(make_bridge, fake_codex, r
         lock.release()
         assert runner.wait(timeout=15) == 0
         assert not second.exists()
+        ver = b.store.attempts(t)[-1]["verification"]
+        assert not ver["passed"] and ver["interrupted"] and ver["checks"][0]["error"] == "cancelled"
     finally:
         _cleanup(runner, pids)
 

@@ -628,10 +628,13 @@ class Bridge:
         checks = (await run_verification(spec.get("verification_commands", []), self.root,
                                          self.cfg, should_cancel=cancelled)
                   if "test" in self.orch.workflow.stages and not skipped else [])
-        passed = not violations and all(c["passed"] for c in checks) and agent_status == "completed"
+        stopped = cancelled()  # checks cut short (or never started) prove nothing
+        passed = (not violations and not stopped and all(c["passed"] for c in checks)
+                  and agent_status == "completed")
         record["verification"] = {"passed": passed, "scope_violations": violations,
                                   "checks": checks, "agent_status": agent_status,
-                                  **({"skipped": skipped} if skipped else {})}
+                                  **({"skipped": skipped} if skipped else {}),
+                                  **({"interrupted": True} if stopped else {})}
         self.store.finish_attempt(task_id, n, **record)
         needs_human = bool(row["needs_human"]) or touches_sensitive(changes["files"], self.cfg)
         if self._park_if_stopping(task_id, used):
