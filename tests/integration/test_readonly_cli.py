@@ -74,3 +74,29 @@ def test_default_creates_state(repo, tmp_path, monkeypatch):
     assert (bridge.state_dir / "bridge.db").is_file()
     assert (storage.home() / "accounts.db").is_file()
     assert str(repo) in known_projects()
+
+
+# @pt.id T0044-spec-errors
+# @pt.item Unreadable spec files and unknown tasks give one-line errors
+# @pt.condition `create` with a missing file, a non-JSON file and a JSON list; `status` of an unknown task
+# @pt.expected exit 1 with "error: ..." naming the file and the problem, no traceback and no quotes around the unknown-task message; no task is created
+# @pt.target bridge.cli._read_spec, bridge.state.NotFound
+# @pt.method integration
+# @pt.legacy a missing file raised FileNotFoundError with a traceback; unknown tasks printed 'unknown task: T9999'
+def test_spec_errors(repo, fake_codex, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("BRIDGE_PROJECT_ROOT", str(repo))
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False)
+    bad = tmp_path / "bad.json"
+    for content, needle in ((None, "cannot read spec"), ("not json", "is not valid JSON"),
+                            ("[1, 2]", "must be a JSON object, not list")):
+        if content is not None:
+            bad.write_text(content)
+        with pytest.raises(SystemExit) as exit_info:
+            cli.main(["create", str(bad)])
+        err = capsys.readouterr().err
+        assert exit_info.value.code == 1 and err.startswith("error: ") and needle in err, err
+        assert str(bad) in err
+    with pytest.raises(SystemExit):
+        cli.main(["status", "T9999"])
+    assert capsys.readouterr().err == "error: unknown task: T9999\n"
+    assert run(Bridge(repo).list_tasks()) == []
