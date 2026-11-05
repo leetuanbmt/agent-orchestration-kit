@@ -714,3 +714,230 @@ def test_snapshot_detached_branch(repo, store):
     project = progress.snapshot([str(repo)])["projects"][0]
     assert project["branch"] == "HEAD"
     assert project["updated_at"] is None
+
+
+ORCHESTRATOR = """
+accounts:
+  work: {provider: openai, home: ~/private-home-work}
+  spare: {provider: openai, home: ~/private-home-spare, max_concurrency: 2}
+  login: {provider: anthropic}
+agents:
+  lead: {adapter: client}
+  coder: {adapter: codex-cli, account: work}
+  backup: {adapter: codex-cli, account: spare}
+  helper: {adapter: claude-cli, account: login, enabled: false}
+roles:
+  executor: {agents: [coder, backup]}
+  reviewer: helper
+routing:
+  quota_fallback: {enabled: true, min_remaining_pct: 15, agents: [backup]}
+"""
+
+
+def configure(monkeypatch):
+    orch = progress.orchestrator.parse(ORCHESTRATOR, "test.yaml")
+    monkeypatch.setattr(progress.config, "load_config", lambda root: SimpleNamespace(default_timeout_s=900))
+    monkeypatch.setattr(progress.orchestrator, "load", lambda root, cfg: orch)
+
+
+def forbid_probes(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("the dashboard must not probe accounts")
+    for name in ("discover", "login_status"):
+        monkeypatch.setattr(progress.accounts, name, forbidden, raising=False)
+    monkeypatch.setattr(progress.quota, "read_quota", forbidden, raising=False)
+
+
+# @pt.id T0075-account-quota
+# @pt.item Account capacity in the overview
+# @pt.condition Account marked quota with 5 h and weekly windows and a running task
+# @pt.expected State quota, two windows, remaining quota, running count, since and config agents
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_account_quota_capacity(repo, store, monkeypatch):
+    configure(monkeypatch)
+    forbid_probes(monkeypatch)
+    now = time.time()
+    tid = add(store)
+    store.db.execute("UPDATE tasks SET state='RUNNING', account='work', agent='coder' WHERE id=?", (tid,))
+    store.set_account_state("work", "quota", "QUOTA: usage limit", actor=Actor.BRIDGE)
+    since = store.db.execute("SELECT updated_at FROM accounts WHERE name='work'").fetchone()[0]
+    store.save_quota("work", {
+        "primary": {"used_percent": 100, "window_minutes": 300, "resets_at": now + 3600},
+        "secondary": {"used_percent": 40, "window_minutes": 10080, "resets_at": now + 86400}})
+    snap = progress.snapshot([str(repo)], now=now)
+    pid = progress.project_id(str(repo))
+    work = next(a for a in snap["accounts"] if a["name"] == "work")
+    assert work["state"] == "quota" and work["since"] == since
+    assert work["error"] == "QUOTA: usage limit"
+    assert work["windows"] == [
+        {"slot": "primary", "window_minutes": 300, "used_pct": 100.0, "resets_at": now + 3600},
+        {"slot": "secondary", "window_minutes": 10080, "used_pct": 40.0, "resets_at": now + 86400}]
+    assert work["remaining_pct"] == 0.0 and work["observed_at"] is not None
+    assert work["running"] == 1 and work["max_concurrency"] == 1
+    assert work["provider"] == "openai" and work["projects"] == [pid]
+    assert work["agents"] == [{"agent": "coder", "roles": ["executor"], "enabled": True}]
+    spare = next(a for a in snap["accounts"] if a["name"] == "spare")
+    assert (spare["state"], spare["since"], spare["windows"], spare["remaining_pct"], spare["running"],
+            spare["max_concurrency"]) == ("available", None, [], None, 0, 2)
+    assert spare["agents"] == [{"agent": "backup", "roles": ["executor"], "enabled": True}]
+    assert all(a["agent"] != "lead" for account in snap["accounts"] for a in account["agents"])
+    assert "private-home" not in json.dumps(snap)
+    assert snap["running"][0]["timeout_s"] == 900
+
+
+# @pt.id T0075-account-order
+# @pt.item Account severity order
+# @pt.condition Auth, quota and available accounts
+# @pt.expected Auth first, then quota, then available sorted by name
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_accounts_sorted_by_severity(repo, store, monkeypatch):
+    configure(monkeypatch)
+    store.set_account_state("work", "quota", "QUOTA: wait", actor=Actor.BRIDGE)
+    store.set_account_state("login", "auth", "AUTH: expired", actor=Actor.BRIDGE)
+    tid = add(store)
+    store.db.execute("UPDATE tasks SET account='adhoc' WHERE id=?", (tid,))
+    snap = progress.snapshot([str(repo)], now=time.time())
+    assert [(a["name"], a["state"]) for a in snap["accounts"]] == [
+        ("login", "auth"), ("work", "quota"), ("adhoc", "available"), ("spare", "available")]
+    login = snap["accounts"][0]
+    assert login["agents"] == [{"agent": "helper", "roles": ["reviewer"], "enabled": False}]
+    assert login["provider"] == "anthropic"
+    assert snap["accounts"][2]["provider"] is None
+
+
+# @pt.id T0075-switches
+# @pt.item Automatic account switches
+# @pt.condition Valid, unknown-reason, malformed and week-old account_auto_switched events
+# @pt.expected Recent valid events newest first; unknown reason is other; others skipped
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_account_switches(repo, store, monkeypatch):
+    configure(monkeypatch)
+    tid = add(store)
+    store.log(tid, Actor.BRIDGE, "account_auto_switched",
+              {"from": "coder", "to": "backup", "from_account": "work", "to_account": "spare",
+               "reason": "quota", "remaining_pct": 0.0, "to_remaining_pct": 80.0})
+    now = time.time() + 10
+    insert = ("INSERT INTO events(ts,task_id,actor,kind,detail) "
+              "VALUES (?,?,'bridge','account_auto_switched',?)")
+    store.db.execute(insert, (now - 5, tid, json.dumps(
+        {"from": "backup", "to": "coder", "from_account": "spare", "to_account": "work",
+         "reason": "mystery"})))
+    store.db.execute(insert, (now - 4, tid, "{not json"))
+    store.db.execute(insert, (now - 3, tid, json.dumps(["not", "a", "mapping"])))
+    store.db.execute(insert, (now - 8 * 86400, tid, json.dumps(
+        {"from": "coder", "to": "backup", "reason": "limit"})))
+    snap = progress.snapshot([str(repo)], now=now)
+    pid = progress.project_id(str(repo))
+    switches = snap["switches"]
+    assert [s["reason"] for s in switches] == ["other", "quota"]
+    assert switches[0]["ts"] == now - 5
+    assert {k: switches[1][k] for k in ("pid", "task_id", "from", "to", "from_account", "to_account")} == {
+        "pid": pid, "task_id": tid, "from": "coder", "to": "backup",
+        "from_account": "work", "to_account": "spare"}
+    assert set(switches[0]) == {"pid", "task_id", "ts", "from", "to", "from_account", "to_account", "reason"}
+
+
+# @pt.id T0075-fallback
+# @pt.item Quota fallback policy per project
+# @pt.condition Configured routing.quota_fallback, then an unreadable config
+# @pt.expected Enabled policy with candidates; None without config while database accounts remain
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_fallback_policy(repo, store, monkeypatch):
+    configure(monkeypatch)
+    store.set_account_state("work", "quota", "QUOTA: wait", actor=Actor.BRIDGE)
+    snap = progress.snapshot([str(repo)], now=time.time())
+    assert snap["projects"][0]["fallback"] == {"enabled": True, "min_remaining_pct": 15.0,
+                                               "agents": ["backup"]}
+    def unavailable(*args):
+        raise ValueError("No config")
+    monkeypatch.setattr(progress.config, "load_config", unavailable)
+    snap = progress.snapshot([str(repo)], now=time.time())
+    assert snap["projects"][0]["fallback"] is None
+    assert [(a["name"], a["state"], a["provider"], a["max_concurrency"], a["agents"])
+            for a in snap["accounts"]] == [("work", "quota", None, 1, [])]
+
+
+# @pt.id T0075-redaction
+# @pt.item Account error sanitization
+# @pt.condition Stored account last_error contains a secret and long text
+# @pt.expected Redacted error bounded to 200 characters
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_account_error_is_redacted(repo, store, monkeypatch):
+    configure(monkeypatch)
+    token = "sk-" + "a" * 40
+    store.set_account_state("work", "auth", "AUTH: login", actor=Actor.BRIDGE)
+    store.db.execute("UPDATE accounts SET last_error=? WHERE name='work'", ("AUTH: " + token + "x" * 600,))
+    snap = progress.snapshot([str(repo)], now=time.time())
+    work = snap["accounts"][0]
+    assert work["name"] == "work" and work["state"] == "auth"
+    assert token not in json.dumps(snap)
+    assert "[REDACTED]" in work["error"]
+    assert len(work["error"]) <= 201
+
+
+# @pt.id T0076-lifted-reset
+# @pt.item Effective account state in the overview
+# @pt.condition Quota mark whose stored window reset after the mark and before now, used below 100 %
+# @pt.expected State available, error None, since kept, lifted reset
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_lapsed_quota_mark_is_available(repo, store, monkeypatch):
+    configure(monkeypatch)
+    forbid_probes(monkeypatch)
+    store.set_account_state("work", "quota", "QUOTA: usage limit", actor=Actor.BRIDGE)
+    since = store.db.execute("SELECT updated_at FROM accounts WHERE name='work'").fetchone()[0]
+    store.save_quota("work", {
+        "primary": {"used_percent": 40, "window_minutes": 300, "resets_at": since + 50}})
+    snap = progress.snapshot([str(repo)], now=since + 100)
+    work = next(a for a in snap["accounts"] if a["name"] == "work")
+    assert (work["state"], work["error"], work["since"], work["lifted"]) == (
+        "available", None, since, "reset")
+    assert work["remaining_pct"] == 100.0
+    assert all(a["state"] == "available" for a in snap["accounts"])
+
+
+# @pt.id T0076-quota-stands
+# @pt.item Effective account state in the overview
+# @pt.condition Quota mark with an exhausted window whose reset lies in the future
+# @pt.expected State quota with lifted None
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_quota_mark_with_future_reset_stands(repo, store, monkeypatch):
+    configure(monkeypatch)
+    forbid_probes(monkeypatch)
+    store.set_account_state("work", "quota", "QUOTA: usage limit", actor=Actor.BRIDGE)
+    since = store.db.execute("SELECT updated_at FROM accounts WHERE name='work'").fetchone()[0]
+    store.save_quota("work", {
+        "primary": {"used_percent": 100, "window_minutes": 300, "resets_at": since + 3600}})
+    snap = progress.snapshot([str(repo)], now=since + 100)
+    work = next(a for a in snap["accounts"] if a["name"] == "work")
+    assert (work["state"], work["error"], work["lifted"]) == ("quota", "QUOTA: usage limit", None)
+
+
+# @pt.id T0076-available-not-lifted
+# @pt.item Effective account state in the overview
+# @pt.condition Account stored as available and accounts without any stored state
+# @pt.expected Every account entry has lifted None
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_available_account_not_lifted(repo, store, monkeypatch):
+    configure(monkeypatch)
+    forbid_probes(monkeypatch)
+    store.set_account_state("work", "available", actor=Actor.BRIDGE)
+    snap = progress.snapshot([str(repo)], now=time.time())
+    work = next(a for a in snap["accounts"] if a["name"] == "work")
+    assert work["state"] == "available" and work["lifted"] is None
+    assert all("lifted" in a and a["lifted"] is None for a in snap["accounts"])

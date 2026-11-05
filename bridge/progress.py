@@ -102,7 +102,7 @@ def _read(root):
             if "tasks" not in tables:
                 raise sqlite3.DatabaseError("missing tasks")
             data = {}
-            for name in ("tasks", "workflows", "attempts", "events", "account_quota"):
+            for name in ("tasks", "workflows", "attempts", "events", "account_quota", "accounts"):
                 columns = ("task_id, n, kind, outcome, started_at, ended_at, exit_code"
                            if name == "attempts" else "*")
                 data[name] = [dict(r) for r in db.execute(f"SELECT {columns} FROM {name}")] if name in tables else []
@@ -197,24 +197,204 @@ def _requests(data, tasks, pid):
     return result
 
 
-def _timeout(root, agent):
-    timeout = 1800
+def _config(root):
+    """(bridge config, orchestrator config) of a project; None for each part that cannot load."""
+    cfg = orch = None
     try:
         cfg = config.load_config(Path(root))
-        timeout = cfg.default_timeout_s
         orch = orchestrator.load(Path(root), cfg)
-        if agent in orch.agents:
+    except Exception:
+        pass
+    return cfg, orch
+
+
+def _timeout_in(loaded, agent):
+    cfg, orch = loaded
+    timeout = 1800
+    if cfg is None:
+        return timeout
+    try:
+        timeout = cfg.default_timeout_s
+        if orch is not None and agent in orch.agents:
             timeout = orch.agents[agent].timeout_s or timeout
     except Exception:
         pass
     return timeout
 
 
+def _timeout(root, agent):
+    return _timeout_in(_config(root), agent)
+
+
+_ACCOUNT_STATES = ("auth", "quota", "available")
+_SWITCH_REASONS = {"quota", "limit", "below_threshold"}
+_SWITCH_WINDOW_S = 7 * 86400
+
+
+def _fallback(orch):
+    if orch is None:
+        return None
+    try:
+        fallback = orch.routing.quota_fallback
+        agents = fallback.agents
+        return {"enabled": bool(fallback.enabled),
+                "min_remaining_pct": float(fallback.min_remaining_pct),
+                "agents": None if agents is None else [str(a) for a in agents]}
+    except Exception:
+        return None
+
+
+def _config_accounts(orch):
+    """Account profiles and the agents bound to them; empty when the config is unusable."""
+    if orch is None:
+        return {}, {}
+    try:
+        profiles = {str(name): (str(profile.provider) if profile.provider else None,
+                                int(profile.max_concurrency or 1))
+                    for name, profile in orch.accounts.items()}
+        roles = {}
+        for role in orch.roles:
+            for agent in orch.role(role).agents:
+                roles.setdefault(agent, []).append(str(role))
+        agents = {}
+        for name, agent in orch.agents.items():
+            if not agent.account:
+                continue
+            agents.setdefault(str(agent.account), []).append(
+                {"agent": str(name), "roles": roles.get(name, []), "enabled": bool(agent.enabled)})
+        return profiles, agents
+    except Exception:
+        return {}, {}
+
+
+_NO_LIMITS = object()
+
+
+def _cooldown(orch, name):
+    """cooldown_s of an account that has `limits` in this config; _NO_LIMITS otherwise."""
+    try:
+        limits = orch.accounts[name].limits
+        if limits is None:
+            return _NO_LIMITS
+        cooldown = limits.cooldown_s
+        return None if cooldown is None else float(cooldown)
+    except Exception:
+        return _NO_LIMITS
+
+
+def _apply_effective_state(entry, now):
+    """Report a lapsed QUOTA mark as available, exactly as routing sees it; writes nothing."""
+    entry["lifted"] = None
+    if entry["state"] != "quota" or entry["since"] is None:
+        return
+    try:
+        _, lifted = quota.effective_account_state(
+            {"state": entry["state"], "updated_at": entry["since"], "last_error": entry["_raw_error"]},
+            entry["_limits"] if isinstance(entry["_limits"], dict) else {}, entry["_cooldown"], now)
+    except Exception:
+        return
+    if lifted in ("cooldown", "reset"):
+        entry["state"], entry["error"], entry["lifted"] = "available", None, lifted
+
+
+def _merge_accounts(merged, pid, data, tasks, orch, now):
+    profiles, agents = _config_accounts(orch)
+    names = list(profiles)
+    names += [r.get("name") for r in data["accounts"]]
+    names += [r.get("name") for r in data["account_quota"]]
+    names += [t["account"] for t in tasks]
+    for name in dict.fromkeys(n for n in names if isinstance(n, str) and n):
+        entry = merged.get(name)
+        if entry is None:
+            entry = merged[name] = {
+                "name": _text(name, 80), "provider": None, "state": "available", "since": None,
+                "error": None, "windows": [], "remaining_pct": None, "observed_at": None,
+                "running": 0, "max_concurrency": 1, "agents": [], "projects": [], "lifted": None,
+                "_configured": False, "_state_ts": None, "_quota_ts": None,
+                "_raw_error": None, "_limits": {}, "_cooldown": None, "_cooldown_set": False}
+        if pid not in entry["projects"]:
+            entry["projects"].append(pid)
+        if name in profiles and not entry["_configured"]:
+            entry["provider"], entry["max_concurrency"] = profiles[name]
+            entry["_configured"] = True
+        if name in profiles and not entry["_cooldown_set"]:
+            cooldown = _cooldown(orch, name)
+            if cooldown is not _NO_LIMITS:
+                entry["_cooldown"], entry["_cooldown_set"] = cooldown, True
+        for agent in agents.get(name, []):
+            known = next((a for a in entry["agents"] if a["agent"] == agent["agent"]), None)
+            if known is None:
+                entry["agents"].append({**agent, "roles": list(agent["roles"])})
+            else:
+                known["roles"] += [r for r in agent["roles"] if r not in known["roles"]]
+    for row in data["accounts"]:
+        entry = merged.get(row.get("name"))
+        ts = row.get("updated_at")
+        if entry is None or not quota.numeric(ts):
+            continue
+        if entry["_state_ts"] is None or ts > entry["_state_ts"]:
+            state = row.get("state")
+            entry["_state_ts"] = ts
+            entry["state"] = state if state in _ACCOUNT_STATES else "available"
+            entry["since"] = ts
+            entry["error"] = _text(row.get("last_error"), 200) if row.get("last_error") else None
+            entry["_raw_error"] = entry["error"]
+    for row in data["account_quota"]:
+        entry = merged.get(row.get("name"))
+        ts = row.get("observed_at")
+        if entry is None or not quota.numeric(ts):
+            continue
+        if entry["_quota_ts"] is None or ts > entry["_quota_ts"]:
+            limits = _json(row.get("rate_limits"))
+            limits = limits if isinstance(limits, dict) else {}
+            entry["_quota_ts"] = ts
+            entry["_limits"] = limits
+            entry["observed_at"] = ts
+            try:
+                entry["windows"] = quota.window_usage(limits, now)
+                entry["remaining_pct"] = quota.remaining_pct(limits, now)
+            except (TypeError, ValueError, AttributeError):
+                entry["windows"], entry["remaining_pct"] = [], None
+    for task in tasks:
+        if task["state"] in {"RUNNING", "VERIFYING"} and task["account"] in merged:
+            merged[task["account"]]["running"] += 1
+
+
+def _switches(data, pid, now):
+    result = []
+    for event in data["events"]:
+        ts = event.get("ts")
+        if event.get("kind") != "account_auto_switched" or not quota.numeric(ts) \
+                or ts < now - _SWITCH_WINDOW_S:
+            continue
+        raw = event.get("detail")
+        try:
+            detail = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(detail, dict):
+            continue
+        reason = detail.get("reason")
+
+        def field(value):
+            return None if value is None else _text(value, 80)
+
+        result.append({"pid": pid, "task_id": field(event.get("task_id")), "ts": ts,
+                       "from": field(detail.get("from")), "to": field(detail.get("to")),
+                       "from_account": field(detail.get("from_account")),
+                       "to_account": field(detail.get("to_account")),
+                       "reason": reason if isinstance(reason, str) and reason in _SWITCH_REASONS
+                       else "other"})
+    return result
+
+
 def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
     now = time.time() if now is None else now
     result = {"generated_at": now, "projects": [], "attention": [], "running": [],
-              "activity": {"done_24h": 0, "per_hour": [0] * 24, "latest": None}, "requests": [], "tasks": []}
+              "activity": {"done_24h": 0, "per_hour": [0] * 24, "latest": None}, "requests": [], "tasks": [],
+              "accounts": [], "switches": []}
     request_ranks = {}
+    merged_accounts = {}
     for root in dict.fromkeys(discover_roots() if roots is None else roots):
         pid = project_id(root)
         path = Path(root)
@@ -223,7 +403,7 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
             shown = "~" + shown[len(home):]
         project = {"pid": pid, "name": path.name, "root": shown, "worktree_of": None,
                    "root_missing": not path.is_dir(), "error": None, "counts": {}, "percent": None, "badge": None,
-                   "branch": None, "updated_at": None}
+                   "branch": None, "updated_at": None, "fallback": None}
         try:
             data = _read(root)
         except FileNotFoundError:
@@ -234,6 +414,10 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
             continue
         result["projects"].append(project)
         tasks = _tasks(data)
+        loaded = _config(root)
+        project["fallback"] = _fallback(loaded[1])
+        _merge_accounts(merged_accounts, pid, data, tasks, loaded[1], now)
+        result["switches"].extend(_switches(data, pid, now))
         result["tasks"].extend({"pid": pid,
                                 "reason": pause_reason(t["failure"]) if t["state"] == "PAUSED" else None,
                                 **{k: t[k] for k in (
@@ -279,7 +463,7 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
                 q = max(quotas, key=lambda q: q.get("observed_at", 0), default={})
                 result["running"].append({"pid": pid, "task_id": task["task_id"], "stage": task["stage"],
                                           "agent": task["agent"], "started_at": latest.get("started_at"),
-                                          "timeout_s": _timeout(root, task["agent"]),
+                                          "timeout_s": _timeout_in(loaded, task["agent"]),
                                           "quota_left": quota.remaining_pct(_json(q.get("rate_limits")), now)})
         attention.sort(key=lambda a: (*_rank(a["kind"], a["reason"]), a["since"]))
         result["attention"].extend(attention)
@@ -312,6 +496,13 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
     result["requests"] = result["requests"][:50]
     result["tasks"].sort(key=lambda t: t["updated_at"], reverse=True)
     result["tasks"] = result["tasks"][:1000]
+    for entry in merged_accounts.values():
+        _apply_effective_state(entry, now)
+    result["accounts"] = sorted(
+        ({k: v for k, v in entry.items() if not k.startswith("_")} for entry in merged_accounts.values()),
+        key=lambda a: (_ACCOUNT_STATES.index(a["state"]), a["name"]))
+    result["switches"].sort(key=lambda s: s["ts"], reverse=True)
+    result["switches"] = result["switches"][:20]
     return result
 
 
