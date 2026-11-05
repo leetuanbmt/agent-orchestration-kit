@@ -93,6 +93,8 @@ worktree means they are executed one at a time (or in separate worktrees).
 
 ### PR-2: Close the evidence window (P0)
 
+Status: done in claude/charming-heisenberg-n2y2f6 (3101afd), 2026-11-05
+
 - **Objective** Everything that runs in the worktree during an attempt (the agent, processes it
   left, verification) is covered by the scope check.
 - **Problems** SEC-01 (fixes 1-2), SEC-04.
@@ -123,6 +125,8 @@ worktree means they are executed one at a time (or in separate worktrees).
 
 ### PR-4: Contain protected-path writes (P1)
 
+Status: done in claude/charming-heisenberg-n2y2f6 (98ff857), 2026-11-05
+
 - **Objective** A run that touched a protected path stops for a human, and tampered config is
   visible before it is used.
 - **Problems** SEC-02.
@@ -147,6 +151,8 @@ worktree means they are executed one at a time (or in separate worktrees).
 
 ### PR-5: Patch truncation and evidence schema (P1)
 
+Status: done in claude/charming-heisenberg-n2y2f6 (c49f21c), 2026-11-05
+
 - **Objective** Reviewers know exactly what they did not see.
 - **Problems** SEC-06; architecture weakness 3.
 - **Modules** `bridge/review.py` (`diff`), `bridge/executor.py` (`build_review_prompt`),
@@ -164,6 +170,8 @@ worktree means they are executed one at a time (or in separate worktrees).
 - **Risk / effort** Low, S.
 
 ### PR-6: Bind approval to verified content (P1)
+
+Status: done in claude/charming-heisenberg-n2y2f6 (1e4ccb8), 2026-11-05
 
 - **Objective** A task can only be approved or closed while its changed files still have the
   content that was verified.
@@ -183,6 +191,8 @@ worktree means they are executed one at a time (or in separate worktrees).
 - **Risk / effort** Medium (approval path), M.
 
 ### PR-7: Ignored-file evidence (P1)
+
+Status: done in claude/charming-heisenberg-n2y2f6 (2428763), 2026-11-05
 
 - **Objective** Changes under git-ignored paths are visible to reviewers and, outside caches,
   fail the scope check.
@@ -205,6 +215,8 @@ worktree means they are executed one at a time (or in separate worktrees).
 
 ### PR-9: Sandboxed verification, opt-in (P2)
 
+Status: done in claude/charming-heisenberg-n2y2f6 (9cc0b3a), 2026-11-05
+
 - **Objective** Executor-authored code no longer runs with full user privileges during
   verification.
 - **Problems** SEC-01 fix 3, SEC-07 (real control), SEC-08 (closes the bridge-started path).
@@ -222,6 +234,8 @@ worktree means they are executed one at a time (or in separate worktrees).
 - **Risk / effort** Medium (depends on third-party CLI), M.
 
 ### PR-10: Input hardening (P2)
+
+Status: done in claude/charming-heisenberg-n2y2f6 (9a4aa5b), 2026-11-05
 
 - **Problems** SEC-07 (argv[0] path), SEC-09, SEC-10.
 - **Modules** `bridge/review.py` (`parse_command`), `bridge/config.py` (`env_deny` default),
@@ -265,6 +279,8 @@ Status: done in tuanvm/audit-pr-1-review-record, 2026-11-04
 
 ### PR-3: Fail-closed evidence (P1)
 
+Status: done in claude/charming-heisenberg-n2y2f6 (09d6574), 2026-11-05
+
 - **Problems** REL-01.
 - **Modules** `bridge/review.py` (`_git` → raises `EvidenceError` from snapshot/diff paths),
   `bridge/service.py` (`_run_inner`: `EvidenceError` → `PAUSED`, failure `EVIDENCE_ERROR: …`,
@@ -277,6 +293,8 @@ Status: done in tuanvm/audit-pr-1-review-record, 2026-11-04
 - **Risk / effort** Low, S.
 
 ### PR-8: Recoverable verification (P2)
+
+Status: done in claude/charming-heisenberg-n2y2f6 (8cc5f9b), 2026-11-05
 
 - **Problems** REL-02, recovery half. The cancel half landed in `950113b`: `run_verification`
   already polls `should_cancel`, so `test_rel02` already fails. Do not redo it, and do not stop
@@ -292,6 +310,8 @@ Status: done in tuanvm/audit-pr-1-review-record, 2026-11-04
 - **Risk / effort** Low, S.
 
 ### PR-13: Recovery details (P3)
+
+Status: done in claude/charming-heisenberg-n2y2f6 (fd2f52c), 2026-11-05
 
 - **Problems** REL-04, REL-05, REL-07.
 - **Design** `tasks.runner_started` column compared in `recover`; rescue transition retried with
@@ -318,6 +338,8 @@ parallel-worktrees work, where routing per worktree gives it a concrete reason.
 
 ### PR-11: Trust-model documentation (P2)
 
+Status: done in claude/charming-heisenberg-n2y2f6 (89e8341), 2026-11-05
+
 - **Problems** SEC-08 and the undocumented consequences of SEC-01/SEC-02.
 - **Modules** `README.md`, `README.vi.md` (kept in sync), `docs/REPORT.md`, `.claude/rules/security.md`.
 - **Content** Verification is trusted execution of executor-written code; human approval guards
@@ -326,6 +348,8 @@ parallel-worktrees work, where routing per worktree gives it a concrete reason.
 - **Acceptance** Every claim maps to code or a probe; no claim of a check that does not run.
 
 ### PR-12: CI (P2)
+
+Status: done in claude/charming-heisenberg-n2y2f6 (7fad951), 2026-11-05
 
 - **Design** One workflow running `uv sync` and `scripts/check.sh` on `macos-latest` and
   `ubuntu-latest`, no secrets, real-CLI smokes stay opt-in.

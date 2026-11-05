@@ -3,26 +3,80 @@
 Date: 2026-11-05. Build under test: `tuanvm/arch-p1-p2-refactor` at `19d3873` (`main` plus the
 Track B refactor in PR #50). Test cases and per-case results: [e2e-test-cases.md](e2e-test-cases.md).
 
-## Status after fixes
+## Status after fixes (go-live check)
 
-Five of the six defects are fixed in PR #51; each fix is its own commit, and its E2E test has
-lost its `xfail` marker and passes. `scripts/check.sh --e2e` on that branch: 595 passed, 5 skipped,
-1 xfailed. The one open defect is QA-BUG-001 (audit SEC-01), which is tracked as PR-9 in
-`docs/audits/implementation-plan.md` and starts with a sandbox probe. With QA-BUG-006 fixed, the
-verdict below applies only to untrusted verification commands.
+Final state of branch `claude/charming-heisenberg-n2y2f6` (PR #56), 2026-11-05. Every finding of
+this QA run and every open finding of the audit (`docs/audits/`) is fixed. Each fix is one commit
+with its own regression tests.
 
-| ID | Status |
+Evidence from the final run (container, Linux, Landlock ABI 7):
+
+| Check | Result |
 |---|---|
-| QA-BUG-006 | Fixed: Read denies for Claude logins, `.env*`/key files and every account home |
-| QA-BUG-002 | Fixed: `usage`, `account-list` and `health` use the start gate's reserve |
-| QA-BUG-003 | Fixed: one-line errors for unreadable spec files; unquoted unknown-task message |
-| QA-BUG-004 | Fixed: unquoted shell operators refused in verification commands |
-| QA-BUG-005 | Fixed: filters and chips wrap; only the table scrolls on narrow screens |
-| QA-BUG-001 | Open (PR-9) |
+| `scripts/check.sh --e2e` (unit, integration, E2E with Chromium) | 635 passed, 0 failed, 0 xfailed; 5 skipped (real-CLI smokes that need real accounts) |
+| E2E suite alone (`tests/qa`) | 63 cases, 88 runs, 88 pass ([e2e-test-cases.md](e2e-test-cases.md)) |
+| Audit reproductions (`docs/audits/evidence/test_audit_repro.py`) | 10 of 11 now fail at the line that asserted the defect, which means the defects are gone. `test_rel01` still passes only because it replaces `review._git` with a stub returning `""`, bypassing the fix; KIT-UNIT-048 and KIT-REL-EVID-001/002 make real git exit 128 and show the fix |
+| `ruff check --select F bridge` | clean apart from an unused `install` import in `progress.py` that predates this work and that tests reach through `progress.install` |
+
+### QA findings
+
+| ID | Severity | Status | Fix |
+|---|---|---|---|
+| QA-BUG-001 | High | Fixed | `9cc0b3a`: verification confined with Landlock (`workflow.verify_sandbox`) |
+| QA-BUG-006 | High | Fixed | `e88a2cb`: Claude agents denied reads of Claude logins, account homes and `.env*`/keys |
+| QA-BUG-009 | High | Fixed (found during the fixes) | `3efeeb1`: an interrupted attempt that left out-of-scope changes blocks the task |
+| QA-BUG-008 | High | Fixed (found during the fixes) | `a590f07`: git hooks and `.git/config` are in the snapshot |
+| QA-BUG-002 | Medium | Fixed | `0181ccc`: `usage`, `account-list` and `health` use the start gate's reserve |
+| QA-BUG-005 | Medium | Fixed | `2c66bb1`: dashboard fits a phone screen |
+| QA-BUG-007 | Medium | Fixed (found during the fixes) | `06d1c4c`: race-free schema migration when processes open a store at once |
+| QA-BUG-003 | Low | Fixed | `62e11a8`: one-line errors for unreadable spec files |
+| QA-BUG-004 | Low | Fixed | `d434f9e`: shell operators refused in verification commands |
+
+QA-BUG-007 to 009 were found during this work. 007 appeared as the E2E parallel-create test
+failing 2 of 3 runs. 008 and 009 came out of reviewing the verification and recovery paths; 009
+was reproduced first: a quota pause, then a resume, closed a task DONE with an out-of-scope file
+in place.
+
+### Audit findings
+
+| Finding | Status | Commit |
+|---|---|---|
+| SEC-01 (High) | Fixed | `3101afd` (diff after verification, process groups ended), `9cc0b3a` (Landlock) |
+| SEC-02 (High) | Fixed | `98ff857` |
+| SEC-03 | Fixed | `2428763` |
+| SEC-04 | Fixed | `3101afd` |
+| SEC-05 | Fixed | `1e4ccb8` |
+| SEC-06 | Fixed | `c49f21c` |
+| SEC-07, SEC-09, SEC-10 | Fixed | `9a4aa5b` |
+| SEC-08 | Mitigated and documented | `89e8341`: the Python API refuses inside agents; the trust model says human-only steps rely on agent confinement, since everything runs as one user |
+| REL-01 | Fixed | `09d6574` |
+| REL-02 | Fixed | cancel half in `950113b`; recovery half `8cc5f9b` |
+| REL-03, REL-06 | Fixed earlier | PR #42 |
+| REL-04, REL-05, REL-07 | Fixed | `fd2f52c` |
+| CI (PR-12) | Added | `7fad951`: needs a human review (sensitive path) |
+
+### Production readiness, re-evaluated (proposal for `docs/audits/executive-summary.md`)
+
+| Use | Verdict |
+|---|---|
+| A developer orchestrating trusted agents on their own repositories, reading diffs before approving | **Go** |
+| Containing a misled or prompt-injected executor (untrusted repositories, issue text or dependencies as input) | **Go on Linux with Landlock** (`verify_sandbox: auto` or `strict`), with Codex as the executor. On macOS and Windows checks run unconfined unless `strict` refuses them; keep a human reviewer there |
+| Gates-only workflows (no reviewer) closing tasks automatically | **Go**: verification-time writes, ignored files, interrupted attempts and protected paths now gate without a reviewer |
+
+### Residual risks (accepted, documented)
+
+- Everything runs as one user: the Python API guard and `.claude/settings.json` denies are process
+  discipline, not OS boundaries (SEC-08).
+- Confined checks can still read your files, and under `auto` they keep the network (`strict`
+  cuts TCP).
+- Not verified here: the real Codex, Claude, opencode and agy CLIs. Their opt-in smoke tests
+  (`CODEX_SMOKE=1` and so on) need real accounts and were skipped. One manual probe is worth doing
+  on a real Claude CLI: the new `Read(//…)` denies for account homes. CI on macOS runs in GitHub
+  Actions once PR #56 is pushed.
 
 The findings below are as found on 2026-11-05, before the fixes.
 
-## Verdict
+## Verdict at the first QA run (before the fixes)
 
 **NO-GO** for multi-account setups with Claude CLI agents, and for running tasks or plans whose
 verification commands come from an untrusted source. **Conditional GO** for single-user use on
