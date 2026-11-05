@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `agent-bridge web` requires a per-launch secret token on every API request; the printed dashboard URL carries the key.
 
 ### Added
+- `strategy: quota` for a role in `.ai/orchestrator.yaml`: an unpinned task goes to the eligible agent whose account has the most remaining quota; unknown quota ranks last and ties keep list order. It applies only when a task is first routed, cannot be combined with `default`, and `agent_routed` records the ranked candidates. Roles without it behave as before.
+- `health` returns `problems` (each cause of NOT OK, with a code, message and fix) and `warnings` (accounts marked QUOTA or AUTH, accounts over a limit, unconfined verification, legacy storage); the table view prints their fixes. `ok` is computed as before.
 - `agent-bridge --help` gives every subcommand a one-line help, keeps the usage line short (`<command>`) and ends with a "getting started" list; `agent-bridge init` ends with the next steps (`health`, trust the folder in `claude`, the dashboard) instead of a single hint. The `updated <file>` lines are unchanged.
 - `CONTRIBUTING.md` with setup, checks and conventions. The README (English and Vietnamese) gains a CI badge, a comparison with a single self-reporting agent, typical uses, an architecture diagram of the real components, an FAQ and a roadmap that lists only planned or considered work.
 - CI (`.github/workflows/ci.yml`): `scripts/check.sh` on Ubuntu and macOS, and the end-to-end suite with Chromium on Ubuntu; read-only token, no secrets (audit PR-12).
@@ -48,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   meaningful progress events on stderr.
 
 ### Changed
+- `bridge_run_workflow` no longer stops `WAITING` when the next task's account slot is held by another bridge process: it retries with backoff (5 s doubling to 60 s) for up to `routing.slot_wait_s` (default 1800 s) and lists the waiting tasks in `detail.waiting_for_slot`; shutdown and cancel end the wait within about a second. Set `routing.slot_wait_s: 0` for the old behaviour.
 - A read-only task can no longer run beside another task in the same worktree; parallel work needs separate git worktrees, as the README already says (audit REL-07).
 
 - README and README.vi restructured and checked against the code; the full configuration and

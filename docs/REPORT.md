@@ -112,7 +112,7 @@ workflow stages; without it `orchestrator.legacy()` rebuilds the 0.1 setup from 
 | Agent registry | `agents.<id>`: adapter, account, model, capabilities, `allow_write`, `allow_bash`, timeout, enabled |
 | Provider adapters | `Adapter` base (process group, stdin prompt, watchdog, recursion marker) with `CodexAdapter` and `ClaudeAdapter`; `client` marks the MCP caller |
 | Role registry | built-in planner / executor / reviewer (+ custom names); `requires` read/write; executor must write and cannot be the client |
-| Routing | pin by agent or account; else first eligible agent in role order (`agent_routed`); `explicit` strategy; affinity after the first run; `max_concurrency` per account (flock slots + state check); opt-in quota fallback across agents; human `reassign` by agent or account |
+| Routing | pin by agent or account; else first eligible agent in role order (`agent_routed`); `explicit` and opt-in `quota` (most remaining quota) strategies; workflows wait for a slot busy in another bridge (`routing.slot_wait_s`); affinity after the first run; `max_concurrency` per account (flock slots + state check); opt-in quota fallback across agents; human `reassign` by agent or account |
 | Workflow | stages `plan → execute → test → review`; reviewer agent read-only with a review schema, applied as actor `agent`; no review stage → bridge approves verified work; planner agent → validated tasks → sequential driver ending DONE / INCOMPLETE / WAITING |
 | State | new columns `agent`, `workflow_id`; tables `workflows`, `account_quota` (Claude `rate_limit_event` snapshots); migration adds them to old databases |
 

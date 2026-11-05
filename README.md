@@ -85,6 +85,11 @@ a repeatable, auditable delegation loop in one repository, without a hosted serv
   used and when it resets.
 - **Quota failover.** A quota pause does not spend an attempt. With `routing.quota_fallback`
   enabled, the bridge moves the task to the next eligible agent (never on an AUTH failure).
+- **Quota-aware routing.** `strategy: quota` on a role sends each new task to the eligible agent
+  whose account has the most quota left; an account with unknown quota ranks last.
+- **Waiting for a busy slot.** When a workflow's next task finds its account slots held by
+  another bridge process, the workflow retries with backoff for up to `routing.slot_wait_s`
+  (default 30 minutes) instead of stopping.
 
 **Verification and safety**
 
@@ -315,9 +320,11 @@ Full reference: every key and default, accounts, quota, quota fallback and state
 - `planner` and `reviewer` need only read access; `client` means you, through
   `bridge_review_task`.
 - **Routing.** A task pinned with `agent` or `account` runs there. Otherwise the bridge picks
-  the role's `default`, then the first eligible agent in role order, when the task first starts.
-  An account whose slots are all held by other bridge processes on the machine is not eligible.
-  The task keeps that agent and session for retries.
+  the role's `default`, then the first eligible agent in role order, when the task first starts;
+  with `strategy: quota` it picks the eligible agent whose account has the most quota left.
+  An account whose slots are all held by other bridge processes on the machine is not eligible;
+  a workflow then waits up to `routing.slot_wait_s` for a slot. The task keeps that agent and
+  session for retries.
 
 ## Workflow lifecycle
 
@@ -476,8 +483,8 @@ verification sandbox), not on a permission check inside the bridge.
 - Claude quota is known only after the account's first run through the bridge; Codex quota is a
   snapshot from the latest session, not a live query.
 - The Codex sandbox behaviour was verified on macOS only.
-- Not supported: opencode or agy as executors, routing strategies beyond "first eligible",
-  multi-reviewer voting, and stages for custom roles. Another CLI needs a new `Adapter` subclass.
+- Not supported: opencode or agy as executors, multi-reviewer voting, and stages for custom
+  roles. Another CLI needs a new `Adapter` subclass.
 
 More detail: [docs/REPORT.md](docs/REPORT.md) (verified CLI versions, probes and the full
 limitation list).
@@ -558,14 +565,14 @@ and performs no human action. It listens on `127.0.0.1` only and rejects other `
 | `not a git repository` or `Target must be a git work tree` | The bridge only runs inside a git repository; run `git init` or change directory. |
 | `claude mcp list` shows `agent-bridge: ⏸ Pending approval` | Open `claude` in the folder once and trust it. |
 | `config-check` error | The message names the field; fix `.ai/orchestrator.yaml`. |
-| `health` reports NOT OK | An adapter CLI is missing or not logged in, or a protected file differs from `HEAD` (`protected_dirty`); a human logs in or reviews that file. |
+| `health` reports NOT OK | An adapter CLI is missing or not logged in, or a protected file differs from `HEAD` (`protected_dirty`). `health` lists each cause with its fix under `problems`, and account QUOTA/AUTH marks under `warnings`; a human logs in or reviews that file. |
 | `no eligible executor agent (…)` | Every executor is disabled, busy or unavailable; the reasons are listed per agent. |
 | Task `PAUSED` with `QUOTA` or `AUTH` | Wait for the quota window to reset, or fix the login; then `agent-bridge account-clear <name>` if the mark remains, and resume. With quota fallback enabled, resume may move the task to another account. |
 | Task `PAUSED` with `INTERRUPTED` | The runner was stopped by a signal or died; `bridge_resume_task` continues the session, `cancel` drops it. |
 | `agent_review_failed` event | The reviewer agent errored; the task waits in `REVIEW` for `bridge_review_task`. |
 | Workflow `WAITING` | `detail.waiting` and the task states say what needs attention; run `bridge_run_workflow` again afterwards. |
 | `ConflictError … already writing` | One writer per worktree; wait, or use another worktree. |
-| `account … busy in another bridge process` | The account's concurrency slots are in use elsewhere. Unpinned tasks route around it; a task pinned to it stays `READY` with no attempt spent, so start it again once a slot is free. |
+| `account … busy in another bridge process` | The account's concurrency slots are in use elsewhere. Unpinned tasks route around it, and a workflow waits up to `routing.slot_wait_s` (default 1800 s) for a slot; a task pinned to it stays `READY` with no attempt spent, so start it again once a slot is free. |
 | `REWORK` with `outside allowed paths` | The executor changed files outside the task; read the patch and rework. |
 | `health` warns about legacy storage | Migrate with `agent-bridge storage status`, then `storage migrate --apply` ([details](docs/configuration.md#migrating-and-maintaining-state)). |
 
@@ -602,9 +609,9 @@ Items below are not implemented. They are listed so users know what to expect.
 
 - **Planned:** parallel writing tasks, each in its own git worktree, with results combined on a
   branch a human merges ([draft plan](docs/plans/parallel-worktrees.md)).
-- **Under consideration:** routing strategies beyond "first eligible"; multi-reviewer voting;
-  stages for custom roles; feeding CI failures and pull-request review comments back to the
-  executor that owns the task; notifications when a task needs a human.
+- **Under consideration:** multi-reviewer voting; stages for custom roles; feeding CI failures
+  and pull-request review comments back to the executor that owns the task; notifications when a
+  task needs a human.
 
 Ideas and votes are welcome in [GitHub Issues](https://github.com/leetuanbmt/agent-orchestration-kit/issues).
 

@@ -55,7 +55,8 @@ workflow:
 | `version` | Must be `1`. |
 | `accounts.<id>` | `provider`: `openai`, `anthropic`, `google` or `opencode`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode accepts no `home`). `max_concurrency`: 1–8, default 1. `limits`: optional per-account limits, see [Per-account limits](#per-account-limits-opt-in). |
 | `agents.<id>` | `adapter`: `codex-cli`, `claude-cli`, `client`, `opencode-cli` or `agy-cli`. `account` (required except for `client`), optional `provider` (must match the adapter), `model`, `capabilities` (subset of `[read, write]`), `allow_write` (default true for `codex-cli`, false otherwise), `allow_bash` (`claude-cli` only), `timeout_s` (≥ 30), `enabled` (default true). |
-| `roles.<name>` | An agent id, or `{agents: [...], default: <agent>, strategy: ordered \| explicit, requires: read \| write}`. `default` is tried first; the other agents are fallbacks in list order. `default` cannot be combined with `strategy: explicit`. |
+| `roles.<name>` | An agent id, or `{agents: [...], default: <agent>, strategy: ordered \| explicit \| quota, requires: read \| write}`. `default` is tried first; the other agents are fallbacks in list order. `quota` picks the eligible agent whose account has the most remaining quota (unknown quota last, ties in list order). `default` cannot be combined with `strategy: explicit` or `quota`. |
+| `routing.slot_wait_s` | 0–86400, default 1800. How long `bridge_run_workflow` keeps retrying, with backoff from 5 s to 60 s, a task whose account slots (or the worktree's writer slot) are held by another bridge process. `0` ends the workflow `WAITING` at once, as before. |
 | `routing.quota_fallback` | `enabled` (default false), `min_remaining_pct` (default 10), `agents` (candidates in order; default: the executor role's agents), `max_switches` (1–20, default 3), `keep_sessions` (default false). See [Per-account limits](#per-account-limits-opt-in). |
 | `workflow` | `stages`: ordered subset of `plan, execute, test, review`, default `[execute, test, review]`; must include `execute` and at least one of `test` / `review`. `max_rework`: 0–4, default 2. `verify_sandbox`: `auto` (default), `strict` or `none`, and `verify_writable`: extra directories checks may write; see [Verification sandbox](#verification-sandbox). |
 | `security` | `project_isolation` and `human_approval_for_sensitive_actions`. Both are fixed to `true`; the keys exist only to make the policy explicit. |
@@ -95,8 +96,15 @@ Role rules:
   under `max_concurrency`, counting slots held by other bridge processes on the machine. The
   choice is logged as `agent_routed`. If another process takes the last slot before the run
   starts, the choice is undone (`agent_unrouted`) and no attempt is spent.
+- With `strategy: quota` the bridge ranks every eligible agent by its account's remaining quota
+  (the latest Codex rollout, or the limits a CLI reported on its last run) and picks the highest;
+  unknown quota ranks after every known value. `agent_routed` then also records `remaining_pct`
+  and the ranked `candidates`.
 - The task then keeps that agent and its session for retries and resumes.
 - `strategy: explicit` requires every task to name its agent.
+- In a workflow, a task whose only usable accounts are busy in another bridge process is retried
+  with backoff until `routing.slot_wait_s` passes (`slot_wait`, then `slot_wait_expired` events);
+  the workflow stays `RUNNING` and lists those tasks in `detail.waiting_for_slot`.
 
 ### Stages
 
