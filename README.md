@@ -548,11 +548,28 @@ CLIs, a fresh `HOME`, a demo project). Regenerate them with
 8765; `--port 0` picks a free one; Ctrl+C stops it). The printed URL carries a per-launch secret
 token that every API request needs; do not share it.
 
-It covers every project agent-bridge knows on this machine and their git worktrees: pending
-approvals with the exact command, blocked, failed and paused tasks, tasks waiting for review,
-running tasks with elapsed time versus timeout, overall progress, activity over the last 24 hours
-and a requests table with a detail drawer (no patch). The interface switches between Vietnamese
-and English.
+<img alt="Web dashboard: attention counters, the queue of tasks waiting on you, and the task table" src="docs/images/web-tasks-light.png" width="900">
+
+It covers every project agent-bridge knows on this machine and their git worktrees:
+
+- **Summary and queue.** Counters for tasks that need you, wait for review, run, and finished in
+  the last 24 hours, then the tasks waiting on you in the bridge's priority order, each with the
+  command to copy. `[` and `]` open the previous or next one.
+- **Tasks, Board and Projects.** A table filtered by search, project, worktree and status; a board
+  with Needs you, In review, Running and Queued lanes (a running card shows elapsed time against
+  its timeout) and finished work folded underneath; and counts per project and worktree.
+- **Task drawer.** Status, a lifecycle stepper, the next step with its command, verification
+  checks as pass or fail, scope violations, changed files, the agent's summary, reviews, attempts
+  and the live attempt log; raw fields sit under *Technical details*. The selection is part of the
+  URL, so a link reopens it.
+- **Readable anywhere.** Light, dark or the system theme; English or Vietnamese; on a phone each
+  task becomes a card. A state is shown by a symbol and a label, never by color alone.
+- **Live.** It refreshes every 3 s. When the bridge cannot be reached it says so and shows the
+  time of the last data it received.
+
+<img alt="Board view in the dark theme" src="docs/images/web-board-dark.png" width="900">
+
+<img alt="Task drawer with the lifecycle stepper, next step and readable final summary" src="docs/images/web-drawer-light.png" width="640"> <img alt="Phone layout with view buttons in one row" src="docs/images/web-mobile-light.png" width="240">
 
 The web dashboard is read-only: it opens each `bridge.db` with SQLite `mode=ro`, starts no agent
 and performs no human action. It listens on `127.0.0.1` only and rejects other `Host` headers.
