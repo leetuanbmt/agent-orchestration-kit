@@ -180,7 +180,9 @@ class RoleConfig(BaseModel):
     agents: list[str] = Field(min_length=1)
     # ordered: first eligible agent in list order (fallback when one is busy or unavailable).
     # explicit: every task must name one of `agents`.
-    strategy: Literal["ordered", "explicit"] = "ordered"
+    # quota: among eligible agents, the one whose account has the most remaining quota; unknown
+    # quota ranks after every known value; ties keep list order.
+    strategy: Literal["ordered", "explicit", "quota"] = "ordered"
     requires: Capability | None = None
     # The agent an unpinned task tries first; the rest of `agents` are its fallbacks in order.
     default: str | None = None
@@ -191,6 +193,9 @@ class RoleConfig(BaseModel):
             if self.strategy == "explicit":
                 raise ValueError("default needs strategy ordered: explicit makes every task "
                                  "name its agent")
+            if self.strategy == "quota":
+                raise ValueError("default needs strategy ordered: quota picks the agent whose "
+                                 "account has the most remaining quota")
             self.agents = [self.default, *(a for a in self.agents if a != self.default)]
         return self
 
