@@ -41,7 +41,7 @@ Details: `.claude/rules/` (loaded automatically). Workflow: the `agent-orchestra
 
 ```bash
 uv sync                           # install (Python 3.12, project-local .venv)
-scripts/check.sh                  # tests; --with-health also checks the agent CLIs
+scripts/check.sh                  # tests; --with-health also checks the agent CLIs, --e2e adds tests/qa
 uv run agent-bridge config-check  # validate .ai/orchestrator.yaml (or the legacy config)
 uv run agent-bridge agents        # agents, roles and availability
 uv run agent-bridge health        # adapters, quota per account, task counts
