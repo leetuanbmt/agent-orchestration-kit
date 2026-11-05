@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import os
+import random
 import shlex
 import shutil
 import sqlite3
@@ -41,6 +42,11 @@ from .state import ConflictError, LimitExceeded, Store, overview
 REBINDABLE = {State.READY, State.REWORK, State.FAILED, State.PAUSED}
 # How long cancel waits for the runner to stop: one poll plus the agent's TERM and KILL grace.
 CANCEL_WAIT_S = 15
+# A workflow task whose account (or worktree) slot is held by another bridge process retries
+# after this delay, doubling up to the maximum plus up to 1 s of jitter, until
+# routing.slot_wait_s has passed.
+SLOT_WAIT_FIRST_S = 5.0
+SLOT_WAIT_MAX_S = 60.0
 
 
 def _alive(pid: int | None) -> bool:
@@ -844,20 +850,85 @@ class Bridge:
     async def _drive(self, wid: str) -> None:
         # ponytail: tasks run one at a time; one worktree has a single writer anyway.
         waiting: dict[str, str] = {}
+        # Tasks waiting for a slot another bridge process holds: task id -> deadline and next
+        # try (monotonic), current delay, reason, and the deadline as wall-clock time.
+        slots: dict[str, dict[str, Any]] = {}
+        slot_wait_s = self.orch.routing.slot_wait_s
+        shown = False  # the workflow detail lists waiting_for_slot
+
+        def slot_busy(name: str, spec: dict[str, Any]) -> bool:
+            """Executor `name` can take the task once a slot frees up (or already can)."""
+            if self.gate._unscopable(self.orch.agents[name], spec):
+                return False
+            why = self.gate._unavailable(name, "write")
+            return why is None or why.endswith((" busy", " busy in another bridge process"))
+
         try:
             self.store.set_workflow(wid, "RUNNING")
             while not self._stopping:
-                step = next((t for t in self.store.workflow_tasks(wid)
-                             if t["id"] not in waiting and self._actionable(t)), None)
+                tasks = [t for t in self.store.workflow_tasks(wid)
+                         if t["id"] not in waiting and self._actionable(t)]
+                actionable = {t["id"] for t in tasks}
+                for tid in [k for k in slots if k not in actionable]:
+                    del slots[tid]  # it left an actionable state (e.g. cancelled): wait ends
+                if slots or shown:
+                    self.store.set_workflow(wid, "RUNNING", {"waiting_for_slot": [
+                        {"task_id": k, "reason": v["reason"], "until": v["until"]}
+                        for k, v in slots.items()]} if slots else None)
+                    shown = bool(slots)
+                now = time.monotonic()
+                step = next((t for t in tasks
+                             if t["id"] not in slots or slots[t["id"]]["next"] <= now), None)
                 if step is None:
-                    break
+                    if not slots:
+                        break
+                    # Short steps so a stop or a cancel ends the wait within about a second.
+                    pause = min(v["next"] for v in slots.values()) - now
+                    await asyncio.sleep(min(max(pause, 0), 1.0))
+                    continue
+                tid = step["id"]
                 try:
                     if step["state"] == State.READY:
-                        await self.execute_task(step["id"], wait=True, actor=Actor.BRIDGE)
+                        await self.execute_task(tid, wait=True, actor=Actor.BRIDGE)
                     else:
-                        await self.resume_task(step["id"], wait=True, actor=Actor.BRIDGE)
+                        await self.resume_task(tid, wait=True, actor=Actor.BRIDGE)
                 except (ValueError, ConflictError) as e:
-                    waiting[step["id"]] = redact(str(e), 500)
+                    reason = redact(str(e), 500)
+                    # Routing an unbound task refuses with a ValueError when every executor is
+                    # out; that is a slot conflict too while one of them is only busy (or freed
+                    # up since). Other ValueErrors (limits, transitions) are not temporary.
+                    if isinstance(e, ValueError) and not (
+                            self._agent_of(row := self.store.get(tid)) is None
+                            and str(e).startswith("no eligible executor agent")
+                            and any(slot_busy(n, row["spec"])
+                                    for n in self.orch.role("executor").agents)):
+                        slots.pop(tid, None)
+                        waiting[tid] = reason
+                        continue
+                    slot = slots.get(tid)
+                    now = time.monotonic()
+                    if slot_wait_s <= 0:
+                        waiting[tid] = reason
+                    elif slot is None:
+                        slots[tid] = {"deadline": now + slot_wait_s, "delay": SLOT_WAIT_FIRST_S,
+                                      "next": now + SLOT_WAIT_FIRST_S + random.uniform(0, 1),
+                                      "reason": reason, "until": time.time() + slot_wait_s}
+                        self.store.log(tid, Actor.BRIDGE, "slot_wait",
+                                       {"workflow_id": wid, "reason": reason,
+                                        "wait_s": slot_wait_s})
+                    elif now >= slot["deadline"]:
+                        del slots[tid]
+                        self.store.log(tid, Actor.BRIDGE, "slot_wait_expired",
+                                       {"workflow_id": wid, "reason": reason,
+                                        "wait_s": slot_wait_s})
+                        waiting[tid] = reason
+                    else:
+                        delay = min(slot["delay"] * 2, SLOT_WAIT_MAX_S)
+                        # The last try falls on the deadline, so expiry is never late.
+                        slot.update(delay=delay, reason=reason, next=min(
+                            now + delay + random.uniform(0, 1), slot["deadline"]))
+                else:
+                    slots.pop(tid, None)
             states = {t["id"]: t["state"] for t in self.store.workflow_tasks(wid)}
             if states and all(s == State.DONE for s in states.values()):
                 final = "DONE"

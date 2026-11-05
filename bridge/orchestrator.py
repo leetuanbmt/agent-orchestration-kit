@@ -213,6 +213,9 @@ class RoutingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     quota_fallback: QuotaFallback = QuotaFallback()
+    # How long a workflow task waits, with backoff, for an account or worktree slot held by
+    # another bridge process before the workflow ends WAITING; 0 ends it at once.
+    slot_wait_s: float = Field(1800, ge=0, le=86400)
 
 
 class WorkflowConfig(BaseModel):
