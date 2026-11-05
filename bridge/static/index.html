@@ -25,10 +25,12 @@
       </div>
       <div id="statuses" class="pills"></div>
       <p id="task-count"></p>
-      <table aria-labelledby="task-count">
-        <thead><tr id="columns"></tr></thead>
-        <tbody id="task-rows"></tbody>
-      </table>
+      <div class="table-wrap">
+        <table aria-labelledby="task-count">
+          <thead><tr id="columns"></tr></thead>
+          <tbody id="task-rows"></tbody>
+        </table>
+      </div>
       <div id="tasks-empty" class="empty" hidden><p id="empty-message"></p><button id="empty-clear" type="button"></button></div>
     </section>
     <section id="projects-view" hidden><div id="project-cards"></div><p id="projects-empty"></p></section>

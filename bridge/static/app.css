@@ -65,9 +65,14 @@ code { font: 13px ui-monospace, monospace; }
 @media (max-width: 999px) {
   .topbar { gap: 12px; padding: 16px; flex-wrap: wrap; }
   main { padding: 16px; }
-  .filter-bar { min-width: 850px; }
+  /* Filters and chips wrap; only the table scrolls sideways, inside its own box. */
+  .filter-bar { flex-wrap: wrap; }
+  .filter-bar label { flex: 1 1 160px; min-width: 0; }
+  .filter-bar label:first-child { flex-basis: 100%; }
+  select { max-width: none; }
+  #statuses { flex-wrap: wrap; }
+  .table-wrap { overflow-x: auto; }
   table { min-width: 900px; }
-  #statuses { min-width: 750px; }
 }
 button { font: inherit; color: inherit; cursor: pointer; background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; }
 button:hover, tr[data-key]:hover { background: rgba(255,255,255,.06); }

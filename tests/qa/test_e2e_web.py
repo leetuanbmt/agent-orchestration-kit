@@ -151,9 +151,7 @@ def test_web_log(dashboard: Dashboard) -> None:
     assert dashboard.request("GET", f"/api/projects/{dashboard.pid}/tasks/{review}/log?n=x")[0] == 404
 
 
-SCENARIOS = ["load", "drawer", "no_token", "xss", "live", "language", "search", "offline",
-             pytest.param("mobile", marks=pytest.mark.xfail(
-                 strict=True, reason="QA-BUG-005: 541 px horizontal scroll at 375 px width"))]
+SCENARIOS = ["load", "drawer", "no_token", "xss", "live", "language", "search", "offline", "mobile"]
 
 
 # @pt.id QA-E2E-073-web-browser
