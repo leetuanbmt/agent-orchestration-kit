@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import shutil
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -18,6 +20,22 @@ from bridge.progress import project_id
 from tests.qa.conftest import BIN, Sandbox
 
 DRIVER = Path(__file__).parent / "web" / "dashboard.cjs"
+
+
+def _browsers_path() -> str:
+    """Where Playwright keeps its browsers for the real user. Read at import, before the tests
+    swap HOME for a throwaway one (Playwright would then look in that empty home)."""
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return os.environ["PLAYWRIGHT_BROWSERS_PATH"]
+    home = Path.home()
+    if sys.platform == "darwin":
+        return str(home / "Library" / "Caches" / "ms-playwright")
+    if sys.platform == "win32":
+        return str(Path(os.environ.get("LOCALAPPDATA", home)) / "ms-playwright")
+    return str(Path(os.environ.get("XDG_CACHE_HOME", home / ".cache")) / "ms-playwright")
+
+
+BROWSERS = _browsers_path()
 XSS = '<img src=x onerror="window.__xss=1">'
 
 
@@ -63,7 +81,8 @@ class Dashboard:
         path = self.box.base / f"web-{scenario}.json"
         path.write_text(json.dumps(config))
         out = subprocess.run(["node", str(DRIVER), str(path)], capture_output=True, text=True,
-                             timeout=120, env=self.box.env)
+                             timeout=120,
+                             env={**self.box.env, "PLAYWRIGHT_BROWSERS_PATH": BROWSERS})
         lines = [line for line in out.stdout.splitlines() if line.startswith("{")]
         assert lines, out.stderr[-2000:]
         return json.loads(lines[-1])

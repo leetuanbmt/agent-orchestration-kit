@@ -9,7 +9,7 @@ import pytest
 from bridge.executor import ClaudeAdapter, RunRequest
 from bridge.models import Actor, State
 from bridge.state import Store
-from tests.conftest import run, spec
+from tests.conftest import git, run, spec
 from tests.integration.test_accounts_routing import calls
 
 CHECK = spec()["verification_commands"][0]
@@ -167,12 +167,11 @@ def test_config_b(make_orch, fake_codex, fake_claude, monkeypatch, tmp_path, rep
 # @pt.method integration
 # @pt.legacy --setting-sources project (loaded project allow rules and hooks)
 def test_claude_ignores_project_settings(make_orch, fake_codex, fake_claude, monkeypatch, repo):
-    import subprocess
     settings = repo / ".claude" / "settings.json"
     settings.parent.mkdir()
     settings.write_text(json.dumps({"permissions": {"allow": ["Write(./**)", "Bash"]}}))
-    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
-    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "settings"], check=True)
+    git(repo, "add", "-A")  # with a committer identity: CI runners have no global one
+    git(repo, "commit", "-qm", "settings")
     monkeypatch.setenv("FAKE_CLAUDE_WRITE", WRITE + ";notes.txt=stray")
     monkeypatch.setenv("FAKE_CODEX_PLAN", json.dumps([plan_task()]))
     b = make_orch(CONFIG_B)
