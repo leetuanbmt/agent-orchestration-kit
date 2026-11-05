@@ -46,6 +46,36 @@ def remaining_pct(rate_limits: dict, now: float) -> float | None:
     return max(0.0, 100.0 - max(used)) if used else None
 
 
+def effective_account_state(state: dict, quota: dict | str, cooldown_s: float | None,
+                            now: float) -> tuple[dict, str | None]:
+    """Pure: the account state work should see, and why a stored QUOTA mark lapsed.
+
+    A QUOTA mark lapses after `cooldown_s` when no readable window reset lies ahead
+    ("cooldown"), or once a window open at mark time has reset while quota remains ("reset").
+    Returns the stored state and None when it stands."""
+    if state["state"] != "quota" or state.get("updated_at") is None:
+        return state, None
+    lifted = {**state, "state": "available", "last_error": None}
+    if cooldown_s is not None and now - state["updated_at"] >= cooldown_s:
+        windows = ([quota.get(w) for w in ("primary", "secondary")]
+                   if isinstance(quota, dict) else [])
+        resets = [w.get("resets_at") for w in windows if isinstance(w, dict)]
+        if not any(numeric(r) and r > now for r in resets):
+            # No reset time is readable: lift the mark once the cooldown has elapsed.
+            return lifted, "cooldown"
+    if not isinstance(quota, dict):
+        return state, None
+    limits = {window: quota.get(window) for window in ("primary", "secondary")}
+    remaining = remaining_pct(limits, now)
+    if remaining is None or remaining <= 0:
+        return state, None
+    for window in limits.values():
+        reset = window.get("resets_at") if isinstance(window, dict) else None
+        if numeric(reset) and state["updated_at"] < reset <= now:
+            return lifted, "reset"
+    return state, None
+
+
 def read_quota(home: Path, now: float | None = None) -> dict | None:
     sessions = home / "sessions"
     if sessions.is_symlink():

@@ -31,8 +31,8 @@ from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, Tr
 from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AccountLimits, AgentConfig, \
     OrchestratorConfig
 from .orchestrator import load as load_orchestrator
-from .quota import BUDGET_PERIODS, codex_home_for, evaluate_limits, numeric, period_bounds, \
-    read_quota, remaining_pct, run_cost
+from .quota import BUDGET_PERIODS, codex_home_for, effective_account_state, evaluate_limits, \
+    period_bounds, read_quota, remaining_pct, run_cost
 from .review import diff, parse_command, run_verification, scope_violations, snapshot, \
     touches_sensitive
 from .security import hook_settings_error, PathError, process_started, redact, rule_unsafe, validate_pattern
@@ -182,36 +182,32 @@ class Bridge:
                 "observed_at": stored["observed_at"],
                 "primary": limits.get("primary"), "secondary": limits.get("secondary")}
 
-    def _account_state(self, name: str, *, key: str | None) -> dict[str, Any]:
+    def _effective_account_state(
+            self, name: str, *, key: str | None) -> tuple[dict[str, Any], str | None]:
+        """The account state with a lapsed QUOTA mark counted as available; writes nothing."""
         state = self.store.account_state(name, key=key)
-        if state["state"] != "quota" or state.get("updated_at") is None:
-            return state
-        quota = self._account_quota(name)
-        now = time.time()
+        if state["state"] != "quota":
+            return state, None
         configured = self._limits(name)
         cooldown = configured.cooldown_s if configured is not None else None
-        if cooldown is not None and now - state["updated_at"] >= cooldown:
-            windows = ([quota.get(w) for w in ("primary", "secondary")]
-                       if isinstance(quota, dict) else [])
-            resets = [w.get("resets_at") for w in windows if isinstance(w, dict)]
-            if not any(numeric(r) and r > now for r in resets):
-                # No reset time is readable: lift the mark once the cooldown has elapsed.
-                self.store.set_account_state(name, "available", actor=Actor.BRIDGE, key=key)
-                self.store.log(None, Actor.BRIDGE, "account_cooldown_elapsed",
-                               {"name": name, "cooldown_s": cooldown})
-                return self.store.account_state(name, key=key)
-        if not isinstance(quota, dict):
+        return effective_account_state(state, self._account_quota(name), cooldown, time.time())
+
+    def _refresh_account_marks(self, name: str, *, key: str | None) -> dict[str, Any]:
+        """The account state before work starts on it; the only place that stores a lapsed
+        QUOTA mark as available (shared with the other projects using the account)."""
+        state, lifted = self._effective_account_state(name, key=key)
+        if lifted is None:
             return state
-        limits = {window: quota.get(window) for window in ("primary", "secondary")}
-        remaining = remaining_pct(limits, now)
-        if remaining is None or remaining <= 0:
-            return state
-        for window in limits.values():
-            reset = window.get("resets_at") if isinstance(window, dict) else None
-            if numeric(reset) and state["updated_at"] < reset <= now:
-                self.store.set_account_state(name, "available", actor=Actor.BRIDGE, key=key)
-                return self.store.account_state(name, key=key)
-        return state
+        self.store.set_account_state(name, "available", actor=Actor.BRIDGE, key=key)
+        if lifted == "cooldown":
+            limits = self._limits(name)
+            self.store.log(None, Actor.BRIDGE, "account_cooldown_elapsed",
+                           {"name": name, "cooldown_s": limits.cooldown_s if limits else None})
+        return self.store.account_state(name, key=key)
+
+    def _account_state(self, name: str, *, key: str | None) -> dict[str, Any]:
+        """Same as _refresh_account_marks, under the name callers have used so far."""
+        return self._refresh_account_marks(name, key=key)
 
     def _remaining(self, name: str) -> float | None:
         quota = self._account_quota(name)
@@ -337,7 +333,7 @@ class Bridge:
             account = self._account(agent.account or "")
         except ValueError as e:
             return str(e)
-        state = self._account_state(account.name, key=account_key(account))["state"]
+        state = self._refresh_account_marks(account.name, key=account_key(account))["state"]
         if state != "available":
             return f"account {account.name} {state}"
         limits = self._limits(account.name)
@@ -393,7 +389,8 @@ class Bridge:
             account["quota"] = self._account_quota(account["name"])
             if self._limits(account["name"]) is not None:
                 account["limits"] = self._limit_report(account["name"])
-            state = self._account_state(account["name"], key=self._key(account["name"]))
+            state, _ = self._effective_account_state(account["name"],
+                                                     key=self._key(account["name"]))
             account.update(state=state["state"], last_error=state["last_error"],
                            max_concurrency=self._slots(account["name"]),
                            source="registry" if account["name"] in registry else "project")
@@ -503,7 +500,7 @@ class Bridge:
         if current is None:
             return
         account = self.orch.agent(current).account or ""
-        state = self._account_state(account, key=self._key(account))["state"]
+        state = self._refresh_account_marks(account, key=self._key(account))["state"]
         if state == "auth":
             return
         limit = None
@@ -764,7 +761,7 @@ class Bridge:
             return self._summary(row)
         agent = self.orch.agent(self._agent_of(row) or "")
         account = self._account(agent.account or "")
-        availability = self._account_state(account.name, key=account_key(account))
+        availability = self._refresh_account_marks(account.name, key=account_key(account))
         if availability["state"] != "available":
             raise ValueError(
                 f"account {account.name} unavailable ({availability['state']}: "
