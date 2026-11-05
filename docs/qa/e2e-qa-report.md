@@ -5,7 +5,7 @@ Track B refactor in PR #50). Test cases and per-case results: [e2e-test-cases.md
 
 ## Status after fixes (go-live check)
 
-Final state of branch `claude/charming-heisenberg-n2y2f6` (PR #56), 2026-11-05. Every finding of
+Final state after the fixes, 2026-11-05. Every finding of
 this QA run and every open finding of the audit (`docs/audits/`) is fixed. Each fix is one commit
 with its own regression tests.
 
@@ -71,8 +71,8 @@ in place.
   cuts TCP).
 - Not verified here: the real Codex, Claude, opencode and agy CLIs. Their opt-in smoke tests
   (`CODEX_SMOKE=1` and so on) need real accounts and were skipped. One manual probe is worth doing
-  on a real Claude CLI: the new `Read(//…)` denies for account homes. CI on macOS runs in GitHub
-  Actions once PR #56 is pushed.
+  on a real Claude CLI: the new `Read(//…)` denies for account homes. macOS is covered by the
+  GitHub Actions matrix.
 
 The findings below are as found on 2026-11-05, before the fixes.
 
