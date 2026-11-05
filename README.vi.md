@@ -85,6 +85,11 @@ một vòng giao việc lặp lại được và kiểm toán được trong t�
 - **Failover khi hết quota.** Tạm dừng vì quota không tốn attempt. Khi bật
   `routing.quota_fallback`, bridge chuyển task sang agent đủ điều kiện kế tiếp (không bao giờ
   chuyển khi lỗi AUTH).
+- **Định tuyến theo quota.** `strategy: quota` trên một role đưa mỗi task mới tới agent đủ điều
+  kiện có account còn nhiều quota nhất; account chưa biết quota xếp sau cùng.
+- **Chờ slot bận.** Khi task kế tiếp của workflow gặp account đã bị bridge process khác chiếm hết
+  slot, workflow thử lại với backoff trong tối đa `routing.slot_wait_s` (mặc định 30 phút) thay vì
+  dừng lại.
 
 **Kiểm chứng và an toàn**
 
@@ -316,8 +321,10 @@ thái có trong [docs/configuration.md](docs/configuration.md) (tiếng Anh).
   `bridge_review_task`.
 - **Định tuyến.** Task được ghim bằng `agent` hoặc `account` sẽ chạy ở đó. Nếu không, khi task
   khởi động lần đầu, bridge chọn agent `default` của role, rồi đến agent đủ điều kiện đầu tiên
-  theo thứ tự trong role. Account mà các bridge process khác trên máy đã chiếm hết slot thì không
-  đủ điều kiện. Task giữ agent và session đó cho các lần thử lại.
+  theo thứ tự trong role; với `strategy: quota`, bridge chọn agent đủ điều kiện có account còn
+  nhiều quota nhất. Account mà các bridge process khác trên máy đã chiếm hết slot thì không đủ
+  điều kiện; khi đó workflow chờ slot tối đa `routing.slot_wait_s`. Task giữ agent và session đó
+  cho các lần thử lại.
 
 ## Vòng đời workflow
 
@@ -476,9 +483,8 @@ quyền bên trong bridge.
 - Quota của Claude chỉ biết được sau lượt chạy đầu tiên của account qua bridge; quota của Codex là
   snapshot từ session gần nhất, không phải truy vấn trực tiếp.
 - Hành vi sandbox của Codex mới chỉ được kiểm chứng trên macOS.
-- Chưa hỗ trợ: opencode hoặc agy làm executor, chiến lược định tuyến ngoài "agent đủ điều kiện
-  đầu tiên", nhiều reviewer bỏ phiếu, và stage riêng cho role tùy chỉnh. Muốn thêm CLI khác cần
-  viết một lớp con `Adapter` mới.
+- Chưa hỗ trợ: opencode hoặc agy làm executor, nhiều reviewer bỏ phiếu, và stage riêng cho role
+  tùy chỉnh. Muốn thêm CLI khác cần viết một lớp con `Adapter` mới.
 
 Chi tiết hơn: [docs/REPORT.md](docs/REPORT.md) (phiên bản CLI đã kiểm chứng, các probe và danh
 sách giới hạn đầy đủ, tiếng Anh).
@@ -559,14 +565,14 @@ các header `Host` khác.
 | `not a git repository` hoặc `Target must be a git work tree` | Bridge chỉ chạy trong git repository; chạy `git init` hoặc chuyển thư mục. |
 | `claude mcp list` hiện `agent-bridge: ⏸ Pending approval` | Mở `claude` trong thư mục một lần và trust nó. |
 | Lỗi `config-check` | Thông báo nêu đúng field; sửa `.ai/orchestrator.yaml`. |
-| `health` báo NOT OK | Thiếu adapter CLI hoặc CLI chưa đăng nhập, hoặc một file protected khác với `HEAD` (`protected_dirty`); con người đăng nhập hoặc kiểm tra file đó. |
+| `health` báo NOT OK | Thiếu adapter CLI hoặc CLI chưa đăng nhập, hoặc một file protected khác với `HEAD` (`protected_dirty`). `health` liệt kê từng nguyên nhân kèm cách sửa trong `problems`, và dấu QUOTA/AUTH của account trong `warnings`; con người đăng nhập hoặc kiểm tra file đó. |
 | `no eligible executor agent (…)` | Mọi executor đều bị tắt, bận hoặc không sẵn sàng; lý do được liệt kê theo từng agent. |
 | Task `PAUSED` với `QUOTA` hoặc `AUTH` | Chờ cửa sổ quota reset hoặc sửa login; sau đó chạy `agent-bridge account-clear <name>` nếu dấu vẫn còn, rồi resume. Khi bật quota fallback, resume có thể chuyển task sang account khác. |
 | Task `PAUSED` với `INTERRUPTED` | Runner bị dừng bằng tín hiệu hoặc đã chết; `bridge_resume_task` tiếp tục session, `cancel` huỷ nó. |
 | Event `agent_review_failed` | Reviewer agent gặp lỗi; task chờ ở `REVIEW` để gọi `bridge_review_task`. |
 | Workflow `WAITING` | `detail.waiting` và trạng thái task cho biết cần xử lý gì; xử lý xong thì chạy lại `bridge_run_workflow`. |
 | `ConflictError … already writing` | Mỗi worktree chỉ một tiến trình ghi; chờ, hoặc dùng worktree khác. |
-| `account … busy in another bridge process` | Slot chạy song song của account đang được dùng ở nơi khác. Task không ghim sẽ được định tuyến sang agent khác; task ghim vào account này vẫn ở `READY` và không mất attempt, nên chạy lại khi có slot trống. |
+| `account … busy in another bridge process` | Slot chạy song song của account đang được dùng ở nơi khác. Task không ghim sẽ được định tuyến sang agent khác, và workflow chờ slot tối đa `routing.slot_wait_s` (mặc định 1800 s); task ghim vào account này vẫn ở `READY` và không mất attempt, nên chạy lại khi có slot trống. |
 | `REWORK` với `outside allowed paths` | Executor sửa file ngoài phạm vi task; đọc patch rồi yêu cầu rework. |
 | `health` cảnh báo storage legacy | Migrate bằng `agent-bridge storage status`, rồi `storage migrate --apply` ([chi tiết](docs/configuration.md#migrating-and-maintaining-state)). |
 
@@ -602,9 +608,8 @@ Các mục dưới đây chưa được triển khai. Chúng được liệt kê
 
 - **Đã lên kế hoạch:** task ghi song song, mỗi task trong một git worktree riêng, kết quả gộp vào
   một branch để con người merge ([bản kế hoạch nháp](docs/plans/parallel-worktrees.md), tiếng Anh).
-- **Đang cân nhắc:** chiến lược định tuyến ngoài "agent đủ điều kiện đầu tiên"; nhiều reviewer
-  bỏ phiếu; stage cho role tùy chỉnh; đưa lỗi CI và comment review của pull request về lại executor
-  phụ trách task; thông báo khi task cần con người.
+- **Đang cân nhắc:** nhiều reviewer bỏ phiếu; stage cho role tùy chỉnh; đưa lỗi CI và comment
+  review của pull request về lại executor phụ trách task; thông báo khi task cần con người.
 
 Ý tưởng và bình chọn xin gửi qua [GitHub Issues](https://github.com/leetuanbmt/agent-orchestration-kit/issues).
 
