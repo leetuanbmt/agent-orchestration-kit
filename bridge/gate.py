@@ -97,6 +97,12 @@ class AccountGate:
         return {**evaluate_limits(self._limits(name), self._rate_limits(name), spend, now,
                                   reserve), "spend": spend}
 
+    def _next_run_reserve(self, name: str) -> float:
+        """What the next run on `name` would reserve against its budget (0 without a budget).
+        Routing, the start gate and every view judge the account with it, so they agree."""
+        limits = self._limits(name)
+        return limits.reserve_usd if limits is not None and limits.budget_usd else 0.0
+
     def _limit_report(self, name: str, reserve: float = 0.0) -> dict[str, Any]:
         """Limit checks with spend for routing and listings, reused for LIMIT_REPORT_TTL_S
         unless this process wrote the ledger or quota meanwhile. Not the start gate: _reserve."""
@@ -200,8 +206,7 @@ class AccountGate:
             return f"account {account.name} {state}"
         limits = self._limits(account.name)
         if limits is not None:
-            report = self._limit_report(
-                account.name, reserve=limits.reserve_usd if limits.budget_usd else 0.0)
+            report = self._limit_report(account.name, reserve=self._next_run_reserve(account.name))
             if report["status"] == "limited":
                 return f"account {account.name} over limit: {report['reason']}"
         if self.store.active_on_account(account.name) >= b._slots(account.name):
@@ -261,8 +266,7 @@ class AccountGate:
         limit = None
         limits = self._limits(account)
         if limits is not None:
-            report = self._limit_report(
-                account, reserve=limits.reserve_usd if limits.budget_usd else 0.0)
+            report = self._limit_report(account, reserve=self._next_run_reserve(account))
             if report["status"] == "limited":
                 limit = report["reason"]
         remaining = 0 if state == "quota" else self._remaining(account)

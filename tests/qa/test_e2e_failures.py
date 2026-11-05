@@ -199,20 +199,18 @@ def test_invalid_spec_refused(sandbox: Sandbox, case: str) -> None:
 # @pt.id QA-E2E-031-bad-files
 # @pt.item Spec files that are missing or not JSON
 # @pt.condition a path that does not exist, a non-JSON file and a JSON list
-# @pt.expected exit 1 with a one-line error and no Python traceback
+# @pt.expected exit 1 with a one-line error naming the file and no Python traceback
 # @pt.target bridge.cli create
 # @pt.method e2e
 # @pt.legacy none
-@pytest.mark.parametrize("content", [
-    pytest.param(None, marks=pytest.mark.xfail(strict=True, reason="QA-BUG-003: traceback")),
-    "not json", "[1, 2]"])
+@pytest.mark.parametrize("content", [None, "not json", "[1, 2]"])
 def test_bad_spec_file(sandbox: Sandbox, content: str | None) -> None:
     path = sandbox.base / "spec.json"
     if content is not None:
         path.write_text(content)
     res = sandbox.cli("create", str(path))
     assert res.code == 1
-    assert "Traceback" not in res.err, res.err
+    assert "Traceback" not in res.err and res.err.startswith("error: ") and str(path) in res.err, res.err
 
 
 # @pt.id QA-E2E-035-shell-syntax
@@ -222,12 +220,12 @@ def test_bad_spec_file(sandbox: Sandbox, content: str | None) -> None:
 # @pt.target bridge.review.parse_command via the CLI
 # @pt.method e2e
 # @pt.legacy none
-@pytest.mark.xfail(strict=True, reason="QA-BUG-004: shell operators are accepted and passed as "
-                   "arguments, so the check silently differs from what was written")
 def test_shell_syntax_refused(sandbox: Sandbox) -> None:
     cmd = "python3 -c 'print(1)' && python3 -c 'raise SystemExit(1)'"
     res = sandbox.cli("create", str(sandbox.spec(verification_commands=[cmd])))
     assert res.code == 1, "accepted; the part after && is never run"
+    assert "without a shell" in res.err and "Traceback" not in res.err, res.err
+    assert sandbox.ok("list") == []
 
 
 # @pt.id QA-E2E-032-unknown-ids
@@ -242,6 +240,7 @@ def test_unknown_ids_and_wrong_states(sandbox: Sandbox) -> None:
                  ("cancel", "T9999", "--reason", "x"), ("resume", "T9999")):
         res = sandbox.cli(*args)
         assert res.code != 0 and "T9999" in res.err and "Traceback" not in res.err, (args, res.err)
+        assert "'unknown task" not in res.err, res.err
     task = sandbox.create()
     res = sandbox.cli("review", task, "--decision", "approve", "--notes", "x")
     assert res.code == 1 and "review needs REVIEW" in res.err

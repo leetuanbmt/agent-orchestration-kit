@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from tests.qa.conftest import Sandbox
 
 WRITE = "src/app.py=x = 2\n"
@@ -164,8 +162,6 @@ workflow: {stages: [execute, test]}
 # @pt.target Bridge.usage_report via bridge.cli usage
 # @pt.method e2e
 # @pt.legacy none
-@pytest.mark.xfail(strict=True, reason="QA-BUG-002: usage evaluates limits without the next run's "
-                   "reserve and reports ok while agents/execute refuse the account")
 def test_usage_agrees_with_start_gate(sandbox: Sandbox) -> None:
     sandbox.orchestrator(claude_accounts(cl1="{budget_usd: {day: 1.0}, reserve_usd: 0.5}",
                                          fallback="{enabled: false}"))

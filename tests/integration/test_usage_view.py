@@ -196,3 +196,30 @@ def test_mcp_account_usage(bridge, monkeypatch):
     with pytest.raises(server.ToolError, match="unknown account"):
         run(server.bridge_account_usage("nope"))
     assert "read-only" in (server.bridge_account_usage.__doc__ or "").lower()
+
+
+# @pt.id KIT-USAGEVIEW-007-next-run-reserve
+# @pt.item Every view agrees with the start gate about the next run's reserve
+# @pt.condition rsv has budget_usd day 1.0 and reserve_usd 0.5 and has spent 0.7, so the next run (0.7 + 0.5 > 1.0) is refused
+# @pt.expected usage_report, list_accounts and health report rsv limited with the reserve in the reason, as _unavailable does; remaining stays 0.30
+# @pt.target Bridge.usage_report, Bridge.list_accounts, Bridge.health, AccountGate._next_run_reserve
+# @pt.method integration
+# @pt.legacy the views evaluated without the reserve and showed ok while routing refused the account
+def test_views_include_next_run_reserve(make_orch):
+    b = make_orch("""
+version: 1
+accounts:
+  rsv: {provider: anthropic, home: {home}/rsv, limits: {budget_usd: {day: 1.0}, reserve_usd: 0.5}}
+agents:
+  a1: {adapter: claude-cli, account: rsv, allow_write: true}
+roles: {executor: a1}
+workflow: {stages: [execute, test]}
+""")
+    spend(b, "rsv", 0.7)
+    assert "over limit" in b._unavailable("a1", "write")
+    usage, = b.usage_report("rsv")["accounts"]
+    assert usage["limits"]["status"] == "limited" and "$0.50 reserve" in usage["limits"]["reason"]
+    assert abs(usage["limits"]["checks"][0]["remaining"] - 0.3) < 1e-9
+    listed = {a["name"]: a for a in b.list_accounts()["accounts"]}["rsv"]
+    assert listed["limits"]["status"] == "limited"
+    assert run(b.health())["limits"]["rsv"]["status"] == "limited"

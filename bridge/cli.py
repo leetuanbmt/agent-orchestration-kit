@@ -115,6 +115,19 @@ def _limit_warnings(orch: orchestrator.OrchestratorConfig) -> list[str]:
             and limits.reserve_usd == 0]
 
 
+def _read_spec(path: str) -> dict[str, Any]:
+    """The task spec in a JSON file, or a ValueError the CLI prints as one line."""
+    try:
+        data = json.loads(Path(path).read_text())
+    except OSError as e:
+        raise ValueError(f"cannot read spec {path}: {e.strerror or e}") from None
+    except ValueError as e:  # not JSON, or not UTF-8
+        raise ValueError(f"spec {path} is not valid JSON: {e}") from None
+    if not isinstance(data, dict):
+        raise ValueError(f"spec {path} must be a JSON object, not {type(data).__name__}")
+    return data
+
+
 async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "serve":
         from .server import _serve
@@ -257,7 +270,7 @@ async def _run(args: argparse.Namespace) -> Any:
         case "health":
             return await b.health()
         case "create":
-            return await b.create_task(json.loads(Path(args.spec).read_text()))
+            return await b.create_task(_read_spec(args.spec))
         case "execute":
             return await b.execute_task(args.task_id, wait=True)
         case "resume":
