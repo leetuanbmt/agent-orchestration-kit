@@ -196,6 +196,8 @@ def health_view(h: dict[str, Any]) -> Group:
     hints = []
     if h.get("storage_notice"):
         hints.append(h["storage_notice"])
+    if "unavailable" in str(h.get("verify_sandbox", "")):
+        hints.append(f"verification sandbox: {h['verify_sandbox']}")
     if h.get("protected_dirty"):
         hints.append("protected files differ from HEAD and would be loaded as they are: "
                      f"{', '.join(h['protected_dirty'])}; inspect them (git diff) and restore "

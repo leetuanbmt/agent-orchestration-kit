@@ -50,3 +50,5 @@ routing:
 workflow:
   stages: [plan, execute, test, review]
   max_rework: 2
+  verify_sandbox: auto             # Linux: checks write only to the worktree (strict also cuts TCP)
+  verify_writable: []              # e.g. [~/.cache/uv] when the checks run `uv run pytest`

@@ -16,7 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypedDict
 
-from . import osutil
+from . import osutil, sandbox
 from .config import BridgeConfig
 from .models import PROTECTED_VIOLATION
 from .security import clean_env, matches, redact
@@ -289,21 +289,44 @@ def recheck(root: Path, before: dict[str, Any], changes: dict[str, Any],
 
 async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
                            should_cancel: Callable[[], bool] | None = None,
-                           on_start: Callable[[int | None], None] | None = None
+                           on_start: Callable[[int | None], None] | None = None,
+                           confine: sandbox.Mode = "none", writable: list[str] | None = None
                            ) -> list[dict[str, Any]]:
     """Run each command in its own process group. A cancel (polled every second) kills the
     running command and skips the rest. `on_start` gets each command's pid when it starts and
-    None once its group has ended, so a dead runner's check can be found and killed."""
-    results = []
-    # No .pyc litter from the bridge's own checks in the next attempt's baseline.
-    env = {**clean_env(os.environ, cfg.env_deny, cfg.env_allow), "PYTHONDONTWRITEBYTECODE": "1"}
+    None once its group has ended, so a dead runner's check can be found and killed.
+
+    `confine` is the workflow's verify_sandbox: under Landlock a check may write only to the
+    worktree, its own temporary directory and `writable`."""
+    results: list[dict[str, Any]] = []
+    tmp = tempfile.mkdtemp(prefix="agent-bridge-check-")
+    try:
+        await _verify(cmds, root, cfg, should_cancel, on_start, confine,
+                      [str(root), tmp, *(str(Path(p).expanduser()) for p in writable or [])],
+                      tmp, results)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return results
+
+
+async def _verify(cmds: list[str], root: Path, cfg: BridgeConfig,
+                  should_cancel: Callable[[], bool] | None,
+                  on_start: Callable[[int | None], None] | None, confine: sandbox.Mode,
+                  writable: list[str], tmp: str, results: list[dict[str, Any]]) -> None:
+    # No .pyc litter from the bridge's own checks in the next attempt's baseline; temp files go
+    # to a private directory removed afterwards (the only temp location a confined check has).
+    env = {**clean_env(os.environ, cfg.env_deny, cfg.env_allow), "PYTHONDONTWRITEBYTECODE": "1",
+           "TMPDIR": tmp, "TMP": tmp, "TEMP": tmp}
     loop = asyncio.get_running_loop()
     for cmd in cmds:
         if should_cancel and should_cancel():
             break
         r: dict[str, Any] = {"command": cmd, "passed": False}
         try:
-            argv = parse_command(cmd, cfg)
+            argv = sandbox.wrap(parse_command(cmd, cfg), writable, confine)
+            if argv is None:
+                raise ValueError("verify_sandbox is strict but Landlock is not available here: "
+                                 "the check was not run")
             proc = await asyncio.create_subprocess_exec(
                 *argv, cwd=root, env=env, **osutil.GROUP_KWARGS, stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
@@ -345,4 +368,3 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
         except (ValueError, OSError) as e:
             r["error"] = str(e)
         results.append(r)
-    return results

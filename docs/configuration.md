@@ -57,7 +57,7 @@ workflow:
 | `agents.<id>` | `adapter`: `codex-cli`, `claude-cli`, `client`, `opencode-cli` or `agy-cli`. `account` (required except for `client`), optional `provider` (must match the adapter), `model`, `capabilities` (subset of `[read, write]`), `allow_write` (default true for `codex-cli`, false otherwise), `allow_bash` (`claude-cli` only), `timeout_s` (≥ 30), `enabled` (default true). |
 | `roles.<name>` | An agent id, or `{agents: [...], default: <agent>, strategy: ordered \| explicit, requires: read \| write}`. `default` is tried first; the other agents are fallbacks in list order. `default` cannot be combined with `strategy: explicit`. |
 | `routing.quota_fallback` | `enabled` (default false), `min_remaining_pct` (default 10), `agents` (candidates in order; default: the executor role's agents), `max_switches` (1–20, default 3), `keep_sessions` (default false). See [Per-account limits](#per-account-limits-opt-in). |
-| `workflow` | `stages`: ordered subset of `plan, execute, test, review`, default `[execute, test, review]`; must include `execute` and at least one of `test` / `review`. `max_rework`: 0–4, default 2. |
+| `workflow` | `stages`: ordered subset of `plan, execute, test, review`, default `[execute, test, review]`; must include `execute` and at least one of `test` / `review`. `max_rework`: 0–4, default 2. `verify_sandbox`: `auto` (default), `strict` or `none`, and `verify_writable`: extra directories checks may write; see [Verification sandbox](#verification-sandbox). |
 | `security` | `project_isolation` and `human_approval_for_sensitive_actions`. Both are fixed to `true`; the keys exist only to make the policy explicit. |
 
 Ids use `[a-z0-9_-]`, at most 32 characters. Validation rejects unknown keys, unknown ids, an
@@ -108,7 +108,25 @@ Role rules:
 | `review` | Reviewer | A `client` reviewer is the MCP caller (`bridge_review_task`). A reviewer agent runs read-only after the checks pass; its decision is recorded as `reviewer: <agent>`. If it fails, the task stays in `REVIEW` for the caller. |
 
 Without a `review` stage the bridge approves work that passed every gate (`reviewer: bridge`).
-High-risk work still waits for a human.
+High-risk work still waits for a human. Without a reviewer nobody reads the evidence, so changed
+git-ignored files outside `allowed_paths` count as scope violations there (with a reviewer they
+are listed in the result).
+
+### Verification sandbox
+
+Verification commands run code the executor wrote. On Linux with Landlock (kernel 5.13+) the
+bridge confines them; `agent-bridge health` shows what applies here (`verify_sandbox`).
+
+| `workflow.verify_sandbox` | Effect |
+|---|---|
+| `auto` (default) | A check may write only to the worktree, a private `TMPDIR` (removed afterwards) and `verify_writable`; reads and the network are not restricted. Without Landlock (macOS, Windows, old kernels) checks run unconfined. |
+| `strict` | As `auto`, and TCP connect/bind are denied (Landlock ABI 4+, kernel 6.7+). Without Landlock checks are refused rather than run unconfined. |
+| `none` | No confinement. |
+
+Test runners that write caches outside the project need them in `verify_writable`, for example
+`verify_writable: [~/.cache/uv]` for `uv run pytest` or `[~/.npm]` for `npm test`; the check's
+output shows `Permission denied` for anything missing. Everything a check changes inside the
+worktree is diffed again after verification and judged like the agent's changes.
 
 ## `.ai/config.json`
 

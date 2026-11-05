@@ -103,7 +103,8 @@ def test_signal_to_cli_runner_kills_agent_and_parks_task(make_bridge, fake_codex
 def test_cancel_stops_verification_in_another_process(make_bridge, fake_codex, repo,
                                                       monkeypatch) -> None:
     monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n")
-    pidfile, second = fake_codex / "verify.pid", fake_codex / "second.ran"
+    # Markers inside the worktree: checks may write nowhere else under verify_sandbox auto.
+    pidfile, second = repo / "src" / "verify.pid", repo / "src" / "second.ran"
     slow = (f"python3 -c \"import os,pathlib,time; pathlib.Path('{pidfile}')"
             f".write_text(str(os.getpid())); time.sleep(120)\"")
     after = f"python3 -c \"import pathlib; pathlib.Path('{second}').write_text('x')\""
@@ -140,10 +141,10 @@ def test_cancel_stops_verification_in_another_process(make_bridge, fake_codex, r
 # @pt.legacy none (new kit)
 @pytest.mark.parametrize("write", ["", "src/app.py=x = 3\n"])
 def test_blocked_without_changes_skips_verification(make_bridge, fake_codex, monkeypatch,
-                                                    write) -> None:
+                                                    repo, write) -> None:
     monkeypatch.setenv("FAKE_CODEX_SCENARIO", "blocked")
     monkeypatch.setenv("FAKE_CODEX_WRITE", write)
-    marker = fake_codex / "check.ran"
+    marker = repo / "src" / "check.ran"  # checks may write only inside the worktree
     check = f"python3 -c \"import pathlib; pathlib.Path('{marker}').write_text('x')\""
     b = make_bridge()
     t = run(b.create_task(spec(verification_commands=[check])))["task_id"]

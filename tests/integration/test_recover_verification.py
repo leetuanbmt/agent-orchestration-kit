@@ -32,7 +32,7 @@ def running(pid: int) -> bool:
 # @pt.method integration
 # @pt.legacy the check kept running untracked after the runner died
 def test_recover_kills_orphaned_verification(repo, fake_codex, tmp_path, monkeypatch):
-    marker = tmp_path / "check.pid"
+    marker = repo / "src" / "check.pid"  # checks may write only inside the worktree
     check = f"python3 -c \"import os,time; open('{marker}','w').write(str(os.getpid())); time.sleep(60)\""
     locks = str(fake_codex / "locks")
     b = Bridge(repo, BridgeConfig(retry_backoff_s=0, lock_dir=locks))

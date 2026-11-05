@@ -259,8 +259,10 @@ class TaskRunner:
             self.store.update(task_id, codex_pid=pid,
                               codex_started=process_started(pid) if pid else None)
 
+        flow = b.orch.workflow
         checks = (await run_verification(commands, b.root, b.cfg, should_cancel=cancelled,
-                                         on_start=check_started) if commands else [])
+                                         on_start=check_started, confine=flow.verify_sandbox,
+                                         writable=flow.verify_writable) if commands else [])
         stopped = cancelled()  # checks cut short (or never started) prove nothing
         touched, later = changes["files"], []
         if commands:  # the checks ran code in the worktree: judge what they changed too
