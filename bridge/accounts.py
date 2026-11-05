@@ -461,6 +461,27 @@ class AccountLock:
             return
         raise ConflictError(f"account {self.acc.name} is busy in another bridge process")
 
+    def free(self) -> bool:
+        """True when at least one slot can be locked right now (a probe; holds nothing).
+
+        Locks are per open file description, so slots held by this process count as held too,
+        including the one this instance holds.
+        """
+        for path in self.paths:
+            if not path.parent.exists():
+                return True
+            if self._file is not None and path == Path(self._file.name):
+                continue
+            handle = path.open("a")
+            try:
+                osutil.lock_nonblocking(handle)
+            except BlockingIOError:
+                continue
+            finally:
+                handle.close()
+            return True
+        return False
+
     def release(self) -> None:
         if self._file is not None:
             # Keep the inode: unlinking would let waiters lock different files for one account.
