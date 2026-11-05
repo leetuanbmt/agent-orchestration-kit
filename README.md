@@ -503,7 +503,14 @@ and performs no human action. It listens on `127.0.0.1` only and rejects other `
 uv sync                          # project-local .venv with Python 3.12+
 scripts/check.sh                 # full test suite with fake CLIs (deterministic, no quota used)
 scripts/check.sh --with-health   # also requires `agent-bridge health` to report OK
+scripts/check.sh --e2e           # also the end-to-end suite in tests/qa (about 3 more minutes)
 ```
+
+The end-to-end suite drives the real `agent-bridge` CLI, the MCP server over stdio and the web
+dashboard in Chromium (Node Playwright; skipped without it) against the fake agent CLIs, each test
+in a throwaway `HOME` and git repository. Cases and the latest results:
+[docs/qa/e2e-test-cases.md](docs/qa/e2e-test-cases.md); findings:
+[docs/qa/e2e-qa-report.md](docs/qa/e2e-qa-report.md).
 
 Opt-in smoke tests against the real CLIs use your quota:
 

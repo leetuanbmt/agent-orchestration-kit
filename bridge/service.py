@@ -153,6 +153,18 @@ class Bridge:
         return min(requested or agent.timeout_s or self.cfg.default_timeout_s,
                    self.cfg.max_timeout_s)
 
+    def _account_homes(self) -> list[Path]:
+        """Auth homes of every configured account; no agent may read them."""
+        homes = set()
+        for name in self.orch.accounts:
+            try:
+                home = self._account(name).home
+            except ValueError:
+                continue
+            if home is not None:
+                homes.add(home)
+        return sorted(homes)
+
     def _account_quota(self, name: str) -> dict[str, Any] | str:
         try:
             account = self._account(name)
@@ -569,7 +581,8 @@ class Bridge:
             try:
                 res = await self._adapter(agent.adapter).run(
                     RunRequest(prompt, account, "read-only", self._timeout(agent, None),
-                               schema=schema, model=agent.model, hook_settings=hook_settings),
+                               schema=schema, model=agent.model, hook_settings=hook_settings,
+                               read_deny=self._account_homes()),
                     should_cancel=cancel)
             finally:
                 lock.release()

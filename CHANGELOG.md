@@ -8,10 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- Claude agents' read tools can no longer open `~/.claude/.credentials.json`, the project's `.env*`, `*.pem` and `*.key` files, or any configured account's auth home (`--disallowedTools` now denies them on every run; a home that cannot be written as a permission rule stops the run). Before, only Codex, agent-bridge and agy credentials were denied (QA-BUG-006).
 - Claude loads no user/project settings; optional `claude_hook_settings`, set only by a human in `.ai/config.json`, loads an external hooks-only JSON file as trusted code running unsandboxed. The default remains off and `--setting-sources ""` remains enforced.
 - `agent-bridge web` requires a per-launch secret token on every API request; the printed dashboard URL carries the key.
 
 ### Added
+- End-to-end suite `tests/qa` (`scripts/check.sh --e2e`): the real CLI, MCP server and web dashboard (Playwright) against fake agents in a throwaway home; known defects are strict `xfail` tests. Test cases and the QA report are in `docs/qa/`.
 - Per-account limits (`accounts.<name>.limits` in `.ai/orchestrator.yaml`): 5-hour, weekly and any-window percentage thresholds, USD budgets per UTC day / week / month with an optional per-run `reserve_usd`, user-supplied token `pricing` for cost estimates, and a QUOTA-mark `cooldown_s`. Routing skips an account over its limit and the start gate refuses it; budgets are checked and reserved atomically in the machine-wide `accounts.db`, so concurrent bridges cannot overspend. Accounts without `limits` behave as before.
 - Usage ledger: every run's cost, including network-retried attempts, is recorded with its source (`actual`, `estimated` or `unavailable`); a run with unknown cost fails closed against a budget.
 - `agent-bridge usage [account] [--json]` and the read-only `bridge_account_usage` MCP tool show used, threshold, remaining, reset time, source and status per limit; `account-list` marks an account `over limit`; `health` reports each account's limit status; `config-check` warns about a budget that would fail closed on every run.
