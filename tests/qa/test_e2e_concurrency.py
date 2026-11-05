@@ -68,7 +68,7 @@ def test_concurrency_limit_across_bridges(sandbox: Sandbox) -> None:
         (tree / ".ai" / name).write_text((sandbox.root / ".ai" / name).read_text())
     first = sandbox.create("Slow one", agent="codex1")
     runner = sandbox.spawn("execute", first, env={"FAKE_CODEX_SCENARIO": "slow",
-                                                  "FAKE_CODEX_SLOW": "8"})
+                                                  "FAKE_CODEX_SLOW": "30"})
     wait_running(sandbox, first)
     second_here = sandbox.create("Second writer here", agent="codex2")
     res = sandbox.cli("execute", second_here)
@@ -80,7 +80,9 @@ def test_concurrency_limit_across_bridges(sandbox: Sandbox) -> None:
     free = sandbox.ok("create", str(sandbox.spec("Anywhere")), cwd=tree)["task_id"]
     out = sandbox.ok("execute", free, cwd=tree, env={"FAKE_CODEX_SCENARIO": "ok"})
     assert out["agent"] == "codex2" and out["state"] == "REVIEW", out
-    assert runner.wait(60) == 0
+    # codex1 was still busy when `free` was routed, so codex2 was chosen for a reason.
+    assert sandbox.ok("status", first)["state"] == "RUNNING"
+    assert runner.wait(90) == 0
     assert sandbox.ok("status", first)["state"] == "REVIEW"
 
 
