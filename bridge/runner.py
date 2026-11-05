@@ -92,7 +92,8 @@ class TaskRunner:
         try:
             row = self.store.transition(task_id, State.RUNNING, actor, {"attempt": seq},
                                         expect, account_limit=slots, attempts=used,
-                                        runner_pid=os.getpid(), failure=None)
+                                        runner_pid=os.getpid(),
+                                        runner_started=self.store._started, failure=None)
             self.store.start_attempt(task_id, seq, kind)
             coro = self._run(task_id, seq, used, prompt, session, lock, usage_id)
         except BaseException:
@@ -114,21 +115,18 @@ class TaskRunner:
             except EvidenceError as e:  # no evidence, no verdict: pause, never pass or fail
                 self._park_without_evidence(task_id, n, used, e)
             except Exception as e:  # never leave a task stuck in RUNNING/VERIFYING
-                self.store.log(task_id, Actor.BRIDGE, "error", {"error": redact(repr(e), 2000)})
                 with contextlib.suppress(Exception):
-                    row = self.store.get(task_id)
-                    if row["state"] in ACTIVE:
-                        self.store.transition(
-                            task_id, State.FAILED if row["state"] == State.RUNNING
-                            else State.PAUSED, Actor.BRIDGE, {"error": repr(e)},
-                            failure=f"BRIDGE_ERROR: {redact(repr(e), 500)}")
+                    self.store.log(task_id, Actor.BRIDGE, "error",
+                                   {"error": redact(repr(e), 2000)})
+                await self._rescue(task_id, e)
             finally:
                 # A bridge error before the cost was known: fail closed (unknown cost). A run
                 # that never reached the agent was already settled 0.0 by _run_inner.
                 b._settle_open(usage_id, None, "unavailable")
                 lock.release()
                 # Tells a cancel_task in another process that this run let go of the account.
-                self.store.update(task_id, runner_pid=None)
+                with contextlib.suppress(Exception):
+                    self.store.update(task_id, runner_pid=None, runner_started=None)
             if self.store.get(task_id)["state"] == State.REVIEW and not b._stopping:
                 await self._review_stage(task_id)
         finally:
@@ -287,6 +285,22 @@ class TaskRunner:
             return  # cancelled while verifying
         self.store.transition(task_id, dst, Actor.BRIDGE, record["verification"],
                               failure=failure, needs_human=int(needs_human))
+
+    async def _rescue(self, task_id: str, error: Exception) -> None:
+        """Take a task out of RUNNING/VERIFYING after a bridge error. The database may be the
+        thing failing (busy, locked): retry with backoff rather than leave the task active."""
+        for delay in (0, 0.2, 0.5, 1, 2):
+            await asyncio.sleep(delay)
+            try:
+                row = self.store.get(task_id)
+                if row["state"] in ACTIVE:
+                    self.store.transition(
+                        task_id, State.FAILED if row["state"] == State.RUNNING else State.PAUSED,
+                        Actor.BRIDGE, {"error": repr(error)},
+                        failure=f"BRIDGE_ERROR: {redact(repr(error), 500)}")
+                return
+            except Exception:  # noqa: BLE001 - every failure here is retried, then given up
+                continue
 
     def _park_without_evidence(self, task_id: str, n: int, used: int, error: EvidenceError) -> None:
         """Git could not show what the run changed. The attempt proves nothing either way, so the

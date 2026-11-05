@@ -692,7 +692,7 @@ class Bridge:
         row = self.store.transition(task_id, State.CANCELLED, Actor.CLIENT, {"reason": reason},
                                     failure=f"CANCELLED: {reason}"[:500])
         owner = row["runner_pid"]
-        if owner != os.getpid() and not _alive(owner):
+        if owner != os.getpid() and not self._runner_alive(row):
             kill_stale(row["codex_pid"], row["codex_started"])  # orphan from a dead runner
         elif running:
             # The runner (this process or another one, e.g. a CLI `execute`) polls the state,
@@ -864,13 +864,20 @@ class Bridge:
 
     # ---- lifecycle -------------------------------------------------------------------------
 
+    @staticmethod
+    def _runner_alive(row: dict[str, Any]) -> bool:
+        """The task's runner process still runs. A pid the OS reused for another process has a
+        different start time, so it does not count (rows from older versions have none)."""
+        pid = row["runner_pid"]
+        return _alive(pid) and row.get("runner_started") in (None, process_started(pid))
+
     def recover(self) -> list[str]:
         """Park tasks and workflows whose process died mid-run (crash, kill, closed session)."""
         recovered = []
         for row in self.store.list(limit=10_000):
             if row["state"] not in ACTIVE:
                 continue
-            if row["runner_pid"] != os.getpid() and _alive(row["runner_pid"]):
+            if row["runner_pid"] != os.getpid() and self._runner_alive(row):
                 continue  # another live process (e.g. the CLI) owns this run
             killed = kill_stale(row["codex_pid"], row["codex_started"])
             for a in self.store.attempts(row["id"]):

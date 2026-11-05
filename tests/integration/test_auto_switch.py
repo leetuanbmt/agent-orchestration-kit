@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from bridge.config import BridgeConfig
-from bridge.models import Actor, State
+from bridge.models import Actor
 from tests.conftest import run, spec
 from tests.integration.test_accounts_routing import calls
 
@@ -99,11 +99,15 @@ def test_eligibility(make_bridge, accounts, fake_codex):
     bridge = make_bridge(accounts=accounts, auto_switch={"enabled": True,
         "fallback_accounts": ["low", "quota", "logged-out", "busy", "invalid", "b"]})
     bridge.store.set_account_state("quota", "quota", actor=Actor.BRIDGE)
-    busy = run(bridge.create_task(spec(account="busy", objective="Busy task",
-                                       sandbox="read-only")))["task_id"]
-    bridge.store.transition(busy, State.RUNNING, Actor.CLIENT, expect={State.READY})
+    # "busy": another bridge holds the account (one active task per worktree, audit REL-07).
+    from bridge.accounts import AccountLock
+    held = AccountLock(bridge._account("busy"), str(fake_codex / "locks"))
+    held.acquire()
     task = create(bridge)
-    run(bridge.execute_task(task, wait=True))
+    try:
+        run(bridge.execute_task(task, wait=True))
+    finally:
+        held.release()
     assert calls(fake_codex)[-1]["codex_home"] == accounts["b"]["codex_home"]
     assert events(bridge, task, "account_auto_switched")[0]["detail"]["to_remaining_pct"] is None
 

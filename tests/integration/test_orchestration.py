@@ -275,10 +275,15 @@ def test_orphaned_workflows(make_orch, fake_codex, fake_claude):
 def test_config_c_busy(make_orch, fake_codex, fake_claude, monkeypatch):
     monkeypatch.setenv("FAKE_CODEX_WRITE", WRITE)
     b = make_orch(CONFIG_C)
-    busy = run(b.create_task(spec(agent="codex1", objective="Busy", sandbox="read-only")))
-    b.store.transition(busy["task_id"], State.RUNNING, Actor.CLIENT, expect={State.READY})
-    wid = run(b.plan("Set x to 2", wait=True))["workflow_id"]
-    wf = run(b.run_workflow(wid, wait=True))
+    # codex1's account is busy in another bridge (one active task per worktree, audit REL-07).
+    from bridge.accounts import AccountLock
+    held = AccountLock(b._account("cx1"), str(fake_codex / "locks"))
+    held.acquire()
+    try:
+        wid = run(b.plan("Set x to 2", wait=True))["workflow_id"]
+        wf = run(b.run_workflow(wid, wait=True))
+    finally:
+        held.release()
     task = wf["tasks"][0]
     assert wf["state"] == "DONE" and task["agent"] == "codex2" and task["account"] == "cx2"
     routed, = events(b, task["task_id"], "agent_routed")
