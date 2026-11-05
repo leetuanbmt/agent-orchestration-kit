@@ -153,6 +153,18 @@ class Bridge:
         return min(requested or agent.timeout_s or self.cfg.default_timeout_s,
                    self.cfg.max_timeout_s)
 
+    def _account_homes(self) -> list[Path]:
+        """Auth homes of every configured account; no agent may read them."""
+        homes = set()
+        for name in self.orch.accounts:
+            try:
+                home = self._account(name).home
+            except ValueError:
+                continue
+            if home is not None:
+                homes.add(home)
+        return sorted(homes)
+
     def _account_quota(self, name: str) -> dict[str, Any] | str:
         try:
             account = self._account(name)
@@ -254,7 +266,8 @@ class Bridge:
         for account in listing["accounts"]:
             account["quota"] = self._account_quota(account["name"])
             if self.gate._limits(account["name"]) is not None:
-                account["limits"] = self._limit_report(account["name"])
+                account["limits"] = self._limit_report(
+                    account["name"], reserve=self.gate._next_run_reserve(account["name"]))
             state, _ = self.gate._effective_account_state(account["name"],
                                                           key=self._key(account["name"]))
             account.update(state=state["state"], last_error=state["last_error"],
@@ -282,7 +295,8 @@ class Bridge:
         return {"accounts": [
             {"name": n, "provider": self.orch.accounts[n].provider,
              "state": self.store.account_state(n, key=self._key(n)),
-             "limits": self.gate._evaluate(n, expire=False), "quota": self._account_quota(n)}
+             "limits": self.gate._evaluate(n, self.gate._next_run_reserve(n), expire=False),
+             "quota": self._account_quota(n)}
             for n in names], "generated_at": time.time()}
 
     def list_agents(self, logins: dict[str, bool | None] | None = None) -> dict[str, Any]:
@@ -386,7 +400,7 @@ class Bridge:
         limits: dict[str, dict[str, Any]] = {}
         for name in self.orch.accounts:
             if self.gate._limits(name) is not None:
-                report = self._limit_report(name)
+                report = self._limit_report(name, reserve=self.gate._next_run_reserve(name))
                 limits[name] = {"status": report["status"], "reason": report["reason"]}
         storage_notice = None
         if self.storage == "legacy":
@@ -569,7 +583,8 @@ class Bridge:
             try:
                 res = await self._adapter(agent.adapter).run(
                     RunRequest(prompt, account, "read-only", self._timeout(agent, None),
-                               schema=schema, model=agent.model, hook_settings=hook_settings),
+                               schema=schema, model=agent.model, hook_settings=hook_settings,
+                               read_deny=self._account_homes()),
                     should_cancel=cancel)
             finally:
                 lock.release()

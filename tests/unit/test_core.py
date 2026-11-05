@@ -219,8 +219,8 @@ def test_classify() -> None:
 
 # @pt.id KIT-UNIT-010-verify-command-parse
 # @pt.item Verification command parsing
-# @pt.condition allowlisted command with quotes; shell; non-allowlisted binary; empty
-# @pt.expected argv split without a shell; sh/curl/empty rejected
+# @pt.condition allowlisted command with quotes; shell; non-allowlisted binary; empty; unquoted shell operators; operators inside quotes
+# @pt.expected argv split without a shell; sh/curl/empty rejected; &&, |, ;, >, 2>&1 rejected with a message saying there is no shell; quoted operators are kept
 # @pt.target bridge.review.parse_command
 # @pt.method unit
 # @pt.legacy none (new kit)
@@ -231,6 +231,12 @@ def test_parse_command() -> None:
     for bad in ("sh -c 'rm -rf /'", "curl http://x", "", "bash x.sh"):
         with pytest.raises(ValueError):
             parse_command(bad, cfg)
+    for chained in ("pytest && ruff check .", "pytest | tee out", "pytest; ruff check .",
+                    "pytest>out", "pytest 2>&1", "python3 -c 'print(1)' &"):
+        with pytest.raises(ValueError, match="without a shell"):
+            parse_command(chained, cfg)
+    assert parse_command("python3 -c \"print('a|b; c > d && e')\"", cfg)[-1] == \
+        "print('a|b; c > d && e')"
 
 
 # @pt.id KIT-UNIT-011-prompt-contract
@@ -377,3 +383,29 @@ def test_effective_account_state() -> None:
     early = {"primary": window(100, marked - 1), "secondary": window(62, now + 9999)}
     assert effective_account_state(quota, early, None, now) == (quota, None)
     assert quota == before
+
+
+# @pt.id KIT-UNIT-046-claude-secret-reads
+# @pt.item A Claude agent's read tools stay away from logins and secret files
+# @pt.condition a read-only Claude run told to keep out of two account homes, one under $HOME and one elsewhere; then a home whose path holds a comma
+# @pt.expected --disallowedTools denies reading ~/.claude/.credentials.json, .env and key files, the home under $HOME as ~/…/** and the other as //…/**; the comma home raises PathError instead of running
+# @pt.target bridge.executor.ClaudeAdapter.build
+# @pt.method unit
+# @pt.legacy the denies covered Codex, agent-bridge and agy credentials only
+def test_claude_secret_read_denies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bridge.accounts import Account
+    from bridge.executor import ClaudeAdapter, RunRequest
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    inside, outside = home / ".claude-accounts" / "main", tmp_path / "elsewhere" / "backup"
+    req = RunRequest("p", Account("main", inside, "anthropic"), "read-only", 60,
+                     read_deny=[inside, outside])
+    argv = ClaudeAdapter(BridgeConfig(), tmp_path).build(req, tmp_path)
+    denied = argv[argv.index("--disallowedTools") + 1].split(",")
+    assert {"Read(~/.claude/.credentials.json)", "Read(./.env)", "Read(./**/.env.*)",
+            "Read(./**/*.key)", "Read(~/.codex/auth.json)", "Read(~/.claude-accounts/main/**)",
+            f"Read(/{outside.resolve()}/**)"} <= set(denied)
+    bad = RunRequest("p", Account("main", inside, "anthropic"), "read-only", 60,
+                     read_deny=[tmp_path / "a,b"])
+    with pytest.raises(PathError):
+        ClaudeAdapter(BridgeConfig(), tmp_path).build(bad, tmp_path)

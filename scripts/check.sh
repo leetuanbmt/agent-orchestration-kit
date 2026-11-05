@@ -9,10 +9,13 @@ if [[ ! -x .venv/bin/python ]]; then
 fi
 
 with_health=false
-if [[ "${1:-}" == "--with-health" ]]; then
-    with_health=true
-    shift
-fi
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --with-health) with_health=true; shift ;;
+        --e2e) export QA_E2E=1; shift ;;  # also run tests/qa (real CLI, MCP and browser)
+        *) break ;;
+    esac
+done
 
 .venv/bin/python -m pytest -q "$@"
 

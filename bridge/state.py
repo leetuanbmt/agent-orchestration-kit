@@ -111,7 +111,8 @@ class LimitExceeded(ValueError):
 
 
 class NotFound(KeyError):
-    pass
+    def __str__(self) -> str:  # KeyError would print the message in quotes
+        return str(self.args[0]) if self.args else ""
 
 
 def _clean_detail(value: Any) -> Any:

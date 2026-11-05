@@ -5,7 +5,8 @@
   configurable.
 - **Claude CLI** has no OS sandbox. The bridge limits it instead: `--strict-mcp-config` (no MCP
   servers, so no recursive orchestration), `--setting-sources ""` (no user/project settings, allow rules or hooks; the
-  kit's credential `Read(...)` denies go in `--disallowedTools` on every run),
+  kit's credential `Read(...)` denies, plus the global Claude login, `.env*`/key files and every
+  configured account home, go in `--disallowedTools` on every run),
   `--permission-mode dontAsk` with an allowlist of Read/Glob/Grep. An agent with
   `allow_write: true` also gets Edit/Write scoped to the task's `allowed_paths`
   (`Edit(./src/**)`), with excluded and protected paths denied: unscoped Write was shown by
