@@ -204,6 +204,11 @@ làm việc tương tự từ thư mục checkout. Khi đó `.mcp.json` chạy
 
 Bốn lệnh để thiết lập một project; bước thứ năm là nhờ Claude Code thực hiện thay đổi.
 
+Đo trên macOS với người dùng mới và cache uv trống: clone, `uv tool install`, `init`,
+`config-check` và `health` mất tổng cộng 18,5 giây. Đăng nhập agent CLI và trust thư mục trong
+Claude Code là bước tương tác, tính thêm; trước khi làm, `health` chỉ rõ login còn thiếu và
+lệnh để sửa.
+
 **1. Thiết lập project.**
 
 ```bash
@@ -229,7 +234,9 @@ claude mcp list              # kỳ vọng: agent-bridge ... Connected
   `mcp__codex-bridge__*` phải đổi tên thủ công.
 
 **2. Chọn thiết lập (tùy chọn).** Bỏ qua bước này để dùng thiết lập legacy (Claude Code lập kế
-hoạch và review, Codex thực thi bằng login global).
+hoạch và review, Codex thực thi bằng login global). Chạy các lệnh này trong terminal của bạn:
+`config-init <name>` ghi vào `.ai/`, nơi chỉ người mới được sửa, nên từ chối chạy khi không có
+terminal.
 
 ```bash
 agent-bridge config-init                # liệt kê các ví dụ đi kèm
@@ -256,6 +263,8 @@ agent plans:  bridge_plan → bridge_workflow_status(wait_s) → bridge_run_work
 
 **5. Theo dõi tiến độ** bằng `agent-bridge` (dashboard terminal) hoặc `agent-bridge web`. Xem
 [Theo dõi](#theo-dõi).
+
+<img alt="Demo dashboard web: hàng đợi task cần bạn, ngăn chi tiết mở bằng phím ], board, theme tối và tiếng Việt" src="docs/images/web-demo.gif" width="900">
 
 ## Cấu hình
 

@@ -203,6 +203,11 @@ runs `uv run --project <kit> agent-bridge serve`, an absolute path that breaks i
 
 Four commands set up a project; the fifth step is asking Claude Code for a change.
 
+Measured on macOS as a new user with an empty uv cache: cloning, `uv tool install`, `init`,
+`config-check` and `health` took 18.5 s together. Logging in to an agent CLI and trusting the
+folder in Claude Code are interactive and come on top; until then `health` names the missing
+login and the command that fixes it.
+
 **1. Set up a project.**
 
 ```bash
@@ -229,7 +234,8 @@ What `init` does:
   `mcp__codex-bridge__*` tools must be renamed by hand.
 
 **2. Choose a setup (optional).** Skip this to use the legacy setup (Claude Code plans and
-reviews, Codex executes on its global login).
+reviews, Codex executes on its global login). Run these in your own terminal: `config-init
+<name>` writes `.ai/`, which only a human may change, and refuses to run without one.
 
 ```bash
 agent-bridge config-init                # list the shipped examples
@@ -256,6 +262,8 @@ agent plans:  bridge_plan → bridge_workflow_status(wait_s) → bridge_run_work
 
 **5. Follow progress** with `agent-bridge` (terminal dashboard) or `agent-bridge web`. See
 [Monitoring](#monitoring).
+
+<img alt="Web dashboard demo: the queue of tasks that need you, the task drawer opened with ], the board, the dark theme and Vietnamese" src="docs/images/web-demo.gif" width="900">
 
 ## Configuration
 
