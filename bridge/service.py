@@ -24,12 +24,14 @@ from .executor import ADAPTERS, PLAN_SCHEMA, Adapter, RunRequest, RunResult, bui
     build_prompt, build_rework_prompt, kill_stale
 from .gate import LIMIT_REPORT_TTL_S as LIMIT_REPORT_TTL_S
 from .gate import AccountGate
-from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError
+from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError, \
+    leftover_failure
 from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .registry import remember_project
-from .review import EvidenceError, content_hashes, parse_command, protected_dirty, snapshot
+from .review import EvidenceError, content_hashes, diff, parse_command, protected_dirty, \
+    scope_violations, snapshot
 from .runner import _write_attempt_log_line as _write_attempt_log_line
 from .sandbox import describe as describe_sandbox
 from .runner import TaskRunner
@@ -864,6 +866,16 @@ class Bridge:
 
     # ---- lifecycle -------------------------------------------------------------------------
 
+    def _leftover(self, row: dict[str, Any], baseline: dict[str, Any] | None) -> list[str]:
+        """Scope violations an interrupted attempt left, diffed against its stored baseline."""
+        if not baseline:
+            return []  # attempts from older versions: nothing to compare with
+        try:
+            changes = diff(self.root, baseline, self.cfg.protected_paths)
+        except EvidenceError:
+            return []
+        return scope_violations(changes["files"], row["spec"], self.cfg, changes["head_changed"])
+
     @staticmethod
     def _runner_alive(row: dict[str, Any]) -> bool:
         """The task's runner process still runs. A pid the OS reused for another process has a
@@ -880,12 +892,22 @@ class Bridge:
             if row["runner_pid"] != os.getpid() and self._runner_alive(row):
                 continue  # another live process (e.g. the CLI) owns this run
             killed = kill_stale(row["codex_pid"], row["codex_started"])
+            leftover: list[str] = []
             for a in self.store.attempts(row["id"]):
                 if a["ended_at"] is None:
-                    self.store.finish_attempt(row["id"], a["n"], outcome="interrupted")
-            self.store.transition(row["id"], State.PAUSED, Actor.BRIDGE,
-                                  {"reason": "runner died", "killed_orphan": killed},
-                                  failure="INTERRUPTED: runner process exited during execution")
+                    leftover = self._leftover(row, a.get("baseline"))
+                    self.store.finish_attempt(row["id"], a["n"], outcome="interrupted", **(
+                        {"verification": {"passed": False, "scope_violations": leftover,
+                                          "checks": [], "interrupted": True}} if leftover else {}))
+            if leftover:  # resuming would take these changes as the next attempt's baseline
+                self.store.transition(row["id"], State.BLOCKED, Actor.BRIDGE,
+                                      {"reason": "runner died", "killed_orphan": killed,
+                                       "scope_violations": leftover},
+                                      failure=leftover_failure(leftover))
+            else:
+                self.store.transition(row["id"], State.PAUSED, Actor.BRIDGE,
+                                      {"reason": "runner died", "killed_orphan": killed},
+                                      failure="INTERRUPTED: runner process exited during execution")
             recovered.append(row["id"])
         for wf in self.store.workflows_in("PLANNING", "RUNNING"):
             owner = wf["runner_pid"]

@@ -131,7 +131,8 @@ def _row(r: sqlite3.Row | None) -> dict[str, Any] | None:
     if r is None:
         return None
     d = dict(r)
-    for k in ("spec", "final", "usage", "changes", "verification", "detail", "review"):
+    for k in ("spec", "final", "usage", "changes", "verification", "detail", "review",
+              "baseline"):
         if d.get(k):
             try:
                 d[k] = json.loads(d[k])
@@ -260,7 +261,7 @@ class Store:
         self._add_columns(self.db, "tasks", {c: "TEXT" for c in (
             "account", "agent", "workflow_id", "codex_started", "runner_started")})
         self._add_columns(self.db, "workflows", {"runner_pid": "INTEGER", "runner_started": "TEXT"})
-        self._add_columns(self.db, "attempts", {"review": "TEXT"})
+        self._add_columns(self.db, "attempts", {"review": "TEXT", "baseline": "TEXT"})
         self.shared = None
         if shared is not None:
             shared.parent.mkdir(parents=True, exist_ok=True)
@@ -715,6 +716,12 @@ class Store:
             c.execute("INSERT INTO attempts(task_id, n, kind, started_at) VALUES (?,?,?,?)",
                       (tid, n, kind, time.time()))
             self._event(c, tid, Actor.BRIDGE, "attempt_started", detail={"n": n, "kind": kind})
+
+    def set_baseline(self, tid: str, n: int, baseline: dict[str, Any]) -> None:
+        """The worktree snapshot an attempt started from, so recovery can still diff it."""
+        with self.tx() as c:
+            c.execute("UPDATE attempts SET baseline=? WHERE task_id=? AND n=?",
+                      (json.dumps(baseline), tid, n))
 
     def finish_attempt(self, tid: str, n: int, **fields: Any) -> None:
         enc = {k: json.dumps(v, default=str) if isinstance(v, (dict, list)) else v

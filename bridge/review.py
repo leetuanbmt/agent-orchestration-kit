@@ -182,8 +182,10 @@ def diff(root: Path, before: dict[str, Any], protected: list[str]) -> Changes:
         stat = _git(root, "diff", "--stat", *trees)  # type: ignore[arg-type]
         patch = _git(root, "diff", "--no-color", *trees)  # type: ignore[arg-type]
     shown, truncated, omitted = bounded_patch(patch, PATCH_LIMIT)
-    ig_b, ig_a = before.get("ignored") or {}, after["ignored"]
-    ignored = sorted(f for f in set(ig_b) | set(ig_a) if ig_b.get(f) != ig_a.get(f))
+    ig_b, ig_a = before.get("ignored"), after["ignored"]
+    # A stored baseline has no ignored-file listing: compare ignored files only when it does.
+    ignored = ([] if ig_b is None else
+               sorted(f for f in set(ig_b) | set(ig_a) if ig_b.get(f) != ig_a.get(f)))
     return {
         "files": changed,
         "head_before": before["head"],
