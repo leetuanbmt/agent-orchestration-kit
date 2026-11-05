@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install
+        run: uv sync
+      - name: Test suite (fake agent CLIs, no credentials, no quota)
+        run: scripts/check.sh
+
+  e2e:
+    name: end-to-end (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          uv sync
+          npm install --global playwright@1.49.1
+          npx --yes playwright@1.49.1 install --with-deps chromium
+      - name: Test suite with the end-to-end tests (real CLI, MCP server, dashboard in Chromium)
+        run: |
+          export NODE_PATH="$(npm root --global)"
+          scripts/check.sh --e2e
