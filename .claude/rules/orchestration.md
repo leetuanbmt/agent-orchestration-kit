@@ -24,13 +24,13 @@ States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED →
 | READY / REWORK / FAILED / PAUSED → RUNNING | client (or the workflow driver) | `bridge_execute_task` / `bridge_resume_task` / `bridge_run_workflow` |
 | RUNNING → VERIFYING | bridge | the agent exited cleanly |
 | RUNNING → FAILED | bridge | timeout or crash (BLOCKED when the attempt budget is spent) |
-| RUNNING → PAUSED | bridge | quota, auth, network, missing CLI, interrupted runner |
+| RUNNING / VERIFYING → PAUSED | bridge | quota, auth, network, missing CLI, interrupted runner (stop signal or dead runner) |
 | VERIFYING → REVIEW | bridge | scope clean, every verification command passed, agent status `completed` |
-| VERIFYING → REWORK | bridge | any check failed (BLOCKED when the budget is spent) |
+| VERIFYING → REWORK | bridge | any check failed (BLOCKED when the budget is spent); agent `blocked` with no changes skips the checks |
 | REVIEW → APPROVED / REWORK / BLOCKED | client or reviewer agent | `bridge_review_task` / reviewer run |
 | REVIEW → APPROVED | bridge | no review stage and every gate passed |
 | APPROVED → DONE | bridge, or human for high risk | quality gates re-checked |
-| any non-terminal → CANCELLED | client | `bridge_cancel_task` |
+| any non-terminal → CANCELLED | client | `bridge_cancel_task`; the owning runner, in any process, kills its agent or check and frees the account within ~1 s |
 
 - The bridge, not any agent, decides REVIEW vs REWORK: it re-runs the verification commands.
 - `risk_level: high`, or a change under a sensitive path (migrations, auth, deploy, CI, secrets),

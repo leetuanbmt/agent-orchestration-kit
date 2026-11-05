@@ -75,6 +75,9 @@ def test_execute_cli_routes_progress_to_stderr(monkeypatch, capsys) -> None:
         def recover(self):
             pass
 
+        def stop(self):
+            pass
+
         async def execute_task(self, _task_id, wait=False):
             self.progress("[task #1] session started")
             return {"state": "REVIEW"}

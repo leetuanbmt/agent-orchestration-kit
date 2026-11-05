@@ -670,7 +670,12 @@ def build_prompt(task_id: str, spec: dict[str, Any], protected: list[str]) -> st
         "- Do not read, print or modify secrets or credentials.",
         "- No network access: do not install or upgrade dependencies.",
         "- Do not start other agents or the bridge itself.",
-        "- If the task cannot be done within scope, stop and return status \"blocked\" with why.",
+        "- If part of the task cannot be done within scope, first do every in-scope step you can",
+        "  and keep that work in place; then return status \"blocked\" with the out-of-scope or",
+        "  impossible items listed last in notes. Return \"blocked\" before editing anything only",
+        "  when no in-scope step can be done at all.",
+        "- Where the Context section says how to handle blockers or partial work, follow it over",
+        "  the rule above.",
         "- Final message: JSON matching the provided output schema.",
     ]
     return "\n".join(lines)

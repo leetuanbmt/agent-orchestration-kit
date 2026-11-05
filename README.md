@@ -313,9 +313,9 @@ States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED →
 | `READY` / `REWORK` / `FAILED` / `PAUSED` → `RUNNING` | Client or workflow driver | `bridge_execute_task`, `bridge_resume_task`, `bridge_run_workflow` |
 | `RUNNING → VERIFYING` | Bridge | The agent exited cleanly |
 | `RUNNING → FAILED` | Bridge | Timeout or crash (`BLOCKED` when the attempt budget is spent) |
-| `RUNNING → PAUSED` | Bridge | Quota, auth, network, missing CLI or interrupted runner; does not use the attempt budget |
+| `RUNNING` / `VERIFYING → PAUSED` | Bridge | Quota, auth, network, missing CLI or interrupted runner (a stop signal or a dead runner); does not use the attempt budget |
 | `VERIFYING → REVIEW` | Bridge | Scope clean, every verification command passed, agent reported `completed` |
-| `VERIFYING → REWORK` | Bridge | Any check failed (`BLOCKED` when the budget is spent) |
+| `VERIFYING → REWORK` | Bridge | Any check failed (`BLOCKED` when the budget is spent); an agent that reports `blocked` and changed nothing skips the checks (`verification.skipped`) |
 | `REVIEW → APPROVED` / `REWORK` / `BLOCKED` | Client or reviewer agent | `bridge_review_task` or reviewer run |
 | `REVIEW → APPROVED` | Bridge | No `review` stage and every gate passed |
 | `APPROVED → DONE` | Bridge, or a human for high risk | Quality gates re-checked |
@@ -323,7 +323,10 @@ States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED →
 
 A task runs at most `max_rework + 1` times (default 3). A runner that dies mid-run is detected on
 the next bridge start: the task becomes `PAUSED` (`INTERRUPTED`) and `bridge_resume_task`
-continues the same session.
+continues the same session. A runner that is stopped by SIGTERM, SIGINT, SIGHUP or SIGALRM (for
+example a caller's timeout on `execute`, `resume`, `plan` or `run-workflow`) parks its task the
+same way before it exits with 128 + the signal number, and gives the attempt back; `serve` shuts
+down the same way. Only SIGKILL leaves the task `RUNNING` until the next start.
 
 ## Security model and limitations
 
@@ -335,14 +338,19 @@ untrusted code.
 - **Paths.** Checked at task creation (absolute paths, `..`, `~`, symlink escape, protected
   paths, over-broad globs) and after each run (hash snapshot, full worktree diff, `HEAD` must not
   move). Protected paths (`.env*`, keys, `.git/`, `.ai/`, `.mcp.json`, `.claude/settings*.json`)
-  can never be allowed.
+  can never be allowed. The after-run check sees the files `git status` lists, so git-ignored
+  output (a build directory, `tools/bin/…`) is neither a scope violation nor part of the patch.
+  Top-level protected files and `.ai/config.json` / `.ai/orchestrator.yaml` are checked even
+  when ignored; an output path that is not ignored counts as an out-of-scope change.
 - **Verification.** Re-run by the bridge with argv lists only (no shell), allowlisted
   executables and a timeout.
 - **Approval.** Executors cannot approve. The client or a reviewer agent approves; the bridge
   approves only when the workflow has no `review` stage. High-risk or sensitive-path tasks need a
   human at an interactive terminal.
-- **Processes.** Agents start from argv lists in their own process group; timeout or cancel
-  sends SIGTERM, then SIGKILL. Orphaned groups from a dead runner are killed on the next start,
+- **Processes.** Agents and verification commands start from argv lists in their own process
+  group; timeout or cancel sends SIGTERM, then SIGKILL. The runner polls for a cancel every
+  second, in any process (a CLI `execute` too): it kills the agent or the running check, skips
+  the remaining checks and frees the account, and `cancel` waits for that before it returns. Orphaned groups from a dead runner are killed on the next start,
   only if the PID is a `codex`, `claude`, `opencode` or `agy` process.
 - **Environment and output.** Credential-shaped variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`,
   `*PASSWORD*`, `AWS_*`) are removed before an agent or verification command starts. Stored output
@@ -475,7 +483,7 @@ and performs no human action. It listens on `127.0.0.1` only and rejects other `
 | `health` reports NOT OK | An adapter CLI is missing or not logged in; a human logs in. |
 | `no eligible executor agent (…)` | Every executor is disabled, busy or unavailable; the reasons are listed per agent. |
 | Task `PAUSED` with `QUOTA` or `AUTH` | Wait for the quota window to reset, or fix the login; then `agent-bridge account-clear <name>` if the mark remains, and resume. With quota fallback enabled, resume may move the task to another account. |
-| Task `PAUSED` with `INTERRUPTED` | The runner died; `bridge_resume_task` continues the session. |
+| Task `PAUSED` with `INTERRUPTED` | The runner was stopped by a signal or died; `bridge_resume_task` continues the session, `cancel` drops it. |
 | `agent_review_failed` event | The reviewer agent errored; the task waits in `REVIEW` for `bridge_review_task`. |
 | Workflow `WAITING` | `detail.waiting` and the task states say what needs attention; run `bridge_run_workflow` again afterwards. |
 | `ConflictError … already writing` | One writer per worktree; wait, or use another worktree. |

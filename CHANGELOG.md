@@ -55,6 +55,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- A stop signal (SIGTERM, SIGINT, SIGHUP, SIGALRM, e.g. a caller's timeout) to `execute`,
+  `resume`, `plan` or `run-workflow` no longer leaves the agent running with ppid 1 and the task
+  `RUNNING`: the bridge kills the agent or the running check, parks the task `PAUSED`
+  (`INTERRUPTED`, attempt given back) and exits 128 + signal. `serve` shuts down the same way.
+- `cancel` from another process now stops that process's verification too: the running check
+  is killed, the rest are skipped and the account lock is released before `cancel` returns
+  (up to 15 s). Previously the runner kept running every check and held the account.
+- An agent that reports `blocked` without changing anything no longer triggers the
+  verification commands; the attempt records `verification.skipped`.
+- The executor prompt no longer tells the agent to stop at once when part of the task is out
+  of scope: it does every in-scope step first, keeps that work, lists what is out of scope
+  last, and follows the spec's `context` on how to handle blockers.
 - Let QUOTA marks lapse when a window open at mark time has reset and snapshot quota is positive; AUTH and accounts without snapshots still require `account-clear`.
 - `init` works when `.claude/skills` (or another kit directory) is a symlink to a directory
   inside the project, such as a shared `.agents/skills`: the link is followed and the skill is

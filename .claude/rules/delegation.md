@@ -9,7 +9,9 @@ Every `bridge_create_task` call must give:
 - `objective`: the outcome in one or two sentences.
 - `context`: facts the executor cannot discover cheaply: relevant files and symbols,
   conventions, verified tool behaviour, constraints (no network in the sandbox, no new
-  dependencies unless the task says so, how to run tests inside the sandbox).
+  dependencies unless the task says so, how to run tests inside the sandbox). The executor
+  prompt says to finish every in-scope step before reporting `blocked` and to follow `context`
+  on how to handle blockers or partial work, so put task-specific rules for that here.
 - `scope`: the design to implement, interfaces other tasks rely on, what not to change.
 - `allowed_paths`: the narrowest project-relative paths/globs (`*` stays in one directory,
   `**` crosses directories). Protected files (`.env*`, keys, `.git/`, `.ai/`, `.mcp.json`,

@@ -313,9 +313,9 @@ thái kết thúc.
 | `READY` / `REWORK` / `FAILED` / `PAUSED` → `RUNNING` | Client hoặc trình điều khiển workflow | `bridge_execute_task`, `bridge_resume_task`, `bridge_run_workflow` |
 | `RUNNING → VERIFYING` | Bridge | Agent kết thúc bình thường |
 | `RUNNING → FAILED` | Bridge | Timeout hoặc crash (`BLOCKED` khi hết ngân sách attempt) |
-| `RUNNING → PAUSED` | Bridge | Quota, auth, mạng, thiếu CLI hoặc runner bị gián đoạn; không tốn ngân sách attempt |
+| `RUNNING` / `VERIFYING → PAUSED` | Bridge | Quota, auth, mạng, thiếu CLI hoặc runner bị gián đoạn (nhận tín hiệu dừng hoặc runner chết); không tốn ngân sách attempt |
 | `VERIFYING → REVIEW` | Bridge | Không vi phạm phạm vi, mọi lệnh verification đều qua, agent báo `completed` |
-| `VERIFYING → REWORK` | Bridge | Có kiểm tra thất bại (`BLOCKED` khi hết ngân sách) |
+| `VERIFYING → REWORK` | Bridge | Có kiểm tra thất bại (`BLOCKED` khi hết ngân sách); agent báo `blocked` mà không thay đổi gì thì bỏ qua các kiểm tra (`verification.skipped`) |
 | `REVIEW → APPROVED` / `REWORK` / `BLOCKED` | Client hoặc reviewer agent | `bridge_review_task` hoặc lượt chạy của reviewer |
 | `REVIEW → APPROVED` | Bridge | Không có stage `review` và mọi gate đều qua |
 | `APPROVED → DONE` | Bridge, hoặc con người với task rủi ro cao | Kiểm tra lại quality gate |
@@ -323,7 +323,10 @@ thái kết thúc.
 
 Mỗi task chạy tối đa `max_rework + 1` lần (mặc định 3). Runner chết giữa chừng được phát hiện ở
 lần khởi động bridge kế tiếp: task chuyển sang `PAUSED` (`INTERRUPTED`) và `bridge_resume_task`
-tiếp tục đúng session đó.
+tiếp tục đúng session đó. Runner bị dừng bằng SIGTERM, SIGINT, SIGHUP hoặc SIGALRM (ví dụ timeout
+của bên gọi `execute`, `resume`, `plan` hoặc `run-workflow`) cũng đưa task về trạng thái đó rồi
+mới thoát với mã 128 + số hiệu tín hiệu, và trả lại attempt; `serve` cũng dừng theo cách này.
+Chỉ SIGKILL mới để task ở `RUNNING` tới lần khởi động sau.
 
 ## Mô hình bảo mật và giới hạn
 
@@ -335,14 +338,20 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
 - **Path.** Kiểm tra khi tạo task (đường dẫn tuyệt đối, `..`, `~`, symlink thoát ra ngoài, path
   protected, glob quá rộng) và sau mỗi lượt chạy (hash snapshot, diff toàn worktree, `HEAD` không
   được đổi). Path protected (`.env*`, key, `.git/`, `.ai/`, `.mcp.json`,
-  `.claude/settings*.json`) không bao giờ được cho phép.
+  `.claude/settings*.json`) không bao giờ được cho phép. Kiểm tra sau lượt chạy chỉ thấy các file
+  `git status` liệt kê, nên output bị git-ignore (thư mục build, `tools/bin/…`) không bị tính là
+  vi phạm phạm vi và không nằm trong patch. File protected ở thư mục gốc và `.ai/config.json` /
+  `.ai/orchestrator.yaml` vẫn được kiểm tra dù bị ignore; output không bị ignore thì bị tính là
+  thay đổi ngoài phạm vi.
 - **Verification.** Bridge tự chạy lại, chỉ dùng argv (không qua shell), file thực thi phải nằm
   trong allowlist, có timeout.
 - **Duyệt.** Executor không tự approve được. Client hoặc reviewer agent approve; bridge chỉ tự
   approve khi workflow không có stage `review`. Task rủi ro cao hoặc đụng path nhạy cảm cần con
   người duyệt trong terminal interactive.
-- **Process.** Agent khởi chạy từ argv list trong process group riêng; khi timeout hoặc bị huỷ,
-  bridge gửi SIGTERM rồi SIGKILL. Process group mồ côi của runner đã chết bị kill ở lần khởi động
+- **Process.** Agent và lệnh verification khởi chạy từ argv list trong process group riêng; khi
+  timeout hoặc bị huỷ, bridge gửi SIGTERM rồi SIGKILL. Runner kiểm tra lệnh huỷ mỗi giây, ở bất kỳ
+  process nào (kể cả CLI `execute`): nó kill agent hoặc lệnh kiểm tra đang chạy, bỏ các kiểm tra
+  còn lại và giải phóng account, và `cancel` chờ việc đó xong rồi mới trả về. Process group mồ côi của runner đã chết bị kill ở lần khởi động
   sau, chỉ khi PID là process `codex`, `claude`, `opencode` hoặc `agy`.
 - **Environment và output.** Biến có dạng credential (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`,
   `*PASSWORD*`, `AWS_*`) bị xoá trước khi agent hoặc lệnh verification chạy. Output được lưu đều
@@ -476,7 +485,7 @@ các header `Host` khác.
 | `health` báo NOT OK | Thiếu adapter CLI hoặc CLI chưa đăng nhập; con người đăng nhập. |
 | `no eligible executor agent (…)` | Mọi executor đều bị tắt, bận hoặc không sẵn sàng; lý do được liệt kê theo từng agent. |
 | Task `PAUSED` với `QUOTA` hoặc `AUTH` | Chờ cửa sổ quota reset hoặc sửa login; sau đó chạy `agent-bridge account-clear <name>` nếu dấu vẫn còn, rồi resume. Khi bật quota fallback, resume có thể chuyển task sang account khác. |
-| Task `PAUSED` với `INTERRUPTED` | Runner đã chết; `bridge_resume_task` tiếp tục session. |
+| Task `PAUSED` với `INTERRUPTED` | Runner bị dừng bằng tín hiệu hoặc đã chết; `bridge_resume_task` tiếp tục session, `cancel` huỷ nó. |
 | Event `agent_review_failed` | Reviewer agent gặp lỗi; task chờ ở `REVIEW` để gọi `bridge_review_task`. |
 | Workflow `WAITING` | `detail.waiting` và trạng thái task cho biết cần xử lý gì; xử lý xong thì chạy lại `bridge_run_workflow`. |
 | `ConflictError … already writing` | Mỗi worktree chỉ một tiến trình ghi; chờ, hoặc dùng worktree khác. |

@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -48,6 +50,24 @@ VIEWS = {"account-list": "accounts_view", "health": "health_view", "agents": "ag
          "list": "tasks_view", "tasks": "projects_view"}
 HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove"}
 EXAMPLES = install.KIT / "examples"
+# Commands that drive agent runs: a stop signal lets them kill their agent and park the task.
+RUN_CMDS = {"execute", "resume", "plan", "run-workflow"}
+# A caller's timeout (SIGALRM from `alarm`, SIGTERM from `timeout`) or Ctrl-C; the default action
+# would end the bridge at once and leave its agent's process group running with the task RUNNING.
+STOP_SIGNALS = tuple(getattr(signal, name) for name in ("SIGTERM", "SIGINT", "SIGHUP", "SIGALRM")
+                     if hasattr(signal, name))
+_signalled: list[int] = []
+
+
+def _on_stop_signals(stop: Any) -> None:
+    def handler(signum: int) -> None:
+        _signalled.append(signum)
+        stop()
+    loop = asyncio.get_running_loop()
+    for sig in STOP_SIGNALS:
+        # ponytail: Windows event loops have no signal handlers; Ctrl-C keeps its default there.
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(sig, handler, sig)
 
 
 def _config_here() -> Any:
@@ -87,6 +107,8 @@ def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
 async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "serve":
         from .server import _serve
+        # Cancelling the server runs its shutdown, which stops and parks every run it owns.
+        _on_stop_signals(asyncio.current_task().cancel)  # type: ignore[union-attr]
         await _serve()
         return None
     if args.cmd == "init":
@@ -209,6 +231,10 @@ async def _run(args: argparse.Namespace) -> Any:
         b.progress = lambda line: print(line, file=sys.stderr, flush=True)
     if not readonly and args.cmd not in {"approve", "reassign"}:
         b.recover()
+    if args.cmd in RUN_CMDS:
+        _on_stop_signals(b.stop)
+    elif args.cmd not in {"approve", "reassign"}:  # those wait on input(); keep the default
+        _on_stop_signals(asyncio.current_task().cancel)  # type: ignore[union-attr]
     match args.cmd:
         case "account-clear":
             return b.clear_account(_pick(args, {k: a.provider for k, a in b.orch.accounts.items()}))
@@ -367,6 +393,10 @@ def main(argv: list[str] | None = None) -> None:
         return
     try:
         out = asyncio.run(_run(args))
+    except asyncio.CancelledError:
+        if not _signalled:
+            raise
+        raise SystemExit(128 + _signalled[0]) from None
     except (ValueError, KeyError, RuntimeError) as e:
         print(f"error: {e}", file=sys.stderr)
         raise SystemExit(1) from e
@@ -386,6 +416,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "storage" and any(e["status"] in ("failed", "corrupt", "changed")
                                      for e in out.get("sources", []) + out.get("entries", [])):
         raise SystemExit(1)
+    if _signalled:
+        raise SystemExit(128 + _signalled[0])  # the run was stopped; its task is PAUSED
     if args.cmd == "health" and not out["ok"]:
         raise SystemExit(1)  # scripts and CI can gate on `agent-bridge health`
 
