@@ -29,7 +29,7 @@ from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, Orchestrato
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .registry import remember_project
-from .review import EvidenceError, parse_command, protected_dirty, snapshot
+from .review import EvidenceError, content_hashes, parse_command, protected_dirty, snapshot
 from .runner import _write_attempt_log_line as _write_attempt_log_line
 from .runner import TaskRunner
 from .security import hook_settings_error, PathError, process_started, redact, validate_pattern
@@ -649,6 +649,25 @@ class Bridge:
             )
         if need_review and not approved:
             raise TransitionError(f"{task_id}: quality gate failed (no approving review)")
+        self._assert_verified_content(task_id, last)
+
+    def _assert_verified_content(self, task_id: str, last: dict[str, Any]) -> None:
+        """Approval and closing apply to what was verified: every file the attempt touched must
+        still have its verified content. Other files (other tasks' work) do not matter."""
+        bound = (last.get("changes") or {}).get("after_hashes")
+        if bound is None:  # verified before approvals were bound to content
+            self.store.log(task_id, Actor.BRIDGE, "approval_unbound",
+                           {"reason": "attempt verified without content hashes"})
+            return
+        now = content_hashes(self.root, list(bound))
+        moved = sorted(f for f in bound if now[f] != bound[f])
+        if moved:
+            state = self.store.get(task_id)["state"]
+            fix = ("send it back (review --decision rework) and resume it to verify again"
+                   if state == State.REVIEW else
+                   "restore the verified content, or cancel the task and create a new one")
+            raise TransitionError(f"{task_id}: worktree changed since verification: "
+                                  f"{', '.join(moved)}; {fix}")
 
     def _close(self, task_id: str, actor: Actor,
                event: tuple[str, Any] | None = None) -> dict[str, Any]:
