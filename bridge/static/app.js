@@ -58,7 +58,7 @@ const I18N = {
     waitingLine: '{n} waiting on you', openOverview: 'Open overview',
     stateAvailable: 'Available', stateQuota: 'Out of quota', stateAuth: 'Login needed',
     slotsShort: '{running} of {max} busy', slotsBusy: '{running} of {max} slots busy',
-    pctLeft: '{n}% left', pctUsed: '{n}% used', resetsIn: 'resets in {time}', resetsNow: 'resets now', resetDone: 'reset',
+    pctLeft: '{n}% left', pctUsed: '{n}% used', resetsIn: 'resets in {time}', resetsNow: 'resets now', resetsOn: 'resets {date}', resetDone: 'reset',
     noQuotaShort: 'No quota reported yet',
     noQuotaLong: 'No quota reported yet. It appears after the first run on this account.',
     fallbackOnLine: 'Quota fallback is on: a task out of quota moves to the next eligible agent.',
@@ -129,7 +129,7 @@ const I18N = {
     waitingLine: '{n} mục đang chờ bạn', openOverview: 'Mở tổng quan',
     stateAvailable: 'Sẵn sàng', stateQuota: 'Hết quota', stateAuth: 'Cần đăng nhập',
     slotsShort: '{running}/{max} đang bận', slotsBusy: '{running}/{max} slot đang bận',
-    pctLeft: 'còn {n}%', pctUsed: 'đã dùng {n}%', resetsIn: 'đặt lại sau {time}', resetsNow: 'đặt lại ngay', resetDone: 'đã đặt lại',
+    pctLeft: 'còn {n}%', pctUsed: 'đã dùng {n}%', resetsIn: 'đặt lại sau {time}', resetsNow: 'đặt lại ngay', resetsOn: 'đặt lại vào {date}', resetDone: 'đã đặt lại',
     noQuotaShort: 'Chưa có báo cáo quota',
     noQuotaLong: 'Chưa có báo cáo quota. Thông tin sẽ xuất hiện sau lần chạy đầu tiên trên tài khoản này.',
     fallbackOnLine: 'Chuyển dự phòng khi hết quota đang bật: tác vụ hết quota sẽ chuyển sang agent phù hợp tiếp theo.',
@@ -385,7 +385,7 @@ function renderMonitor(scoped, tasks) {
   };
   $('summary').hidden = !overview; attr($('summary'), 'aria-label', tr('summary')); attr($('summary'), 'role', 'group');
   patch($('summary'), SUMMARY, ([key]) => key, ([key]) => [counts[key]], (node, [key, family]) => {
-    attr(node, 'class', `counter counter-${family}`);
+    attr(node, 'class', `counter counter-${family}${counts[key] === 0 ? ' counter-zero' : ''}`);
     const glyph = el('span', GLYPHS[family], 'counter-glyph'); attr(glyph, 'aria-hidden', 'true');
     const parts = [glyph, el('span', counts[key], 'counter-value'), el('span', groupLabel(key), 'counter-label')];
     if (key === 'done24h') { const box = el('div', undefined, 'counter-static'); box.append(...parts); node.append(box); return; }
@@ -433,10 +433,18 @@ function renderBoard(filtered) {
   patch($('finished-cards'), finished.slice(0, 20), t => `${t.pid}:${t.task_id}`, cardSignature, renderCard);
 }
 const clampPct = value => Math.max(0, Math.min(100, Number(value) || 0));
-function resetText(resetsAt) {
-  const left = resetsAt - Date.now() / 1000;
-  return left <= 0 ? tr('resetsNow') : tr('resetsIn', {time: duration(left)});
+// A reset more than a week away reads better as a date than as a day count.
+function resetText(resetsAt, now = Date.now()) {
+  const left = resetsAt - now / 1000;
+  if (left <= 0) return tr('resetsNow');
+  if (left <= 7 * 86400) return tr('resetsIn', {time: duration(left)});
+  const when = new Date(resetsAt * 1000), options = {month: 'short', day: 'numeric'};
+  if (when.getFullYear() !== new Date(now).getFullYear()) options.year = 'numeric';
+  return tr('resetsOn', {date: when.toLocaleDateString(state.lang, options)});
 }
+const resetTitle = resetsAt => new Date(resetsAt * 1000).toLocaleString(state.lang);
+// The most used window of an account, or null.
+const tightestWindow = account => (account.windows || []).reduce((a, b) => (a && a.used_pct >= b.used_pct ? a : b), null);
 function accountBadge(account) {
   const [family, label] = ACCOUNT_STATES[account.state] || ACCOUNT_STATES.available;
   return badge(family, tr(label));
@@ -451,7 +459,7 @@ function windowLabel(win) {
 function quotaSummary(account) {
   const windows = account.windows || [];
   if (!windows.length && account.remaining_pct == null) return tr('noQuotaShort');
-  const tightest = windows.reduce((a, b) => (a && a.used_pct >= b.used_pct ? a : b), null);
+  const tightest = tightestWindow(account);
   const left = account.remaining_pct ?? 100 - tightest.used_pct;
   const parts = [tr('pctLeft', {n: Math.round(clampPct(left))})];
   if (tightest?.resets_at != null) parts.push(resetText(tightest.resets_at));
@@ -499,9 +507,10 @@ function renderCapacity(scoped, groups) {
     attr(node, 'role', 'listitem'); attr(node, 'class', 'capacity-row');
     const who = el('span', undefined, 'capacity-name'); who.append(el('strong', account.name));
     if (account.provider) who.append(el('span', account.provider, 'muted'));
+    const quota = el('span', quotaSummary(account), 'capacity-quota'), tightest = tightestWindow(account);
+    if (tightest?.resets_at != null) attr(quota, 'title', resetTitle(tightest.resets_at));
     node.append(who, accountBadge(account),
-      el('span', tr('slotsShort', {running: account.running, max: account.max_concurrency}), 'capacity-slots'),
-      el('span', quotaSummary(account), 'capacity-quota'));
+      el('span', tr('slotsShort', {running: account.running, max: account.max_concurrency}), 'capacity-slots'), quota);
   });
   text($('capacity-empty'), tr('noAccounts')); $('capacity-empty').hidden = !loaded || accounts.length > 0;
   text($('capacity-all'), tr('showAllAccounts')); $('capacity-all').hidden = accounts.length <= CAPACITY_ROWS;
@@ -517,7 +526,9 @@ function quotaMeter(win) {
   const parts = [tr('pctUsed', {n: used})];
   if (win.resets_at != null) parts.push(resetText(win.resets_at));
   else if (used === 0) parts.push(tr('resetDone'));
-  box.append(el('div', label, 'quota-label'), meter, el('p', parts.join(' · '), 'quota-text muted'));
+  const caption = el('p', parts.join(' · '), 'quota-text muted');
+  if (win.resets_at != null) attr(caption, 'title', resetTitle(win.resets_at));
+  box.append(el('div', label, 'quota-label'), meter, caption);
   return box;
 }
 function renderAccountCard(node, account) {
@@ -715,8 +726,9 @@ function renderProjects(groups, tasks) {
   groups = [...groups].sort((a, b) => totals(b.members).needs - totals(a.members).needs || Math.max(...b.members.map(p => p.updated_at || 0)) - Math.max(...a.members.map(p => p.updated_at || 0)));
   patch($('project-cards'), groups, g => g.project.pid, g => [g, tasks, expanded.has(g.project.pid), Math.floor(Date.now() / 1000)], (card, group) => {
     attr(card, 'class', 'project-card'); const project = group.project, count = totals(group.members);
-    const head = el('div', undefined, 'card-header'), title = el('div');
-    title.append(el('h2', project.name), el('div', project.root, 'muted root'), el('p', tr('projectCounts', count)));
+    const head = el('div', undefined, 'card-header'), title = el('div', undefined, 'card-title');
+    const root = el('div', project.root, 'muted root'); attr(root, 'title', project.root || '');
+    title.append(el('h2', project.name), root, el('p', tr('projectCounts', count)));
     head.append(title, button(tr('viewTasks'), () => setState({view: 'tasks', p: project.pid, w: '', s: 'open', q: ''}))); card.append(head);
     if (project.root_missing) card.append(el('p', tr('rootMissing'), 'muted'));
     if (project.error) card.append(el('p', tr('unreadable'), 'muted'));
