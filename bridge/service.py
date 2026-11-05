@@ -18,7 +18,7 @@ from typing import Any
 
 from . import osutil, progress, storage
 from .accounts import Account, AccountLock, account_key, binary, discover, load_registry, \
-    login_status, remember_project, resolve, resolve_profile
+    login_status, resolve, resolve_profile
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
 from .executor import ADAPTERS, PLAN_SCHEMA, Adapter, RunRequest, RunResult, build_plan_prompt, \
     build_prompt, build_rework_prompt, kill_stale
@@ -28,6 +28,7 @@ from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, Tr
 from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
+from .registry import remember_project
 from .review import parse_command, snapshot
 from .runner import _write_attempt_log_line as _write_attempt_log_line
 from .runner import TaskRunner

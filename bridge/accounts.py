@@ -14,8 +14,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import osutil, storage
+from . import osutil, registry, storage
 from .config import BridgeConfig
+from .registry import known_projects as known_projects
+from .registry import registry_dir
+from .registry import remember_project as remember_project
 from .state import ConflictError
 
 # Env var that points each provider's CLI at an isolated auth home. agy has no such variable
@@ -24,7 +27,6 @@ from .state import ConflictError
 HOME_ENV = {"openai": "CODEX_HOME", "anthropic": "CLAUDE_CONFIG_DIR", "google": "HOME"}
 GLOBAL_HOME = {"openai": ".codex", "anthropic": ".claude", "google": ".gemini"}
 # Machine-wide accounts created by `agent-bridge account-add`, usable from every project.
-REGISTRY_DIR = ".agent-bridge"
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 
 
@@ -181,10 +183,8 @@ def global_login_marker(cfg: BridgeConfig, provider: str) -> object:
 
 
 # ---- machine-wide registry --------------------------------------------------------------------
-
-
-def registry_dir() -> Path:
-    return Path.home() / REGISTRY_DIR
+# The project list lives in bridge/registry.py; its lock keeps the name callers know here.
+_projects_lock = registry.projects_lock
 
 
 def load_registry() -> dict[str, dict[str, str | None]]:
@@ -203,37 +203,6 @@ def _save_registry(data: dict[str, dict[str, str | None]]) -> None:
     tmp = base / "accounts.json.tmp"
     tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
     os.replace(tmp, base / "accounts.json")
-
-
-def known_projects() -> list[str]:
-    """Project roots (worktrees included) where agent-bridge has run on this machine."""
-    with contextlib.suppress(OSError, ValueError):
-        data = json.loads((registry_dir() / "projects.json").read_text())
-        if isinstance(data, list):
-            return [p for p in data if isinstance(p, str)]
-    return []
-
-
-@contextlib.contextmanager
-def _projects_lock():
-    base = registry_dir()
-    base.mkdir(mode=0o700, exist_ok=True)
-    with (base / "projects.lock").open("a") as handle:
-        osutil.lock(handle)
-        yield
-
-
-def remember_project(root: Path) -> None:
-    """Add a project to the machine-wide list `agent-bridge tasks` reads; best effort."""
-    projects = known_projects()
-    if str(root) in projects:
-        return
-    with contextlib.suppress(OSError), _projects_lock():
-        projects = known_projects()
-        base = registry_dir()
-        tmp = base / f"projects.json.{os.getpid()}.tmp"
-        tmp.write_text(json.dumps(sorted({*projects, str(root)}), indent=2) + "\n")
-        os.replace(tmp, base / "projects.json")
 
 
 def register(name: str, provider: str, home: str | None = None) -> Account:

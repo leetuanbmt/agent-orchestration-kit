@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from bridge import accounts, cli, install, progress, storage
+from bridge import accounts, cli, install, progress, registry, storage
 from bridge.service import Bridge
 from bridge.state import Store, SCHEMA
 from tests.conftest import git
@@ -138,9 +138,9 @@ def test_wal_worktree(repo, monkeypatch):
 def test_statuses(repo, tmp_path, monkeypatch, capsys):
     missing, ordinary = tmp_path / "missing", tmp_path / "ordinary"
     ordinary.mkdir()
-    monkeypatch.setattr(accounts, "known_projects", lambda: [
+    monkeypatch.setattr(registry, "known_projects", lambda: [
         str(missing), str(ordinary), str(repo / "src"), str(repo)])
-    monkeypatch.setattr(progress, "discover_roots", lambda here=None: [])
+    monkeypatch.setattr(registry, "with_worktrees", lambda roots: [])
     entries = storage.plan()
     assert [e["status"] for e in entries] == ["missing", "not_git", "not_git", "no_state"]
     assert entries[2]["error"] == "not a worktree top level"
