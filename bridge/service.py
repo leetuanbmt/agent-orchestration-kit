@@ -378,6 +378,19 @@ class Bridge:
             if (path := shutil.which(binary(self.cfg, provider)))]
         return listing
 
+    def usage_report(self, name: str | None = None) -> dict[str, Any]:
+        """Per-account state, limit checks with spend, and provider quota; read-only.
+
+        Limits are human-owned config (.ai/orchestrator.yaml); this only reports them."""
+        if name is not None and name not in self.orch.accounts:
+            raise ValueError(f"unknown account {name!r}; known: {sorted(self.orch.accounts)}")
+        names = [name] if name is not None else list(self.orch.accounts)
+        return {"accounts": [
+            {"name": n, "provider": self.orch.accounts[n].provider,
+             "state": self._account_state(n, key=self._key(n)),
+             "limits": self._limit_report(n), "quota": self._account_quota(n)}
+            for n in names], "generated_at": time.time()}
+
     def list_agents(self, logins: dict[str, bool | None] | None = None) -> dict[str, Any]:
         """`logins` (account → logged in, from a listing already made) skips the login probes.
 

@@ -47,7 +47,7 @@ def _server_entry() -> dict[str, Any]:
 
 # Commands a person reads: a table in a terminal, JSON with --json or through a pipe.
 VIEWS = {"account-list": "accounts_view", "health": "health_view", "agents": "agents_view",
-         "list": "tasks_view", "tasks": "projects_view"}
+         "list": "tasks_view", "tasks": "projects_view", "usage": "usage_view"}
 HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove"}
 EXAMPLES = install.KIT / "examples"
 # Commands that drive agent runs: a stop signal lets them kill their agent and park the task.
@@ -223,7 +223,8 @@ async def _run(args: argparse.Namespace) -> Any:
             raise ValueError("account-login requires a configured named account (with its own "
                              "home)")
         return _login(cfg, acc, args.device_auth)
-    readonly = args.cmd in {"health", "status", "result", "list", "agents", "workflow-status"}
+    readonly = args.cmd in {"health", "status", "result", "list", "agents", "workflow-status",
+                            "usage"}
     if args.cmd == "status" and args.wait > 0:
         readonly = False
     b = Bridge(create=False) if readonly else Bridge()
@@ -254,6 +255,8 @@ async def _run(args: argparse.Namespace) -> Any:
             return await b.list_tasks(args.state, args.limit)
         case "agents":
             return b.list_agents()
+        case "usage":
+            return b.usage_report(args.account)
         case "plan":
             return await b.plan(args.objective, args.context, wait=True)
         case "run-workflow":
@@ -296,6 +299,8 @@ def main(argv: list[str] | None = None) -> None:
                                        "example; without one, list the examples").add_argument(
         "example", nargs="?", choices=sorted(p.stem for p in EXAMPLES.glob("*.yaml")))
     sub.add_parser("agents", help="list agents, roles and availability")
+    sub.add_parser("usage", help="per-account usage, limits, remaining quota and reset "
+                                 "times").add_argument("account", nargs="?")
     sub.add_parser("account-list", help="usable accounts on this machine").add_argument(
         "--all", action="store_true",
         help="also list switch profiles, homes not added and CLIs without an account")

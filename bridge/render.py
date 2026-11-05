@@ -75,7 +75,10 @@ def account_rows(listing: dict[str, Any],
     rows: list[tuple[str, tuple[Any, ...]]] = []
     for acc in listing["accounts"]:
         # The stored state only changes after a failed run; a failed login probe outranks it.
+        limits = acc.get("limits")
         state = (Text("logged out", style="red") if acc.get("logged_in") is False
+                 else Text("over limit", style="yellow")
+                 if isinstance(limits, dict) and limits.get("status") == "limited"
                  else acc.get("state", "-"))
         # Keyed by id; shown by name (the Provider column tells a reused name apart).
         rows.append((acc["name"], (display_name(acc["name"]), acc.get("provider", "openai"),
@@ -134,6 +137,51 @@ def accounts_view(listing: dict[str, Any], width: int = NARROW,
                 style="dim")
     note.append(" --json for the full data.")
     return Group(table, *steps, note)
+
+
+def _amount(value: Any, unit: str) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.1f}%" if unit == "pct" else f"${value:.2f}"
+
+
+def _when(ts: Any) -> str:
+    if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+        return "-"
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
+
+
+def usage_view(report: dict[str, Any]) -> Group:
+    """One row per limit check of each account; accounts without limits show today's spend."""
+    table = Table("Account", "Limit", "Used", "Threshold", "Remaining", "Resets", "Source",
+                  "Status")
+    for acc in report["accounts"]:
+        limits = acc.get("limits") or {}
+        name = display_name(acc["name"])
+        status = limits.get("status", "none")
+        if status == "none" or not limits.get("checks"):
+            day = (limits.get("spend") or {}).get("day") or {}
+            used = (f"${day.get('spent', 0.0) + day.get('reserved', 0.0):.2f} today"
+                    if day.get("runs") else "-")
+            table.add_row(name, "(none)" if status == "none" else f"({status})", used,
+                          "-", "-", "-", "-", "disabled" if status == "disabled" else "-")
+            continue
+        for check in limits["checks"]:
+            unit = check.get("unit", "pct")
+            source = check.get("source", "-")
+            if status == "disabled":
+                mark: Any = Text("disabled", style="dim")
+            elif check.get("breached"):
+                mark = Text("over", style="red")
+            else:
+                mark = "ok"
+            table.add_row(name, check["limit"], _amount(check.get("used"), unit),
+                          _amount(check.get("threshold"), unit),
+                          _amount(check.get("remaining"), unit), _when(check.get("resets_at")),
+                          Text(source, style="dim") if source == "unavailable" else source, mark)
+    note = Text("\nLimits are set by a human in .ai/orchestrator.yaml "
+                "(accounts.<name>.limits); --json for the full data.", style="dim")
+    return Group(table, note)
 
 
 def health_view(h: dict[str, Any]) -> Group:
