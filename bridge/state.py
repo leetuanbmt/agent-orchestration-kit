@@ -212,6 +212,20 @@ class _LockedConnection(sqlite3.Connection):
         return self.cursor().executescript(*args)
 
 
+def _use_wal(conn: sqlite3.Connection, wait_s: float = 10.0) -> None:
+    """Switch to WAL. On a brand-new file several processes can race for it, and SQLite answers
+    "database is locked" at once instead of waiting: retry until the busy timeout's worth."""
+    deadline = time.monotonic() + wait_s
+    while True:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e) or time.monotonic() > deadline:
+                raise
+            time.sleep(0.05)
+
+
 def _connect(path: Path, lock: threading.RLock) -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=10, isolation_level=None, check_same_thread=False,
                            factory=_LockedConnection)
@@ -232,7 +246,7 @@ class Store:
             path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.db = _connect(path, self._lock)
-        self.db.execute("PRAGMA journal_mode=WAL")
+        _use_wal(self.db)
         if not memory:
             path.chmod(0o600)
         self.db.execute("PRAGMA foreign_keys=ON")
@@ -242,23 +256,16 @@ class Store:
                 Path(str(path) + suffix).chmod(0o600)
             except OSError:
                 pass
-        columns = {r["name"] for r in self.db.execute("PRAGMA table_info(tasks)")}
-        for column in ("account", "agent", "workflow_id", "codex_started"):  # databases from older versions
-            if column not in columns:
-                self.db.execute(f"ALTER TABLE tasks ADD COLUMN {column} TEXT")
-        columns = {r["name"] for r in self.db.execute("PRAGMA table_info(workflows)")}
-        for column, kind in (("runner_pid", "INTEGER"), ("runner_started", "TEXT")):
-            if column not in columns:
-                self.db.execute(f"ALTER TABLE workflows ADD COLUMN {column} {kind}")
-        columns = {r["name"] for r in self.db.execute("PRAGMA table_info(attempts)")}
-        for column in ("review",):
-            if column not in columns:
-                self.db.execute(f"ALTER TABLE attempts ADD COLUMN {column} TEXT")
+        # Databases from older versions (and every new one: SCHEMA predates these columns).
+        self._add_columns(self.db, "tasks", {c: "TEXT" for c in (
+            "account", "agent", "workflow_id", "codex_started")})
+        self._add_columns(self.db, "workflows", {"runner_pid": "INTEGER", "runner_started": "TEXT"})
+        self._add_columns(self.db, "attempts", {"review": "TEXT"})
         self.shared = None
         if shared is not None:
             shared.parent.mkdir(parents=True, exist_ok=True)
             self.shared = _connect(shared, self._lock)
-            self.shared.execute("PRAGMA journal_mode=WAL")
+            _use_wal(self.shared)
             shared.chmod(0o600)
             self.shared.executescript("""
                 CREATE TABLE IF NOT EXISTS accounts (
@@ -274,11 +281,25 @@ class Store:
                 except OSError:
                     pass
         self.usage_db.executescript(USAGE_SCHEMA)
-        columns = {r["name"] for r in self.usage_db.execute("PRAGMA table_info(account_usage)")}
-        if "gated" not in columns:  # ledgers from older versions: their rows are ungated
-            self.usage_db.execute(
-                "ALTER TABLE account_usage ADD COLUMN gated INTEGER NOT NULL DEFAULT 0")
+        # Ledgers from older versions: their rows are ungated.
+        self._add_columns(self.usage_db, "account_usage", {"gated": "INTEGER NOT NULL DEFAULT 0"})
         self._started = process_started(os.getpid())
+
+    def _add_columns(self, conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+        """Add the missing columns, checking and altering in one BEGIN IMMEDIATE transaction:
+        processes opening a database at the same moment would otherwise both see a column
+        missing and the second ALTER would fail with "duplicate column name"."""
+        with self._lock:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+                for column, kind in columns.items():
+                    if column not in have:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:

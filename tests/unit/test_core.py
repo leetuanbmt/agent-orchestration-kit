@@ -446,3 +446,28 @@ def test_bounded_patch(repo: Path) -> None:
     (repo / "z_padding.txt").write_text("pad\n" * 12000)
     d = diff(repo, before, [])
     assert "a_evil.py" in d["patch"] and "os.system" in d["patch"] and d["patch_truncated"]
+
+
+# @pt.id KIT-UNIT-051-concurrent-schema
+# @pt.item Many processes opening a new database at once
+# @pt.condition three rounds of 12 processes started together, each opening a Store on the same fresh database file
+# @pt.expected every process succeeds and the database has every migrated column once
+# @pt.target bridge.state.Store._add_columns
+# @pt.method unit
+# @pt.legacy QA-BUG-007: two processes both saw a column missing and the second ALTER failed with "duplicate column name"
+def test_concurrent_schema_creation(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+    code = ("import sys, time; from pathlib import Path; from bridge.state import Store; "
+            "time.sleep(max(0, float(sys.argv[2]) - time.time())); Store(Path(sys.argv[1]))")
+    kit = Path(__file__).resolve().parents[2]
+    for round_ in range(3):
+        db = tmp_path / f"r{round_}" / "bridge.db"
+        start = str(__import__("time").time() + 1.5)
+        procs = [subprocess.Popen([sys.executable, "-c", code, str(db), start], cwd=kit,
+                                  stderr=subprocess.PIPE, text=True) for _ in range(12)]
+        errors = [p.communicate(timeout=60)[1] for p in procs if p.wait(timeout=60) != 0]
+        assert errors == [], errors[0][-500:]
+    from bridge.state import Store
+    columns = [r["name"] for r in Store(db).db.execute("PRAGMA table_info(tasks)")]
+    assert columns.count("codex_started") == 1 and "workflow_id" in columns
