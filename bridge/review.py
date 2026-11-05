@@ -7,13 +7,14 @@ import asyncio
 import contextlib
 import hashlib
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from . import osutil
 from .config import BridgeConfig
@@ -100,7 +101,50 @@ def snapshot(root: Path, protected: list[str]) -> dict[str, Any]:
     }
 
 
-def diff(root: Path, before: dict[str, Any], protected: list[str]) -> dict[str, Any]:
+class Changes(TypedDict):
+    """What an attempt changed, as stored on the attempt and read by every reviewer and view.
+    Attempts stored before patch_truncated / patch_omitted_files existed lack those keys."""
+    files: list[str]
+    head_before: str | None
+    head_after: str | None
+    head_changed: bool
+    stat: str
+    patch: str
+    patch_truncated: bool
+    patch_omitted_files: list[str]
+
+
+_FILE_DIFF = re.compile(r"(?m)^(?=diff --git )")
+_DIFF_NAME = re.compile(r"^diff --git a/(.*?) b/(.*)$", re.M)
+_MIN_SHARE = 400  # less than this shows no useful part of a file: name it as omitted instead
+
+
+def bounded_patch(patch: str, limit: int) -> tuple[str, bool, list[str]]:
+    """The redacted patch within `limit` characters, each file's diff kept from its start.
+    Files share the limit (small ones whole, the rest split evenly); a cut file says how much is
+    missing, and files left with too little room are omitted and named instead."""
+    chunks = [c for c in _FILE_DIFF.split(patch) if c]
+    texts = [redact(c, len(c) + 1) for c in chunks]
+    if sum(map(len, texts)) <= limit:
+        return "".join(texts), False, []
+    room, share = limit, {}
+    for i in sorted(range(len(texts)), key=lambda i: len(texts[i])):
+        share[i] = min(len(texts[i]), room // (len(texts) - len(share)))
+        room -= share[i]
+    out, omitted = [], []
+    for i, text in enumerate(texts):
+        if share[i] >= len(text):
+            out.append(text)
+        elif share[i] >= _MIN_SHARE:
+            out.append(text[:share[i]] + f"\n… [{len(text) - share[i]} more characters of this "
+                       "file's diff not shown]\n")
+        else:
+            m = _DIFF_NAME.match(text)
+            omitted.append(m.group(2) if m else text.split("\n", 1)[0])
+    return "".join(out), True, omitted
+
+
+def diff(root: Path, before: dict[str, Any], protected: list[str]) -> Changes:
     after = snapshot(root, protected)
     b, a = before["files"], after["files"]
     # Clean before and dirty now => changed. Dirty before => compare with the current content.
@@ -111,13 +155,16 @@ def diff(root: Path, before: dict[str, Any], protected: list[str]) -> dict[str, 
     if all(trees) and trees[0] != trees[1]:
         stat = _git(root, "diff", "--stat", *trees)  # type: ignore[arg-type]
         patch = _git(root, "diff", "--no-color", *trees)  # type: ignore[arg-type]
+    shown, truncated, omitted = bounded_patch(patch, PATCH_LIMIT)
     return {
         "files": changed,
         "head_before": before["head"],
         "head_after": after["head"],
         "head_changed": before["head"] != after["head"],
         "stat": stat.strip()[:4000],
-        "patch": redact(patch, PATCH_LIMIT),
+        "patch": shown,
+        "patch_truncated": truncated,
+        "patch_omitted_files": omitted,
     }
 
 
