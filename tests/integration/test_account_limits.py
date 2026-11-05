@@ -73,7 +73,7 @@ def test_no_limits_records_cost(make_orch, fake_claude, monkeypatch):
     assert recorded["detail"] == {"account": "cl1", "cost_usd": None, "source": "unavailable"}
 
     day = day_spend(b, "cl1")
-    assert day["spent"] == pytest.approx(0.25) and day["runs"] == 2 and day["unknown"] == 1
+    assert day["spent"] == pytest.approx(0.25) and day["runs"] == 2 and day["unknown"] == 0
     listing = {a["name"]: a for a in b.list_accounts()["accounts"]}
     assert "limits" not in listing["cl1"] and "limits" not in listing["cl2"]
     report = b._limit_report("cl1")

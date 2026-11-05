@@ -121,8 +121,8 @@ def test_reserve_then_settle(tmp_path):
 
 # @pt.id KIT-USAGE-005
 # @pt.item record_usage, unknown and estimated costs
-# @pt.condition settled rows with actual, NULL and estimated costs
-# @pt.expected actual counts as spent, NULL as unknown, estimated sets the flag
+# @pt.condition settled rows with actual, gated NULL, ungated NULL and estimated costs
+# @pt.expected actual counts as spent, gated NULL as unknown, ungated NULL not as unknown, estimated sets the flag
 # @pt.target bridge.state.Store.record_usage, usage_spend
 # @pt.method unit
 # @pt.legacy none
@@ -132,11 +132,15 @@ def test_record_unknown_estimated(tmp_path):
     s.record_usage("work", key=KEY, task_id="T1", cost_usd=1.5, source="actual")
     assert s.usage_spend(KEY, starts)["day"] == {"spent": 1.5, "reserved": 0.0, "unknown": 0,
                                                  "estimated": False, "runs": 1}
-    s.record_usage("work", key=KEY, task_id="T2", cost_usd=None, source="unavailable")
+    s.record_usage("work", key=KEY, task_id="T2", cost_usd=None, source="unavailable",
+                   gated=True)
     uid = s.reserve_usage("work", key=KEY, task_id="T3", reserve=1.0, starts=starts, check=_ok)
     s.settle_usage(uid, 1.0, "estimated")
     spend = s.usage_spend(KEY, starts)["day"]
     assert spend == {"spent": 2.5, "reserved": 0.0, "unknown": 1, "estimated": True, "runs": 3}
+    s.record_usage("work", key=KEY, task_id="T4", cost_usd=None, source="unavailable")
+    spend = s.usage_spend(KEY, starts)["day"]
+    assert spend["unknown"] == 1 and spend["runs"] == 4
     assert s.usage_spend("other", starts)["day"]["runs"] == 0
 
 

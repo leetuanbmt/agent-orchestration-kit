@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import stat
 import time
@@ -29,7 +30,8 @@ def codex_home_for(account: Account) -> Path:
     return Path(os.environ["CODEX_HOME"]) if os.environ.get("CODEX_HOME") else Path.home() / ".codex"
 
 
-def _numeric(value: object) -> bool:
+def numeric(value: object) -> bool:
+    """A real number: int or float, never bool."""
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
@@ -37,10 +39,10 @@ def remaining_pct(rate_limits: dict, now: float) -> float | None:
     used = []
     for name in ("primary", "secondary"):
         window = rate_limits.get(name)
-        if not isinstance(window, dict) or not _numeric(window.get("used_percent")):
+        if not isinstance(window, dict) or not numeric(window.get("used_percent")):
             continue
         reset = window.get("resets_at")
-        used.append(0.0 if _numeric(reset) and reset <= now else window["used_percent"])
+        used.append(0.0 if numeric(reset) and reset <= now else window["used_percent"])
     return max(0.0, 100.0 - max(used)) if used else None
 
 
@@ -130,7 +132,7 @@ def estimate_cost(usage: dict | None, pricing: TokenPricing | None) -> float | N
 
     def count(key: str) -> float:
         value = usage.get(key)
-        return value if _numeric(value) else 0
+        return value if numeric(value) and math.isfinite(value) and value >= 0 else 0
 
     cached_rate = (pricing.cached_input_per_mtok if pricing.cached_input_per_mtok is not None
                    else pricing.input_per_mtok)
@@ -143,7 +145,7 @@ def estimate_cost(usage: dict | None, pricing: TokenPricing | None) -> float | N
 def run_cost(cost_usd: object, usage: dict | None,
              pricing: TokenPricing | None) -> tuple[float | None, str]:
     """A run's cost and its source: provider-reported, estimated from tokens, or unknown."""
-    if _numeric(cost_usd) and cost_usd >= 0:
+    if numeric(cost_usd) and cost_usd >= 0:
         return float(cost_usd), "actual"
     estimate = estimate_cost(usage, pricing)
     if estimate is not None:
@@ -156,15 +158,15 @@ def window_usage(rate_limits: dict | None, now: float) -> list[dict]:
     result = []
     for slot in ("primary", "secondary"):
         window = (rate_limits or {}).get(slot)
-        if not isinstance(window, dict) or not _numeric(window.get("used_percent")):
+        if not isinstance(window, dict) or not numeric(window.get("used_percent")):
             continue
         reset = window.get("resets_at")
-        reset = reset if _numeric(reset) else None
+        reset = reset if numeric(reset) else None
         passed = reset is not None and reset <= now
         minutes = window.get("window_minutes")
         result.append({
             "slot": slot,
-            "window_minutes": minutes if _numeric(minutes) else None,
+            "window_minutes": minutes if numeric(minutes) else None,
             "used_pct": 0.0 if passed else float(window["used_percent"]),
             "resets_at": None if passed else reset,
         })
