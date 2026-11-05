@@ -125,10 +125,18 @@ PR into `main` is open, its whole diff has been re-reviewed and every problem fo
 
 ## Progress
 
-- [ ] B1 Pure account-state reads
-- [ ] B2 `AccountGate` and `TaskRunner` behind the `Bridge` facade
-- [ ] B3 Project registry module, no import cycles around `storage`
-- [ ] B4 Optional: split `Store` into task, account and usage parts
+- [x] B1 Pure account-state reads — `tuanvm/arch-p1-p2-refactor`, 2026-11-05. `_account_state`
+  keeps its name and lifting behaviour (KIT-FAILOVER-009 and KIT-HARDEN-018 call it and expect
+  the `account_cooldown_elapsed` event); listings use the non-writing view.
+- [x] B2 `AccountGate` and `TaskRunner` behind the `Bridge` facade — same branch. `_account_quota`
+  stays on `Bridge` (tests replace it there and expect the gate to see it).
+- [ ] B3 Project registry module, no import cycles around `storage` — not done, needs a decision:
+  `test_statuses` (`tests/unit/test_storage_migrate.py`) and `test_prune_with_remember`
+  (`tests/unit/test_registry_lock.py`) patch `accounts.known_projects` / `progress.discover_roots`
+  and rely on `storage.plan` and `storage.prune` calling them; both fail once storage reads a
+  registry module instead. Removing the cycle means changing those tests.
+- [ ] B4 Optional: split `Store` into task, account and usage parts — skipped: the PR diff is
+  already about 1,300 changed lines, over the 600-line limit.
 
 ## Mode and branch
 
