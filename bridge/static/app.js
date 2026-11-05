@@ -52,7 +52,31 @@ const I18N = {
     queueHint: 'Press [ or ] to open the previous or next item.',
     elapsedOf: '{elapsed} of {limit}', elapsedOnly: 'Running for {elapsed}', quotaLeft: '{n}% quota left', timeUsed: 'Time used',
     announce: '{n} tasks need you', announceOne: '1 task needs you', announceNone: 'No task needs you now',
-    testsRun: 'Tests run', filesChanged: 'Files changed', rawOutput: 'Raw output'
+    testsRun: 'Tests run', filesChanged: 'Files changed', rawOutput: 'Raw output',
+    overview: 'Overview', tasksTab: 'Tasks ({n} open)', accounts: 'Accounts', accountsCount: 'Accounts ({n})',
+    inProgress: 'In progress', nothingRunning: 'Nothing is running.',
+    waitingLine: '{n} waiting on you', openOverview: 'Open overview',
+    stateAvailable: 'Available', stateQuota: 'Out of quota', stateAuth: 'Login needed',
+    slotsShort: '{running} of {max} busy', slotsBusy: '{running} of {max} slots busy',
+    pctLeft: '{n}% left', pctUsed: '{n}% used', resetsIn: 'resets in {time}', resetsNow: 'resets now', resetDone: 'reset',
+    noQuotaShort: 'No quota reported yet',
+    noQuotaLong: 'No quota reported yet. It appears after the first run on this account.',
+    fallbackOnLine: 'Quota fallback is on: a task out of quota moves to the next eligible agent.',
+    fallbackOffLine: 'Quota fallback is off: a task out of quota waits until you resume it.',
+    fallbackMixed: 'Quota fallback is on in {a} of {b} projects.',
+    showAllAccounts: 'Show all accounts', noAccounts: 'No account is configured for these projects yet.',
+    fallbackTitle: 'Quota fallback', on: 'On', off: 'Off', agentOff: '(off)',
+    fallbackThreshold: 'Moves when less than {n}% quota is left', fallbackAtZero: 'Moves only when the quota runs out',
+    fallbackCandidates: 'Candidates: {list}', fallbackRoleOrder: "the executor role's agents in order",
+    fallbackPolicy: 'A person sets this policy in .ai/orchestrator.yaml (routing.quota_fallback); it cannot be changed here.',
+    liftedReset: 'Quota mark lifted: the window reset', liftedCooldown: 'Quota mark lifted: the cooldown passed',
+    sinceTime: 'since {time}', window5h: '5-hour window', windowWeek: 'Weekly window',
+    windowMinutes: '{n}-minute window', windowUsage: 'Usage window', meterLabel: '{label}: {n}% used',
+    reportedAt: 'Reported {time}', recentSwitches: 'Recent automatic switches',
+    switchMoved: '{task} moved from {from} to {to}',
+    reason_quota: 'out of quota', reason_limit: 'usage limit', reason_below_threshold: 'low quota', reason_other: 'other',
+    noSwitches: 'No automatic switches in the last 7 days.',
+    accountsHint: 'Accounts are added and logged in by a person in a terminal:'
   },
   vi: {
     log: 'Nhật ký', messagesOnly: 'Chỉ tin nhắn agent', logTail: 'Đang hiển thị 256 KB cuối', noLog: 'Không có nhật ký cho lần chạy này',
@@ -99,12 +123,40 @@ const I18N = {
     queueHint: 'Nhấn [ hoặc ] để mở mục trước hoặc sau.',
     elapsedOf: '{elapsed} / {limit}', elapsedOnly: 'Đã chạy {elapsed}', quotaLeft: 'còn {n}% quota', timeUsed: 'Thời gian đã dùng',
     announce: '{n} tác vụ cần bạn', announceOne: '1 tác vụ cần bạn', announceNone: 'Hiện không có tác vụ nào cần bạn',
-    testsRun: 'Kiểm thử đã chạy', filesChanged: 'Tệp đã thay đổi', rawOutput: 'Kết quả thô'
+    testsRun: 'Kiểm thử đã chạy', filesChanged: 'Tệp đã thay đổi', rawOutput: 'Kết quả thô',
+    overview: 'Tổng quan', tasksTab: 'Tác vụ ({n})', accounts: 'Tài khoản', accountsCount: 'Tài khoản ({n})',
+    inProgress: 'Đang thực hiện', nothingRunning: 'Không có tác vụ nào đang chạy.',
+    waitingLine: '{n} mục đang chờ bạn', openOverview: 'Mở tổng quan',
+    stateAvailable: 'Sẵn sàng', stateQuota: 'Hết quota', stateAuth: 'Cần đăng nhập',
+    slotsShort: '{running}/{max} đang bận', slotsBusy: '{running}/{max} slot đang bận',
+    pctLeft: 'còn {n}%', pctUsed: 'đã dùng {n}%', resetsIn: 'đặt lại sau {time}', resetsNow: 'đặt lại ngay', resetDone: 'đã đặt lại',
+    noQuotaShort: 'Chưa có báo cáo quota',
+    noQuotaLong: 'Chưa có báo cáo quota. Thông tin sẽ xuất hiện sau lần chạy đầu tiên trên tài khoản này.',
+    fallbackOnLine: 'Chuyển dự phòng khi hết quota đang bật: tác vụ hết quota sẽ chuyển sang agent phù hợp tiếp theo.',
+    fallbackOffLine: 'Chuyển dự phòng khi hết quota đang tắt: tác vụ hết quota sẽ chờ đến khi bạn tiếp tục nó.',
+    fallbackMixed: 'Chuyển dự phòng khi hết quota đang bật ở {a}/{b} dự án.',
+    showAllAccounts: 'Xem tất cả tài khoản', noAccounts: 'Chưa có tài khoản nào được cấu hình cho các dự án này.',
+    fallbackTitle: 'Chuyển dự phòng khi hết quota', on: 'Bật', off: 'Tắt', agentOff: '(tắt)',
+    fallbackThreshold: 'Chuyển khi còn dưới {n}% quota', fallbackAtZero: 'Chỉ chuyển khi quota đã hết',
+    fallbackCandidates: 'Ứng viên: {list}', fallbackRoleOrder: 'các agent của vai trò executor theo thứ tự',
+    fallbackPolicy: 'Chính sách này do một người thiết lập trong .ai/orchestrator.yaml (routing.quota_fallback); không thể thay đổi tại đây.',
+    liftedReset: 'Đã gỡ dấu hết quota: cửa sổ đã đặt lại', liftedCooldown: 'Đã gỡ dấu hết quota: đã qua thời gian chờ',
+    sinceTime: 'từ {time}', window5h: 'Cửa sổ 5 giờ', windowWeek: 'Cửa sổ hằng tuần',
+    windowMinutes: 'Cửa sổ {n} phút', windowUsage: 'Cửa sổ sử dụng', meterLabel: '{label}: đã dùng {n}%',
+    reportedAt: 'Báo cáo {time}', recentSwitches: 'Chuyển tự động gần đây',
+    switchMoved: '{task} đã chuyển từ {from} sang {to}',
+    reason_quota: 'hết quota', reason_limit: 'giới hạn sử dụng', reason_below_threshold: 'quota thấp', reason_other: 'khác',
+    noSwitches: 'Không có lần chuyển tự động nào trong 7 ngày qua.',
+    accountsHint: 'Tài khoản do một người thêm và đăng nhập trong terminal:'
   }
 };
 const $ = id => document.getElementById(id);
 const GROUPS = ['open', 'needsYou', 'awaitingReview', 'running', 'waiting', 'done', 'cancelled', 'all'];
-const VIEWS = ['tasks', 'board', 'projects'];
+const VIEWS = ['overview', 'tasks', 'board', 'accounts'];
+// Account states as badges: the family picks the glyph and color, the key the label.
+const ACCOUNT_STATES = {available: ['done', 'stateAvailable'], quota: ['paused', 'stateQuota'], auth: ['blocked', 'stateAuth']};
+const CAPACITY_ROWS = 6;
+let scrollToProjects = false;
 const NEEDS_KINDS = ['needs', 'failed', 'blocked', 'paused'];
 // Board lanes, left to right, with the heading key of each.
 const LANES = [['needsYou', 'needsAction'], ['awaitingReview', 'inReview'], ['running', 'running'], ['waiting', 'queued']];
@@ -118,7 +170,7 @@ let attentionShown = [], lastOpened = '', lastNeeds = null;
 const expanded = new Set();
 let language = navigator.language.toLowerCase().startsWith('vi') ? 'vi' : 'en';
 try { const saved = localStorage.getItem('dashboard-language'); if (['vi', 'en'].includes(saved)) language = saved; } catch {}
-let state = {view: 'tasks', p: '', w: '', s: 'open', q: '', t: '', g: '', lang: language};
+let state = {view: 'overview', p: '', w: '', s: 'open', q: '', t: '', g: '', lang: language};
 let overview = null, timer = null, inFlight = false, disconnected = false, tokenRequired = false;
 let detailVersion = 0, taskData = null, detailError = '', returnFocus = null;
 let attemptLog = null, lastOk = null, technicalOpen = '';
@@ -380,6 +432,167 @@ function renderBoard(filtered) {
   text($('finished-summary'), tr('finished', {n: finished.length}));
   patch($('finished-cards'), finished.slice(0, 20), t => `${t.pid}:${t.task_id}`, cardSignature, renderCard);
 }
+const clampPct = value => Math.max(0, Math.min(100, Number(value) || 0));
+function resetText(resetsAt) {
+  const left = resetsAt - Date.now() / 1000;
+  return left <= 0 ? tr('resetsNow') : tr('resetsIn', {time: duration(left)});
+}
+function accountBadge(account) {
+  const [family, label] = ACCOUNT_STATES[account.state] || ACCOUNT_STATES.available;
+  return badge(family, tr(label));
+}
+function windowLabel(win) {
+  const minutes = Number(win.window_minutes);
+  if (minutes === 300) return tr('window5h');
+  if (minutes === 10080) return tr('windowWeek');
+  return minutes > 0 ? tr('windowMinutes', {n: Math.round(minutes)}) : tr('windowUsage');
+}
+// The lowest quota left on an account and when its most used window comes back.
+function quotaSummary(account) {
+  const windows = account.windows || [];
+  if (!windows.length && account.remaining_pct == null) return tr('noQuotaShort');
+  const tightest = windows.reduce((a, b) => (a && a.used_pct >= b.used_pct ? a : b), null);
+  const left = account.remaining_pct ?? 100 - tightest.used_pct;
+  const parts = [tr('pctLeft', {n: Math.round(clampPct(left))})];
+  if (tightest?.resets_at != null) parts.push(resetText(tightest.resets_at));
+  return parts.join(' · ');
+}
+// One sentence for the quota-fallback policy of these projects; '' when no config could be read.
+function fallbackLine(groups) {
+  const policies = groups.map(g => g.project.fallback).filter(Boolean), on = policies.filter(p => p.enabled).length;
+  if (!policies.length) return '';
+  if (on === policies.length) return tr('fallbackOnLine');
+  return on ? tr('fallbackMixed', {a: on, b: policies.length}) : tr('fallbackOffLine');
+}
+// A command the reader copies into a terminal; the dashboard never runs it.
+function commandLine(node, command, lead) {
+  const signature = JSON.stringify([state.lang, command, lead]);
+  if (node._signature === signature) return;
+  node._signature = signature;
+  const line = el('div', undefined, 'attention-command command-line');
+  const copy = button('⧉', event => copyCommand(command, event.currentTarget), 'copy-icon');
+  attr(copy, 'aria-label', tr('copy')); attr(copy, 'title', tr('copy'));
+  line.append(el('code', command), copy);
+  node.replaceChildren(...(lead ? [el('p', lead)] : []), line);
+}
+// Overview: placeholders before the first answer, the work in progress, and on Tasks and Board
+// the one-line link back to the queue.
+function renderHome(scoped, tasks) {
+  const loaded = !!overview;
+  $('overview-loading').hidden = loaded || disconnected || tokenRequired; text($('overview-loading-text'), tr('loading'));
+  $('inflight-section').hidden = !loaded; text($('inflight-title'), tr('inProgress'));
+  const running = tasks.filter(t => scoped(t.pid) && matches(t, 'running')).sort(boardOrder);
+  patch($('inflight'), running, t => `${t.pid}:${t.task_id}`, cardSignature, renderCard);
+  text($('inflight-empty'), tr('nothingRunning')); $('inflight-empty').hidden = !loaded || running.length > 0;
+  const waiting = attentionShown.length;
+  $('queue-link').hidden = !waiting || !['tasks', 'board'].includes(state.view);
+  text($('queue-link-text'), tr('waitingLine', {n: waiting})); text($('queue-link-open'), tr('openOverview'));
+}
+// Overview: one compact row per account and the fallback policy of the shown projects.
+function renderCapacity(scoped, groups) {
+  const loaded = !!overview, filtered = !!(state.p || state.w);
+  const accounts = (overview?.accounts || []).filter(a => !filtered || (a.projects || []).some(scoped));
+  $('capacity-section').hidden = !loaded; text($('capacity-title'), tr('accounts'));
+  const line = fallbackLine(groups.filter(g => g.members.some(m => scoped(m.pid))));
+  text($('capacity-fallback'), line); $('capacity-fallback').hidden = !line;
+  patch($('capacity-summary'), accounts.slice(0, CAPACITY_ROWS), a => a.name, a => [a, quotaSummary(a)], (node, account) => {
+    attr(node, 'role', 'listitem'); attr(node, 'class', 'capacity-row');
+    const who = el('span', undefined, 'capacity-name'); who.append(el('strong', account.name));
+    if (account.provider) who.append(el('span', account.provider, 'muted'));
+    node.append(who, accountBadge(account),
+      el('span', tr('slotsShort', {running: account.running, max: account.max_concurrency}), 'capacity-slots'),
+      el('span', quotaSummary(account), 'capacity-quota'));
+  });
+  text($('capacity-empty'), tr('noAccounts')); $('capacity-empty').hidden = !loaded || accounts.length > 0;
+  text($('capacity-all'), tr('showAllAccounts')); $('capacity-all').hidden = accounts.length <= CAPACITY_ROWS;
+}
+// A labelled usage bar: the number is always in the text, so the color is never the only signal.
+function quotaMeter(win) {
+  const raw = clampPct(win.used_pct), used = Math.round(raw), label = windowLabel(win);
+  const box = el('div', undefined, 'quota-window');
+  const meter = el('div', undefined, raw >= 100 ? 'meter meter-full' : raw >= 80 ? 'meter meter-high' : 'meter');
+  attr(meter, 'role', 'meter'); attr(meter, 'aria-valuemin', 0); attr(meter, 'aria-valuemax', 100);
+  attr(meter, 'aria-valuenow', used); attr(meter, 'aria-label', tr('meterLabel', {label, n: used}));
+  const fill = el('div', undefined, 'meter-fill'); fill.style.width = `${raw}%`; meter.append(fill);
+  const parts = [tr('pctUsed', {n: used})];
+  if (win.resets_at != null) parts.push(resetText(win.resets_at));
+  else if (used === 0) parts.push(tr('resetDone'));
+  box.append(el('div', label, 'quota-label'), meter, el('p', parts.join(' · '), 'quota-text muted'));
+  return box;
+}
+function renderAccountCard(node, account) {
+  attr(node, 'role', 'listitem'); attr(node, 'class', 'panel account-card');
+  const head = el('div', undefined, 'account-head'), title = el('div', undefined, 'account-title');
+  title.append(el('h3', account.name, 'account-name'));
+  if (account.provider) title.append(el('span', account.provider, 'muted'));
+  head.append(title, accountBadge(account)); node.append(head);
+  if (account.lifted) node.append(el('p', tr(account.lifted === 'reset' ? 'liftedReset' : 'liftedCooldown'), 'muted'));
+  if (['quota', 'auth'].includes(account.state)) {
+    if (account.error) {
+      const error = el('p', account.error, 'account-error muted'); attr(error, 'title', account.error); node.append(error);
+    }
+    const since = el('p', tr('sinceTime', {time: relative(account.since)}), 'muted');
+    if (account.since != null) attr(since, 'title', new Date(account.since * 1000).toLocaleString(state.lang));
+    node.append(since);
+  }
+  const windows = account.windows || [];
+  if (!windows.length) node.append(el('p', tr('noQuotaLong'), 'muted'));
+  for (const win of windows) node.append(quotaMeter(win));
+  if (account.observed_at != null) {
+    const reported = el('p', tr('reportedAt', {time: relative(account.observed_at)}), 'muted');
+    attr(reported, 'title', new Date(account.observed_at * 1000).toLocaleString(state.lang)); node.append(reported);
+  }
+  node.append(el('p', tr('slotsBusy', {running: account.running, max: account.max_concurrency}), 'account-slots'));
+  if (account.agents?.length) {
+    const chips = el('div', undefined, 'agent-chips');
+    for (const agent of account.agents) {
+      const label = [agent.agent, (agent.roles || []).join(', ')].filter(Boolean).join(' · ');
+      chips.append(el('span', agent.enabled === false ? `${label} ${tr('agentOff')}` : label, 'chip'));
+    }
+    node.append(chips);
+  }
+}
+// Accounts view: fallback policy per project, one card per account, recent automatic switches.
+function renderAccounts(groups) {
+  const loaded = !!overview, accounts = overview?.accounts || [], switches = overview?.switches || [];
+  text($('accounts-title'), tr('accounts'));
+  $('accounts-loading').hidden = loaded || disconnected || tokenRequired; text($('accounts-loading-text'), tr('loading'));
+  $('accounts-body').hidden = !loaded;
+  if (!loaded || state.view !== 'accounts') return;
+  const multi = groups.length > 1;
+  patch($('fallback-panels'), groups, g => g.project.pid, g => [g.project.name, g.project.fallback, multi], (node, group) => {
+    const policy = group.project.fallback;
+    attr(node, 'class', 'panel fallback-panel');
+    const head = el('div', undefined, 'panel-head');
+    head.append(el('h2', multi ? `${tr('fallbackTitle')} · ${group.project.name}` : tr('fallbackTitle'), 'section-title'));
+    if (policy) head.append(badge(policy.enabled ? 'done' : 'paused', tr(policy.enabled ? 'on' : 'off')));
+    node.append(head);
+    if (!policy) { node.append(el('p', tr('unreadable'), 'muted')); return; }
+    const pct = Math.round(Number(policy.min_remaining_pct) || 0);
+    const candidates = policy.agents == null ? tr('fallbackRoleOrder') : policy.agents.length ? policy.agents.join(' → ') : tr('none');
+    const facts = el('ul', undefined, 'fallback-facts');
+    facts.append(el('li', pct > 0 ? tr('fallbackThreshold', {n: pct}) : tr('fallbackAtZero')),
+      el('li', tr('fallbackCandidates', {list: candidates})));
+    node.append(el('p', tr(policy.enabled ? 'fallbackOnLine' : 'fallbackOffLine')), facts, el('p', tr('fallbackPolicy'), 'muted'));
+  });
+  patch($('account-cards'), accounts, a => a.name, a => [a, Math.floor(Date.now() / 1000)], renderAccountCard);
+  $('account-cards').hidden = !accounts.length; $('accounts-empty').hidden = accounts.length > 0;
+  text($('accounts-empty-text'), tr('noAccounts'));
+  commandLine($('accounts-empty-command'), 'agent-bridge config-init orchestrator');
+  text($('switches-title'), tr('recentSwitches'));
+  patch($('switches'), switches, s => `${s.pid}:${s.task_id}:${s.ts}`, s => [s, relative(s.ts)], (node, item) => {
+    attr(node, 'role', 'listitem'); attr(node, 'class', 'switch-item');
+    const who = (agent, account) => agent == null ? tr('unknown') : account ? `${agent} (${account})` : agent;
+    const open = button(undefined, () => openItem(item.pid, item.task_id), 'switch-open');
+    const when = el('span', relative(item.ts), 'muted');
+    if (item.ts != null) attr(when, 'title', new Date(item.ts * 1000).toLocaleString(state.lang));
+    open.append(el('span', tr('switchMoved', {task: item.task_id, from: who(item.from, item.from_account), to: who(item.to, item.to_account)}), 'switch-text'),
+      el('span', tr(`reason_${item.reason}`), 'chip'), when);
+    node.append(open);
+  });
+  text($('switches-empty'), tr('noSwitches')); $('switches-empty').hidden = switches.length > 0;
+  commandLine($('accounts-hint'), 'agent-bridge account-list', tr('accountsHint'));
+}
 function renderOverview() {
   document.documentElement.lang = state.lang; document.title = tr('brand'); text($('brand'), tr('brand'));
   text($('live'), tr(tokenRequired ? 'tokenRequired' : disconnected ? 'offline' : overview ? 'live' : 'loading'));
@@ -397,13 +610,16 @@ function renderOverview() {
   });
   const groups = projectGroups(), tasks = overview?.tasks || [];
   const openCount = tasks.filter(t => matches(t, 'open')).length;
-  patch($('views'), VIEWS, x => x, x => [state.view, openCount, groups.length], (node, view) => {
-    const label = view === 'board' ? tr('board') : `${tr(view)} (${view === 'tasks' ? openCount : groups.length})`;
+  const troubled = (overview?.accounts || []).filter(a => a.state !== 'available').length;
+  patch($('views'), VIEWS, x => x, x => [state.view, openCount, troubled], (node, view) => {
+    const label = view === 'tasks' ? tr('tasksTab', {n: openCount})
+      : view === 'accounts' && troubled ? tr('accountsCount', {n: troubled}) : tr(view);
     const tab = button(label, () => setState({view}));
     attr(tab, 'aria-pressed', state.view === view); node.replaceChildren(tab);
   });
-  $('tasks-view').hidden = state.view !== 'tasks'; $('projects-view').hidden = state.view !== 'projects';
-  $('board-view').hidden = state.view !== 'board'; $('monitor').hidden = state.view === 'projects';
+  $('overview-view').hidden = state.view !== 'overview'; $('accounts-view').hidden = state.view !== 'accounts';
+  $('tasks-view').hidden = state.view !== 'tasks'; $('board-view').hidden = state.view !== 'board';
+  $('task-tools').hidden = !['tasks', 'board'].includes(state.view);
   // Project and worktree filters only when there is something to choose (or the address already chose).
   const pickProject = groups.length > 1 || !!state.p || !!state.w;
   $('project').closest('label').hidden = !pickProject; $('worktree').closest('label').hidden = !pickProject;
@@ -422,6 +638,9 @@ function renderOverview() {
   const filtered = tasks.filter(t => scoped(t.pid) &&
     `${t.task_id} ${t.objective}`.toLocaleLowerCase().includes(state.q.toLocaleLowerCase()));
   renderMonitor(scoped, tasks);
+  renderHome(scoped, tasks);
+  renderCapacity(scoped, groups);
+  renderAccounts(groups);
   if (state.view === 'board') renderBoard(filtered);
   patch($('statuses'), GROUPS, x => x, x => [state.s, filtered.filter(t => matches(t, x)).length], (node, group) => {
     const chip = button(`${groupLabel(group)} (${filtered.filter(t => matches(t, group)).length})`, () => setState({s: group}));
@@ -484,7 +703,16 @@ function renderOverview() {
   $('tasks-empty').hidden = !loaded || shown.length > 0;
   text($('empty-message'), tr(none ? 'noTasksYet' : 'noMatches')); text($('empty-clear'), tr('clear'));
   $('empty-clear').hidden = none;
-  groups.sort((a, b) => totals(b.members).needs - totals(a.members).needs || Math.max(...b.members.map(p => p.updated_at || 0)) - Math.max(...a.members.map(p => p.updated_at || 0)));
+  renderProjects(groups, tasks);
+  // An old `view=projects` link lands on the overview at the projects section, once the data is laid out.
+  if (scrollToProjects && overview && state.view === 'overview') {
+    scrollToProjects = false; $('projects-view').scrollIntoView({block: 'start'});
+  }
+}
+// The overview's last section: one card per project with its worktrees.
+function renderProjects(groups, tasks) {
+  text($('projects-title'), tr('projects')); $('projects-view').hidden = !overview;
+  groups = [...groups].sort((a, b) => totals(b.members).needs - totals(a.members).needs || Math.max(...b.members.map(p => p.updated_at || 0)) - Math.max(...a.members.map(p => p.updated_at || 0)));
   patch($('project-cards'), groups, g => g.project.pid, g => [g, tasks, expanded.has(g.project.pid), Math.floor(Date.now() / 1000)], (card, group) => {
     attr(card, 'class', 'project-card'); const project = group.project, count = totals(group.members);
     const head = el('div', undefined, 'card-header'), title = el('div');
@@ -516,12 +744,15 @@ function setState(change, replace = false) {
   else if (location.hash !== hash) { location.hash = hash; readState(); }
 }
 function readState() {
-  const params = new URLSearchParams(location.hash.slice(1)), previous = state;
-  state = {view: VIEWS.includes(params.get('view')) ? params.get('view') : 'tasks', p: params.get('p') || '', w: params.get('w') || '',
+  const params = new URLSearchParams(location.hash.slice(1)), previous = state, view = params.get('view');
+  // The projects view became the overview's last section; old links land there.
+  if (view === 'projects') scrollToProjects = true;
+  state = {view: VIEWS.includes(view) ? view : 'overview', p: params.get('p') || '', w: params.get('w') || '',
     s: GROUPS.includes(params.get('s')) ? params.get('s') : 'open', q: params.get('q') || '', t: params.get('t') || '', g: params.get('g') === '1' ? '1' : '',
     lang: ['vi', 'en'].includes(params.get('lang')) ? params.get('lang') : state.lang};
   try { localStorage.setItem('dashboard-language', state.lang); } catch {}
   if (state.t) lastOpened = state.t;
+  if (view === 'projects') history.replaceState(null, '', `#${new URLSearchParams(state)}`);
   renderOverview(); if (previous.t !== state.t) loadDetail(); else renderDetail();
 }
 function closeDrawer() { stopLog(); setState({t: ''}); }
@@ -827,6 +1058,8 @@ $('project').onchange = event => setState({p: event.target.value, w: ''});
 $('worktree').onchange = event => setState({w: event.target.value});
 $('group-worktree').onclick = () => setState({g: state.g === '1' ? '' : '1'});
 $('clear').onclick = clearFilters; $('empty-clear').onclick = clearFilters;
+$('queue-link-open').onclick = () => setState({view: 'overview'});
+$('capacity-all').onclick = () => setState({view: 'accounts'});
 $('theme').onchange = event => {
   theme = THEMES.includes(event.target.value) ? event.target.value : 'system';
   try { if (theme === 'system') localStorage.removeItem('dashboard-theme'); else localStorage.setItem('dashboard-theme', theme); } catch {}

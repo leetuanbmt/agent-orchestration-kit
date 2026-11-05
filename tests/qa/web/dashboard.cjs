@@ -27,12 +27,22 @@ const scenarios = {
     const stored = await page.evaluate(() => [sessionStorage.getItem('agent-bridge-token'),
                                               localStorage.getItem('agent-bridge-token')]);
     check('token kept for this tab only (sessionStorage)', stored[0] && !stored[1], stored);
+    // The first screen is the overview; its projects section lists the one project.
+    check('the overview lists one project card', await page.locator('#overview-view').isVisible() &&
+          await page.locator('#project-cards .project-card').count() === 1,
+          await page.locator('#project-cards .project-card').count());
+    await page.locator('#views button', { hasText: /^Tasks \(/ }).click();
     await page.getByRole('button', { name: /^All \(/ }).click();
     await page.waitForFunction(n => document.querySelectorAll('#task-rows tr').length === n, cfg.total);
     check('every task listed under All', (await rows(page).count()) === cfg.total, await rows(page).count());
     check('Done chip counts the DONE task', await page.getByRole('button', { name: 'Done (1)' }).count() === 1);
-    check('Projects tab counts one project', await page.getByRole('button', { name: 'Projects (1)' }).count() === 1);
     await page.screenshot({ path: cfg.shots + '/load.png' });
+    await open(page, '#view=projects');
+    const landed = decodeURIComponent(new URL(page.url()).hash);
+    check('#view=projects shows the overview with the projects section',
+          landed.includes('view=overview') && await page.locator('#overview-view').isVisible() &&
+          await page.locator('#projects-view').isVisible() &&
+          await page.locator('#project-cards .project-card').count() === 1, landed);
   },
 
   // Opening a task: drawer content, deep link that survives a reload, closing.
@@ -110,7 +120,7 @@ const scenarios = {
 
   // Switching language, kept after a reload.
   async language(page) {
-    await open(page);
+    await open(page, '#view=tasks');
     // Language lives in the display-settings menu.
     await page.locator('#settings summary').click();
     await page.locator('#languages button', { hasText: 'VI' }).click();
@@ -164,7 +174,7 @@ const scenarios = {
       await new Promise(resolve => setTimeout(resolve, 1500));
       await route.continue().catch(() => {});
     });
-    await page.goto(cfg.url);
+    await page.goto(cfg.url + '#view=tasks');
     await page.waitForTimeout(600);
     check('skeleton shown while the first overview loads', await page.locator('#tasks-loading').isVisible());
     check('skeleton rows hidden from screen readers',
@@ -177,6 +187,18 @@ const scenarios = {
       .then(() => check('task rows after the delay', true), e => check('task rows after the delay', false, e));
     check('skeleton gone once data is there', !(await page.locator('#tasks-loading').isVisible()));
     check('empty state still hidden', !(await page.locator('#tasks-empty').isVisible()));
+    // The Overview and Accounts views use the same placeholders.
+    for (const [view, id] of [['overview', 'overview-loading'], ['accounts', 'accounts-loading']]) {
+      await page.goto(cfg.url + `#view=${view}`);
+      await page.waitForTimeout(600);
+      check(`${view}: skeleton shown while the first overview loads`, await page.locator(`#${id}`).isVisible());
+      check(`${view}: skeleton rows hidden from screen readers`,
+            await page.locator(`#${id} .skeleton-row[aria-hidden="true"]`).count() === 3);
+      check(`${view}: loading text for screen readers`, /Loading/.test(await page.textContent(`#${id} .sr-only`) || ''));
+      await page.waitForFunction(id => document.getElementById(id).hidden, id, { timeout: 8000 })
+        .then(() => check(`${view}: skeleton gone once data is there`, true),
+              e => check(`${view}: skeleton gone once data is there`, false, e));
+    }
   },
 
   // Light and dark themes: from the system setting, and chosen in the top bar, kept after a reload.
@@ -280,7 +302,7 @@ const scenarios = {
     await page.waitForTimeout(300);
     const views = await page.locator('#views button').evaluateAll(buttons => buttons.map(b => b.getBoundingClientRect().y));
     check('view buttons share one row at 390 px',
-          views.length === 3 && Math.max(...views) - Math.min(...views) <= 2, JSON.stringify(views));
+          views.length === 4 && Math.max(...views) - Math.min(...views) <= 2, JSON.stringify(views));
     const wide = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
     check('no horizontal page scroll at 390 px', wide[0] <= wide[1], JSON.stringify(wide));
     await page.screenshot({ path: cfg.shots + '/mobile_cards.png', fullPage: true });
@@ -288,7 +310,8 @@ const scenarios = {
 
   // The summary strip and the ranked queue lead to what needs a person.
   async attention(page) {
-    await open(page, '#view=tasks&s=open');
+    // The tiles and the queue live on the overview; a tile then opens the Tasks view.
+    await open(page, '#view=overview&s=open');
     await page.waitForFunction(() => !document.getElementById('attention').hidden, null, { timeout: 8000 })
       .then(() => check('the queue is shown', true), e => check('the queue is shown', false, e));
     const item = page.locator('#attention-list [role="listitem"]', { hasText: cfg.tasks.review });
@@ -308,6 +331,8 @@ const scenarios = {
     check('Awaiting review counter reads 1', value === '1', value);
     await counter.locator('button').click();
     await page.waitForTimeout(300);
+    check('the counter opens the Tasks view', await page.locator('#tasks-view').isVisible() &&
+          decodeURIComponent(new URL(page.url()).hash).includes('view=tasks'));
     const pressed = await page.locator('#statuses button[aria-pressed="true"]').innerText().catch(() => '');
     check('the counter selects the Awaiting review chip', /^Awaiting review \(/.test(pressed), pressed);
     check('every table badge has a glyph', await page.evaluate(() => [...document.querySelectorAll('#task-rows .badge')]
@@ -329,7 +354,15 @@ const scenarios = {
     check('the board view is shown', await page.locator('#board-view').isVisible());
     check('the Board button is pressed',
           await page.getByRole('button', { name: 'Board', exact: true }).getAttribute('aria-pressed').catch(() => '') === 'true');
-    check('Projects tab still counts one project', await page.getByRole('button', { name: 'Projects (1)' }).count() === 1);
+    const tabs = (await page.locator('#views button').allInnerTexts()).map(t => t.trim());
+    check('the views are Overview, Tasks, Board and Accounts',
+          tabs.length === 4 && tabs[0] === 'Overview' && /^Tasks \(\d+ open\)$/.test(tabs[1]) && tabs[2] === 'Board' &&
+          /^Accounts( \(\d+\))?$/.test(tabs[3]), JSON.stringify(tabs));
+    check('the board does not repeat the queue', !(await page.locator('#attention').isVisible()) &&
+          !(await page.locator('#summary').isVisible()));
+    const waiting = (await page.locator('#queue-link').innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+    check('the board shows the one-line link to the queue',
+          await page.locator('#queue-link').isVisible() && /^\d+ waiting on you · Open overview$/.test(waiting), waiting);
     const headings = await page.locator('#lanes .lane h2').allInnerTexts();
     const expected = [/^Needs action \(\d+\)$/, /^In review \(\d+\)$/, /^Running \(\d+\)$/, /^Queued \(\d+\)$/];
     check('four lane headings in order', headings.length === 4 && expected.every((re, i) => re.test(headings[i])),
@@ -460,7 +493,7 @@ const scenarios = {
     check('phone header is at most 56 px tall', phone.header <= 56, JSON.stringify(phone));
     check('views bar is fixed at the bottom', phone.position === 'fixed' && Math.abs(phone.bottom - phone.height) <= 1,
           JSON.stringify(phone));
-    check('bottom bar items are at least 56 px tall', phone.items.length === 3 && phone.items.every(h => h >= 56),
+    check('bottom bar items are at least 56 px tall', phone.items.length === 4 && phone.items.every(h => h >= 56),
           JSON.stringify(phone));
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await page.waitForTimeout(200);
@@ -482,6 +515,144 @@ const scenarios = {
       overflow: getComputedStyle(document.getElementById('statuses')).overflowX }));
     check('status tabs cause no horizontal page scroll at 375 px', tabs.page <= 1 && tabs.overflow === 'auto',
           JSON.stringify(tabs));
+  },
+
+  // The home screen: triage first, then work in progress, capacity and projects; no task table.
+  async overview(page) {
+    await open(page);
+    const hash = decodeURIComponent(new URL(page.url()).hash);
+    check('the default view is the overview', hash.includes('view=overview') && await page.locator('#overview-view').isVisible(), hash);
+    check('the Overview button is pressed',
+          await page.locator('#views button', { hasText: /^Overview$/ }).getAttribute('aria-pressed').catch(() => '') === 'true');
+    await page.waitForFunction(() => !document.getElementById('attention').hidden, null, { timeout: 8000 })
+      .then(() => check('the queue is shown', true), e => check('the queue is shown', false, e));
+    check('the REVIEW task is in the queue',
+          await page.locator('#attention-list [role="listitem"]', { hasText: cfg.tasks.review }).count() === 1);
+    check('the summary tiles are shown', await page.locator('#summary').isVisible() &&
+          await page.locator('#summary > [data-key]').count() === 4);
+    check('In progress has its heading', (await page.textContent('#inflight-title')) === 'In progress');
+    const idle = await page.textContent('#inflight-empty');
+    check('In progress says nothing is running', await page.locator('#inflight-empty').isVisible() && idle === 'Nothing is running.', idle);
+    const accountRows = await page.locator('#capacity-summary [role="listitem"]').count();
+    check('the accounts summary is shown', await page.locator('#capacity-section').isVisible() &&
+          (accountRows > 0 || await page.locator('#capacity-empty').isVisible()), accountRows);
+    check('every account row has a state badge', await page.evaluate(() =>
+      [...document.querySelectorAll('#capacity-summary [role="listitem"]')]
+        .every(r => r.querySelector('.badge > .glyph[aria-hidden="true"]'))));
+    check('the projects section lists one project card', await page.locator('#projects-view').isVisible() &&
+          await page.locator('#project-cards .project-card').count() === 1);
+    check('no task table on the overview', !(await page.locator('#task-rows').isVisible()) &&
+          !(await page.locator('#filters').isVisible()));
+    check('no waiting line on the overview itself', !(await page.locator('#queue-link').isVisible()));
+    const tops = await page.evaluate(() => ['summary', 'attention', 'inflight-section', 'capacity-section', 'projects-view']
+      .map(id => document.getElementById(id).getBoundingClientRect().top));
+    check('tiles, queue, In progress, accounts, projects from top to bottom',
+          tops.every((top, i) => i === 0 || top > tops[i - 1]), JSON.stringify(tops));
+    await page.screenshot({ path: cfg.shots + '/overview.png', fullPage: true });
+
+    // Old links to the projects view land on the overview at the projects section.
+    await open(page, '#view=projects');
+    await page.waitForTimeout(400);
+    const landed = decodeURIComponent(new URL(page.url()).hash);
+    check('#view=projects lands on the overview', landed.includes('view=overview') &&
+          await page.locator('#overview-view').isVisible(), landed);
+    const place = await page.evaluate(() => [document.getElementById('projects-view').getBoundingClientRect().top, window.innerHeight]);
+    check('the projects section is on screen', place[0] >= 0 && place[0] < place[1], JSON.stringify(place));
+    check('the Overview button is pressed after the old link',
+          await page.locator('#views button', { hasText: /^Overview$/ }).getAttribute('aria-pressed').catch(() => '') === 'true');
+
+    // Tasks no longer repeats the queue; one line leads back to it.
+    await open(page, '#view=tasks');
+    const line = (await page.locator('#queue-link').innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+    check('Tasks shows the waiting line', await page.locator('#queue-link').isVisible() &&
+          /^\d+ waiting on you · Open overview$/.test(line), line);
+    check('Tasks does not repeat the queue or the tiles', !(await page.locator('#attention').isVisible()) &&
+          !(await page.locator('#summary').isVisible()));
+    await page.locator('#queue-link-open').click();
+    await page.waitForFunction(() => !document.getElementById('overview-view').hidden, null, { timeout: 4000 })
+      .then(() => check('the waiting line opens the overview', true), e => check('the waiting line opens the overview', false, e));
+    check('the address says view=overview', decodeURIComponent(new URL(page.url()).hash).includes('view=overview'));
+    await page.setViewportSize({ width: 375, height: 740 });
+    await page.waitForTimeout(300);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    check('no horizontal page scroll at 375 px', overflow <= 1, `overflow ${overflow}px`);
+  },
+
+  // Capacity after a real quota failover: cl1 ran out, the task moved to claude2 on cl2.
+  async capacity(page) {
+    const cardsReady = () => page.waitForFunction(() => document.querySelectorAll('#account-cards > [data-key]').length >= 2,
+                                                  null, { timeout: 8000 });
+    await open(page, '#view=accounts');
+    await cardsReady().then(() => check('account cards shown', true), e => check('account cards shown', false, e));
+    const card = name => page.locator(`#account-cards > [data-key="${name}"]`);
+    check('one card for cl1 and one for cl2', await card('cl1').count() === 1 && await card('cl2').count() === 1);
+    const cl1 = await card('cl1').innerText().catch(() => '');
+    check('cl1 has a state badge', await card('cl1').locator('.account-head .badge > .glyph[aria-hidden="true"]').count() === 1, cl1);
+    check('cl1 is out of quota, or available with the lifted note',
+          /Out of quota/.test(cl1) || (/Available/.test(cl1) && /Quota mark lifted/.test(cl1)), cl1);
+    const meters = await card('cl2').locator('[role="meter"]').evaluateAll(nodes => nodes.map(m => ({
+      now: Number(m.getAttribute('aria-valuenow')), min: m.getAttribute('aria-valuemin'), max: m.getAttribute('aria-valuemax'),
+      label: m.getAttribute('aria-label'), width: m.querySelector('.meter-fill')?.style.width })));
+    check('cl2 shows at least one labelled meter', meters.length >= 1 && meters.every(m =>
+      m.now >= 0 && m.now <= 100 && m.min === '0' && m.max === '100' && /: \d+% used$/.test(m.label || '')), JSON.stringify(meters));
+    check('meter fills are sized through the CSSOM', meters.every(m => /%$/.test(m.width || '')), JSON.stringify(meters));
+    const cl2 = await card('cl2').innerText().catch(() => '');
+    check('cl2 says how much is used', /\d+% used/.test(cl2), cl2);
+    check('cl2 lists its slots and agent', /\d+ of \d+ slots busy/.test(cl2) && cl2.includes('claude2'), cl2);
+    const panel = await page.locator('#fallback-panels').innerText().catch(() => '');
+    check('the fallback panel says it is on', /Quota fallback is on/.test(panel), panel);
+    check('the fallback panel names where the policy is set', panel.includes('routing.quota_fallback'), panel);
+    check('the fallback panel has no edit controls',
+          await page.locator('#fallback-panels button, #fallback-panels input, #fallback-panels select').count() === 0);
+    const switches = page.locator('#switches [role="listitem"]');
+    check('one automatic switch listed', await switches.count() === 1, await switches.count());
+    const row = await switches.first().innerText().catch(() => '');
+    check('the switch names the task, claude1 and claude2',
+          row.includes(cfg.tasks.failover) && row.includes('claude1') && row.includes('claude2'), row);
+    check('the account-list hint is shown', (await page.locator('#accounts-hint').innerText()).includes('agent-bridge account-list'));
+    await page.screenshot({ path: cfg.shots + '/capacity.png', fullPage: true });
+    await switches.first().locator('button').click();
+    await page.waitForFunction(() => !document.getElementById('drawer').hidden, null, { timeout: 8000 })
+      .then(() => check('clicking the switch opens the drawer', true), e => check('clicking the switch opens the drawer', false, e));
+    const hash = decodeURIComponent(new URL(page.url()).hash);
+    check('the drawer is for the switched task', hash.includes(`t=${cfg.pid}:${cfg.tasks.failover}`), hash);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.getElementById('drawer').hidden, null, { timeout: 4000 }).catch(() => {});
+
+    // The overview summarises both accounts and the policy.
+    await open(page, '#view=overview');
+    const summary = page.locator('#capacity-summary');
+    check('the overview lists both accounts',
+          await summary.locator('[data-key="cl1"]').count() === 1 && await summary.locator('[data-key="cl2"]').count() === 1,
+          await summary.innerText().catch(() => ''));
+    check('every summary row has a state badge', await page.evaluate(() =>
+      [...document.querySelectorAll('#capacity-summary [role="listitem"]')]
+        .every(r => r.querySelector('.badge > .glyph[aria-hidden="true"]'))));
+    const cl2Row = await summary.locator('[data-key="cl2"]').innerText().catch(() => '');
+    check('the cl2 row shows slots and quota left', /\d+ of \d+ busy/.test(cl2Row) && /\d+% left/.test(cl2Row), cl2Row);
+    const line = await page.textContent('#capacity-fallback');
+    check('the overview fallback line says it is on',
+          await page.locator('#capacity-fallback').isVisible() && /Quota fallback is on/.test(line), line);
+
+    // A phone: nothing pushes the page sideways.
+    await page.setViewportSize({ width: 375, height: 740 });
+    await open(page, '#view=accounts');
+    await cardsReady().catch(() => {});
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    check('no horizontal page scroll at 375 px on Accounts', overflow <= 1, `overflow ${overflow}px`);
+    await page.screenshot({ path: cfg.shots + '/capacity-mobile.png', fullPage: true });
+
+    // Vietnamese.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await open(page, '#view=accounts&lang=vi');
+    await page.waitForFunction(() => document.documentElement.lang === 'vi');
+    const heading = await page.textContent('#accounts-title');
+    check('the Accounts heading is Vietnamese', heading === 'Tài khoản', heading);
+    const vi = await page.locator('#fallback-panels').innerText().catch(() => '');
+    check('the fallback panel is Vietnamese', /đang bật/.test(vi) && !/Quota fallback is on/.test(vi), vi);
+    await open(page, '#view=overview&lang=vi');
+    const viLine = await page.textContent('#capacity-fallback');
+    check('the overview fallback line is Vietnamese', /đang bật/.test(viLine) && !/Quota fallback/.test(viLine), viLine);
   },
 
   // Time to a usable table with every task.
