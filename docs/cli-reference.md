@@ -12,6 +12,7 @@ exposes these tools.
 | `bridge_health` | — | Adapters (path, version), Codex login, active tasks, remaining quota per account |
 | `bridge_list_agents` | — | Agents, roles, capabilities, availability, stages, quota fallback |
 | `bridge_list_accounts` | — | Accounts, login state, quota snapshot (5h / 7d windows), codex-switch homes and profiles; no credentials |
+| `bridge_account_usage` | `account` (optional) | Read-only: per account its state, each configured limit (used, threshold, remaining, reset time, source, status), spend per day / week / month and quota. Limits cannot be changed through MCP |
 | `bridge_create_task` | `objective`, `allowed_paths`, `acceptance_criteria`, optional `context`, `scope`, `excluded_paths`, `depends_on`, `verification_commands`, `risk_level` (`low` / `medium` / `high`), `timeout_s`, `max_attempts`, `sandbox`, `agent`, `account` | Validates and stores a task; identical live specs are deduplicated. `agent` pins an executor agent, `account` the first executor on that account |
 | `bridge_execute_task` | `task_id` | Starts the executor agent in the background |
 | `bridge_task_status` | `task_id`, `wait_s` | Compact state; `wait_s` (≤ 55) blocks until the task leaves `RUNNING` / `VERIFYING` |
@@ -47,11 +48,12 @@ exposes these tools.
 | `web [--port N] [--open]` | Read-only web dashboard for every known project and worktree, on `127.0.0.1` (default port 8765; `0` picks a free port) |
 | `health [--json]` | OK / NOT OK, adapters, quota, task counts and what to fix; exits 1 when not OK |
 | `agents [--json]` | Roles mapped to agents, then agents with capabilities and availability |
+| `usage [account] [--json]` | Per-account limits: used, threshold, remaining, reset time, source (`actual` / `estimated` / `unavailable`) and status; accounts without limits show today's spend. See [Per-account limits](configuration.md#per-account-limits-opt-in) |
 | `account-list [--all] [--json]` | Usable accounts and the command to add more; `--all` adds codex-switch / claude-switch profiles, homes not added yet and CLIs without an account |
 | `list [--state S] [--limit N] [--json]` | Tasks of this project (default limit 50); tasks that need you are marked `●` with the next command |
 | `tasks [--state S] [--limit N] [--json]` | Tasks of every project and worktree on this machine, grouped by project (default 10 per project) |
 
-These five views print tables in a terminal, and the same JSON the MCP tools return with
+These six views print tables in a terminal, and the same JSON the MCP tools return with
 `--json` or when the output is piped.
 
 ### Tasks and workflows

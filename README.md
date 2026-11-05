@@ -61,6 +61,9 @@ want a repeatable, auditable delegation loop in one repository.
   `BLOCKED` with a diagnosis.
 - **Human gates.** High-risk tasks and changes to sensitive paths (migrations, auth, deploy, CI,
   secrets) wait for `agent-bridge approve` in an interactive terminal.
+- **Per-account limits.** Optional 5-hour, weekly and USD budget limits per account, enforced
+  before every run and reserved atomically across bridges; `agent-bridge usage` shows what is
+  used and when it resets.
 - **Isolated accounts.** Each account has its own auth home (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
   or a whole `HOME` for agy), concurrency limit and quota tracking. Optional quota fallback moves
   work to another account.
@@ -239,6 +242,7 @@ Shipped examples (`agent-bridge config-init <name>`):
 | [`single-agent`](examples/single-agent.yaml) | Codex | Codex | Codex |
 | [`gates-only`](examples/gates-only.yaml) | — | Codex | None: deterministic gates only |
 | [`other-reviewers`](examples/other-reviewers.yaml) | agy | Codex | opencode |
+| [`account-limits`](examples/account-limits.yaml) | Claude Code session | Claude headless on two accounts, then Codex, with per-account limits and failover | Claude Code session |
 
 Accounts are logged in by a human, either per project (`agent-bridge account-login <name>`) or
 machine-wide (`agent-bridge account-add <name> --provider …`). Quota fallback is off by
@@ -446,6 +450,7 @@ These print tables in a terminal and JSON with `--json` or when piped:
 ```bash
 agent-bridge health        # adapters, quota per account, task counts
 agent-bridge agents        # roles, agents and availability
+agent-bridge usage         # per-account limits: used, remaining, reset time
 agent-bridge account-list  # accounts and login state; --all adds profiles and unused CLIs
 agent-bridge list          # tasks of this project, newest first
 agent-bridge tasks         # tasks of every project and worktree on this machine

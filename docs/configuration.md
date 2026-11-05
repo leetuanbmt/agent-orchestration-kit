@@ -53,10 +53,10 @@ workflow:
 | Section | Keys |
 |---|---|
 | `version` | Must be `1`. |
-| `accounts.<id>` | `provider`: `openai`, `anthropic`, `google` or `opencode`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode accepts no `home`). `max_concurrency`: 1–8, default 1. |
+| `accounts.<id>` | `provider`: `openai`, `anthropic`, `google` or `opencode`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode accepts no `home`). `max_concurrency`: 1–8, default 1. `limits`: optional per-account limits, see [Per-account limits](#per-account-limits-opt-in). |
 | `agents.<id>` | `adapter`: `codex-cli`, `claude-cli`, `client`, `opencode-cli` or `agy-cli`. `account` (required except for `client`), optional `provider` (must match the adapter), `model`, `capabilities` (subset of `[read, write]`), `allow_write` (default true for `codex-cli`, false otherwise), `allow_bash` (`claude-cli` only), `timeout_s` (≥ 30), `enabled` (default true). |
 | `roles.<name>` | An agent id, or `{agents: [...], default: <agent>, strategy: ordered \| explicit, requires: read \| write}`. `default` is tried first; the other agents are fallbacks in list order. `default` cannot be combined with `strategy: explicit`. |
-| `routing.quota_fallback` | `enabled` (default false), `min_remaining_pct` (default 10), `agents` (candidates in order; default: the executor role's agents). |
+| `routing.quota_fallback` | `enabled` (default false), `min_remaining_pct` (default 10), `agents` (candidates in order; default: the executor role's agents), `max_switches` (1–20, default 3), `keep_sessions` (default false). See [Per-account limits](#per-account-limits-opt-in). |
 | `workflow` | `stages`: ordered subset of `plan, execute, test, review`, default `[execute, test, review]`; must include `execute` and at least one of `test` / `review`. `max_rework`: 0–4, default 2. |
 | `security` | `project_isolation` and `human_approval_for_sensitive_actions`. Both are fixed to `true`; the keys exist only to make the policy explicit. |
 
@@ -85,6 +85,7 @@ Role rules:
 | [`single-agent`](../examples/single-agent.yaml) | Codex | Codex | Codex |
 | [`gates-only`](../examples/gates-only.yaml) | — | Codex | None: deterministic gates only |
 | [`other-reviewers`](../examples/other-reviewers.yaml) | agy | Codex | opencode |
+| [`account-limits`](../examples/account-limits.yaml) | Claude Code session | Claude headless on two accounts, then Codex, with per-account limits and failover | Claude Code session |
 
 ### Routing
 
@@ -211,6 +212,112 @@ account that is available, logged in, under its concurrency limit and at or abov
 review feedback. It is logged as `account_auto_switched` and is never triggered by AUTH.
 Enabling it is the user's authorisation; the legacy `auto_switch` block in `config.json` maps
 onto it.
+
+### Per-account limits (opt-in)
+
+An account can carry its own usage limits. An account without a `limits` block behaves exactly
+as before. Limits live in `.ai/orchestrator.yaml` or the machine-wide account registry; both are
+human-owned, and no agent, MCP tool or UI can change them.
+
+```yaml
+accounts:
+  claude-main:
+    provider: anthropic
+    home: ~/.claude-accounts/main
+    limits:
+      five_hour_pct: 85          # stop at 85 % of the 5-hour window
+      weekly_pct: 90             # stop at 90 % of the weekly window
+      budget_usd: {day: 20, week: 100, month: 300}
+      reserve_usd: 2             # held for each run until its cost is known
+  codex-work:
+    provider: openai
+    home: ~/.codex-accounts/homes/work
+    limits:
+      any_window_pct: 95         # every window the provider reports
+      budget_usd: {month: 50}
+      pricing: {input_per_mtok: 1.25, output_per_mtok: 10, cached_input_per_mtok: 0.125}
+      cooldown_s: 3600
+```
+
+| Key | Meaning |
+|---|---|
+| `enabled` | Default `true`. `false` keeps the checks visible in `agent-bridge usage` but enforces none of them. |
+| `five_hour_pct`, `weekly_pct` | Used percent (0–100] of the provider window whose `window_minutes` is 300 or 10080. |
+| `any_window_pct` | Used percent applied to every window the provider reports. |
+| `budget_usd` | `day`, `week` and/or `month` caps in USD. Periods are UTC calendar periods: the day from 00:00 UTC, the ISO week from Monday, the month from the 1st. |
+| `reserve_usd` | Amount held for each run on a budgeted account until its cost is known (needs `budget_usd`, at most the smallest cap). A run starts only when `spent + reserved + reserve_usd` stays within every cap. |
+| `pricing` | USD per million tokens (`input_per_mtok`, `output_per_mtok`, optional `cached_input_per_mtok`), used to estimate cost when the CLI reports tokens but no cost. The kit ships no price table. |
+| `cooldown_s` | 60–604800. Lifts a QUOTA mark after this many seconds when the snapshot has no future reset time to wait for. |
+
+**How a limit is checked.** A percentage limit is breached when `used >= threshold`. A window
+whose reset time has passed counts as 0 % used, so the account takes work again after the reset
+without anyone clearing it. A budget is breached when the period's spend reaches the cap, or
+when the next run's reserve would exceed it.
+
+**Where it is enforced.** Routing skips an account over its limit, and the "no eligible agent"
+error lists each reason. The authoritative check runs after the account's slot lock is taken
+and immediately before the agent starts, for executor, planner and reviewer runs alike. On a
+budgeted account the check and the reservation happen in one `BEGIN IMMEDIATE` transaction in
+the machine-wide `accounts.db`, so two bridges cannot both start the last affordable run. A run
+refused this way is logged as `limit_blocked` and fails with a message naming the limit and its
+reset time.
+
+**Cost sources.** Each run's cost is recorded in the shared usage ledger with its source:
+
+| Source | When |
+|---|---|
+| `actual` | The CLI reported a cost (Claude's `total_cost_usd`, opencode's per-step `cost`). |
+| `estimated` | Tokens times your `pricing`; or the `reserve_usd` charged for a run whose cost stayed unknown; or a run the provider refused (AUTH / QUOTA with no usage), charged 0. |
+| `unavailable` | No cost, no tokens and no pricing. |
+
+A percentage limit whose window the provider never reported shows `unavailable` and does not
+block; the provider's own hard stop still pauses the task as QUOTA. A budget fails closed: a run
+with unknown cost inside a period blocks that budget until the period ends. Give a budgeted
+Codex account `pricing` (Codex reports tokens, not cost) or a `reserve_usd`; `config-check`
+warns about a budget that has neither. Every network-retried attempt is charged on its own,
+and a retry is skipped once the account is over its limit. A run that fails before its agent
+starts is charged 0. A reservation whose bridge process died is charged its reserved amount (or
+counted as unknown when it reserved nothing) the next time any bridge checks the account.
+
+**Failover.** With `routing.quota_fallback.enabled`, a task whose account is over a configured
+limit moves to the next eligible candidate the same way as for a QUOTA mark. Two more keys
+bound it:
+
+| Key | Meaning |
+|---|---|
+| `max_switches` | 1–20, default 3. Automatic moves per task; after that the bridge logs `auto_switch_skipped` ("switch limit reached") and the task waits. |
+| `keep_sessions` | Default `false`. `true` refuses to move a task that already has an agent session, so its context is never dropped silently. |
+
+When every candidate is over its limit, the task is not started and the error names each
+account's reason. Nothing retries in the background; run the task again after a reset or after
+a human changes the limits.
+
+**Inspecting usage.** `agent-bridge usage [account]` (or the `bridge_account_usage` MCP tool)
+shows each check with used, threshold, remaining, reset time, source and status. Accounts over
+a limit show `over limit` in `agent-bridge account-list`, and `health` reports the status of
+every account with limits.
+
+**Limitations.**
+
+- A run is charged to the period in which it started; a run that spans midnight UTC counts
+  toward the earlier day.
+- Cost is known only when a run ends, so a run is never stopped part-way when it crosses a
+  budget. With `reserve_usd: 0`, concurrent runs on one account can overshoot a cap by up to
+  `max_concurrency` runs.
+- Percentage windows are matched by `window_minutes`; a provider that reports none gets no
+  five-hour or weekly check (`any_window_pct` still applies).
+- Spend is shared machine-wide per login (provider plus auth home), but thresholds come from
+  each project's config: two projects that set different limits for the same login each enforce
+  their own against the same spend. A project's own account declaration replaces a registry
+  account of the same name, limits included.
+
+**Troubleshooting.**
+
+| Symptom | Cause and fix |
+|---|---|
+| `account X over its configured limit: budget_usd.day: ... N run(s) with unknown cost` | A run's cost could not be determined. Add `pricing` or `reserve_usd`, or wait for the period to reset. |
+| A task waits with `auto_switch_skipped: switch limit reached` | The task moved `max_switches` times. Check `agent-bridge usage`, then resume it after a reset. |
+| `usage` shows a check as `unavailable` | The provider has not reported that window yet. Run one task on the account, or use `any_window_pct`. |
 
 ## State and storage
 

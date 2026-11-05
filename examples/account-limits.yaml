@@ -1,0 +1,49 @@
+# Per-account limits with automatic failover. Each account stops taking work at its own
+# thresholds; with quota_fallback enabled a task moves to the next eligible executor.
+# Limits are human-owned: no agent or MCP tool can change them. Inspect with: agent-bridge usage
+version: 1
+
+accounts:
+  claude-main:
+    provider: anthropic
+    home: ~/.claude-accounts/main
+    limits:
+      five_hour_pct: 85            # stop at 85 % of the 5-hour window
+      weekly_pct: 90               # stop at 90 % of the weekly window
+      budget_usd: {day: 20, month: 300}
+      reserve_usd: 2               # held per run until Claude reports its cost
+  claude-backup:
+    provider: anthropic
+    home: ~/.claude-accounts/backup
+    limits:
+      any_window_pct: 95           # every window the provider reports
+  codex-work:
+    provider: openai
+    home: ~/.codex-accounts/homes/work
+    limits:
+      budget_usd: {week: 50}
+      # Codex reports tokens, not cost: without pricing or reserve_usd a budget fails closed.
+      # Use your own contract prices; the kit ships none.
+      pricing: {input_per_mtok: 1.25, output_per_mtok: 10, cached_input_per_mtok: 0.125}
+      cooldown_s: 3600             # lift a QUOTA mark after 1 h when no reset time is known
+
+agents:
+  claude: {adapter: client}
+  claude-a: {adapter: claude-cli, account: claude-main, allow_write: true}
+  claude-b: {adapter: claude-cli, account: claude-backup, allow_write: true}
+  codex: {adapter: codex-cli, account: codex-work}
+
+roles:
+  planner: claude
+  executor: {agents: [claude-a, claude-b, codex], strategy: ordered}
+  reviewer: claude
+
+routing:
+  quota_fallback:
+    enabled: true                  # authorises moving a task to the next eligible executor
+    min_remaining_pct: 10
+    max_switches: 3                # at most 3 automatic moves per task
+    keep_sessions: false           # true: never move a task that already has a session
+
+workflow:
+  stages: [execute, test, review]
