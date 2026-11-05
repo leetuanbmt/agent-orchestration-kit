@@ -183,9 +183,22 @@ class Bridge:
         if state["state"] != "quota" or state.get("updated_at") is None:
             return state
         quota = self._account_quota(name)
+        now = time.time()
+        configured = self._limits(name)
+        cooldown = configured.cooldown_s if configured is not None else None
+        if cooldown is not None and now - state["updated_at"] >= cooldown:
+            windows = ([quota.get(w) for w in ("primary", "secondary")]
+                       if isinstance(quota, dict) else [])
+            resets = [w.get("resets_at") for w in windows if isinstance(w, dict)]
+            if not any(isinstance(r, (int, float)) and not isinstance(r, bool) and r > now
+                       for r in resets):
+                # No reset time is readable: lift the mark once the cooldown has elapsed.
+                self.store.set_account_state(name, "available", actor=Actor.BRIDGE, key=key)
+                self.store.log(None, Actor.BRIDGE, "account_cooldown_elapsed",
+                               {"name": name, "cooldown_s": cooldown})
+                return self.store.account_state(name, key=key)
         if not isinstance(quota, dict):
             return state
-        now = time.time()
         limits = {window: quota.get(window) for window in ("primary", "secondary")}
         remaining = remaining_pct(limits, now)
         if remaining is None or remaining <= 0:
@@ -444,7 +457,8 @@ class Bridge:
         return self._summary(self.store.get(task_id))
 
     def _quota_fallback(self, task_id: str) -> None:
-        """Opt-in: move a task off an account below the quota threshold. Never on AUTH."""
+        """Opt-in: move a task off an account in QUOTA state, below the quota threshold or over
+        one of its configured limits. Never on AUTH; capped per task by max_switches."""
         policy = self.orch.routing.quota_fallback
         if not policy.enabled:
             return
@@ -456,8 +470,29 @@ class Bridge:
         state = self._account_state(account, key=self._key(account))["state"]
         if state == "auth":
             return
+        limit = None
+        limits = self._limits(account)
+        if limits is not None:
+            report = self._limit_report(
+                account, reserve=limits.reserve_usd if limits.budget_usd else 0.0)
+            if report["status"] == "limited":
+                limit = report["reason"]
         remaining = 0 if state == "quota" else self._remaining(account)
-        if remaining is None or remaining >= policy.min_remaining_pct:
+        low = remaining is not None and remaining < policy.min_remaining_pct
+        if not low and limit is None:
+            return
+        reason = ("quota" if state == "quota" and low else
+                  "limit" if limit is not None else "below_threshold")
+        switches = sum(e["kind"] == "account_auto_switched"
+                       for e in self.store.events(task_id, 500))
+        if switches >= policy.max_switches:
+            self.store.log(task_id, Actor.BRIDGE, "auto_switch_skipped", {
+                "account": account,
+                "reason": f"switch limit reached ({switches}/{policy.max_switches})"})
+            return
+        if policy.keep_sessions and row["session_id"]:
+            self.store.log(task_id, Actor.BRIDGE, "auto_switch_skipped", {
+                "account": account, "reason": "keep_sessions: the task has an agent session"})
             return
         for name in policy.agents or self.orch.role("executor").agents:
             candidate = self.orch.agents[name]
@@ -471,12 +506,13 @@ class Bridge:
             if to_remaining is not None and to_remaining < policy.min_remaining_pct:
                 continue
             self._rebind(task_id, name, Actor.BRIDGE, "account_auto_switched", {
-                "reason": "quota" if state == "quota" else "below_threshold",
-                "remaining_pct": remaining, "to_remaining_pct": to_remaining,
+                "reason": reason, "remaining_pct": remaining, "to_remaining_pct": to_remaining,
+                **({"limit": limit} if reason == "limit" else {}),
             })
             return
         self.store.log(task_id, Actor.BRIDGE, "auto_switch_skipped", {
             "account": account, "remaining_pct": remaining, "reason": "no eligible fallback",
+            **({"limit": limit} if limit is not None else {}),
         })
 
     def _route(self, task_id: str) -> bool:
