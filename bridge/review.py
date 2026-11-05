@@ -9,13 +9,13 @@ import hashlib
 import os
 import shlex
 import shutil
-import signal
 import subprocess
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import osutil
 from .config import BridgeConfig
 from .security import clean_env, matches, redact
 
@@ -155,7 +155,7 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
         try:
             argv = parse_command(cmd, cfg)
             proc = await asyncio.create_subprocess_exec(
-                *argv, cwd=root, env=env, start_new_session=True, stdin=asyncio.subprocess.DEVNULL,
+                *argv, cwd=root, env=env, **osutil.GROUP_KWARGS, stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             )
             io = asyncio.ensure_future(proc.communicate())
@@ -168,7 +168,7 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
                     stop = f"timed out after {cfg.verify_timeout_s}s"
                 if stop:
                     with contextlib.suppress(ProcessLookupError, PermissionError):
-                        os.killpg(proc.pid, signal.SIGKILL)
+                        osutil.kill_group(proc.pid, force=True)
                     break
                 await asyncio.wait({io}, timeout=min(1.0, max(deadline - loop.time(), 0)))
             if stop:  # a process that left the group may still hold the pipe open

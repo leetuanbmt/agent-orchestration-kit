@@ -18,19 +18,20 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from . import install
-from .accounts import HOME_ENV, Account, AccountLock, binary, discover, known_projects, \
+from . import osutil, progress, storage
+from .accounts import HOME_ENV, Account, AccountLock, account_key, binary, discover, \
     load_registry, login_status, remember_project, resolve, resolve_profile
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
 from .executor import ADAPTERS, PLAN_SCHEMA, REVIEW_SCHEMA, Adapter, RunRequest, RunResult, \
-    build_plan_prompt, build_prompt, build_review_prompt, build_rework_prompt, kill_stale
+    build_plan_prompt, build_prompt, build_review_prompt, build_rework_prompt, describe_event, \
+    kill_stale
 from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError
 from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .review import diff, parse_command, run_verification, scope_violations, snapshot, \
     touches_sensitive
-from .security import PathError, process_started, redact, rule_unsafe, validate_pattern
+from .security import hook_settings_error, PathError, process_started, redact, rule_unsafe, validate_pattern
 from .state import ConflictError, Store, overview
 
 # Outcomes that mean "the environment, not the code": park the task, never auto-retry.
@@ -41,15 +42,17 @@ CANCEL_WAIT_S = 15
 
 
 def _alive(pid: int | None) -> bool:
-    if not pid:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    return osutil.alive(pid)
+
+
+def _attempt_log_path(root: Path, task_id: str, n: int) -> Path:
+    return state_dir(root) / "logs" / f"{task_id}-{n}.jsonl"
+
+
+def _write_attempt_log_line(log: Any, stream: str, line: str) -> None:
+    log.write(json.dumps({"ts": time.time(), "stream": stream,
+                          "line": redact(line, 100000)}, ensure_ascii=False) + "\n")
+    log.flush()
 
 
 def resolve_account(orch: OrchestratorConfig, cfg: BridgeConfig, root: Path,
@@ -64,32 +67,44 @@ def resolve_account(orch: OrchestratorConfig, cfg: BridgeConfig, root: Path,
 
 class Bridge:
     def __init__(self, root: str | Path | None = None, cfg: BridgeConfig | None = None,
-                 orch: OrchestratorConfig | None = None):
+                 orch: OrchestratorConfig | None = None, *, create: bool = True):
         self.root = find_root(root)
         self.cfg = cfg or load_config(self.root)
         self.orch = orch or load_orchestrator(self.root, self.cfg)
         # Legacy mode: agents are named after the `.ai/config.json` accounts and every task is
         # pinned to an account at creation, exactly as before roles existed.
         self.legacy = self.orch.source.startswith("legacy")
-        ensure_ai_dir(self.root)
-        self.state_dir = state_dir(self.root)
+        if create:
+            ensure_ai_dir(self.root)
+        location = storage.locate(self.root, create=create)
+        self.state_dir = state_dir(self.root) if create else location.dir
+        self.storage = location.kind
         database = self.state_dir / "bridge.db"
         legacy = self.root / AI_DIR / "bridge.db"
-        migrated = legacy.exists() and not database.exists()
+        if not create and not database.exists() and legacy.exists():
+            self.state_dir = legacy.parent
+            database = legacy
+        migrated = create and legacy.exists() and not database.exists()
         if migrated:
             # SQLite sidecars may contain committed state after an interrupted runner.
             for suffix in ("", "-wal", "-shm"):
                 source = Path(str(legacy) + suffix)
                 if source.exists():
                     os.replace(source, Path(str(database) + suffix))
-        self.store = Store(database)
+        shared = storage.home() / "accounts.db"
+        if create or database.is_file():
+            self.store = Store(database, shared=shared if create or shared.is_file() else None)
+        else:
+            self.store = Store(Path(":memory:"))
         if migrated:
             self.store.log(None, "bridge", "state_migrated",
                            {"from": str(legacy), "to": str(database)})
-        remember_project(self.root)
+        if create:
+            remember_project(self.root)
         self._adapters: dict[str, Adapter] = {}
         self._runs: dict[str, asyncio.Task[None]] = {}
         self._workflows: dict[str, asyncio.Task[None]] = {}
+        self.progress: Callable[[str], None] | None = None
         self._stopping = False
 
     # ---- helpers ---------------------------------------------------------------------------
@@ -101,6 +116,12 @@ class Bridge:
 
     def _account(self, name: str) -> Account:
         return resolve_account(self.orch, self.cfg, self.root, name)
+
+    def _key(self, name: str) -> str | None:
+        try:
+            return account_key(self._account(name))
+        except ValueError:
+            return None
 
     def _slots(self, account: str) -> int:
         profile = self.orch.accounts.get(account)
@@ -147,7 +168,7 @@ class Bridge:
             if found:
                 return found
         # Providers without readable rollouts: the limits the CLI reported on its last run.
-        stored = self.store.quota(name)
+        stored = self.store.quota(name, key=account_key(account))
         if stored is None:
             return "UNKNOWN"
         limits = stored["rate_limits"]
@@ -155,17 +176,39 @@ class Bridge:
                 "observed_at": stored["observed_at"],
                 "primary": limits.get("primary"), "secondary": limits.get("secondary")}
 
+    def _account_state(self, name: str, *, key: str | None) -> dict[str, Any]:
+        state = self.store.account_state(name, key=key)
+        if state["state"] != "quota" or state.get("updated_at") is None:
+            return state
+        quota = self._account_quota(name)
+        if not isinstance(quota, dict):
+            return state
+        now = time.time()
+        limits = {window: quota.get(window) for window in ("primary", "secondary")}
+        remaining = remaining_pct(limits, now)
+        if remaining is None or remaining <= 0:
+            return state
+        for window in limits.values():
+            reset = window.get("resets_at") if isinstance(window, dict) else None
+            if (isinstance(reset, (int, float)) and not isinstance(reset, bool)
+                    and state["updated_at"] < reset <= now):
+                self.store.set_account_state(name, "available", actor=Actor.BRIDGE, key=key)
+                return self.store.account_state(name, key=key)
+        return state
+
     def _remaining(self, name: str) -> float | None:
         quota = self._account_quota(name)
         return quota.get("remaining_pct") if isinstance(quota, dict) else None
 
     def _record_account(self, name: str, res: RunResult) -> None:
         if res.rate_limits:
-            self.store.save_quota(name, res.rate_limits)
+            self.store.save_quota(name, res.rate_limits, key=self._key(name))
         # Runs only start on an available account, so a mark seen after a successful run came from
-        # another run meanwhile; only account-clear (the user) lifts it.
+        # another run meanwhile. account-clear lifts marks; a quota mark may also lapse
+        # once a window open at mark time has reset and remaining quota is positive.
         if res.outcome in {"quota", "auth"}:
-            self.store.set_account_state(name, res.outcome, res.error, actor=Actor.BRIDGE)
+            self.store.set_account_state(name, res.outcome, res.error, actor=Actor.BRIDGE,
+                                         key=self._key(name))
 
     def _unavailable(self, name: str, need: str) -> str | None:
         """Why agent `name` cannot take work needing `need` right now; None when it can."""
@@ -182,7 +225,7 @@ class Bridge:
             account = self._account(agent.account or "")
         except ValueError as e:
             return str(e)
-        state = self.store.account_state(account.name)["state"]
+        state = self._account_state(account.name, key=account_key(account))["state"]
         if state != "available":
             return f"account {account.name} {state}"
         if self.store.active_on_account(account.name) >= self._slots(account.name):
@@ -223,7 +266,7 @@ class Bridge:
         registry = load_registry()
         for account in listing["accounts"]:
             account["quota"] = self._account_quota(account["name"])
-            state = self.store.account_state(account["name"])
+            state = self._account_state(account["name"], key=self._key(account["name"]))
             account.update(state=state["state"], last_error=state["last_error"],
                            max_concurrency=self._slots(account["name"]),
                            source="registry" if account["name"] in registry else "project")
@@ -272,8 +315,9 @@ class Bridge:
 
     def clear_account(self, name: str) -> dict[str, Any]:
         account = self._account(name)
-        self.store.set_account_state(account.name, "available", actor=Actor.CLIENT)
-        return self.store.account_state(account.name)
+        self.store.set_account_state(account.name, "available", actor=Actor.CLIENT,
+                                     key=account_key(account))
+        return self.store.account_state(account.name, key=account_key(account))
 
     def reassign_account(self, task_id: str, target: str) -> dict[str, Any]:
         """Human move of a task to another agent (or to the first executor on an account)."""
@@ -324,7 +368,7 @@ class Bridge:
         if current is None:
             return
         account = self.orch.agent(current).account or ""
-        state = self.store.account_state(account)["state"]
+        state = self._account_state(account, key=self._key(account))["state"]
         if state == "auth":
             return
         remaining = 0 if state == "quota" else self._remaining(account)
@@ -389,10 +433,30 @@ class Bridge:
         for name in self.orch.accounts:
             remaining = self._remaining(name)
             quota[name] = remaining if remaining is not None else "UNKNOWN"
+        storage_notice = None
+        if self.storage == "legacy":
+            storage_notice = ("legacy storage: run `agent-bridge storage status`, then "
+                              "`agent-bridge storage migrate --apply` after closing Claude sessions")
+        else:
+            try:
+                migration = json.loads((self.state_dir / "migration.json").read_text())
+                source = Path(migration["source"])
+                if source.exists():
+                    with contextlib.closing(sqlite3.connect(
+                            f"file:{source}?mode=ro", uri=True)) as legacy:
+                        maximum = legacy.execute("SELECT max(id) FROM events").fetchone()[0] or 0
+                    count = maximum - (migration["source_max_event_id"] or 0)
+                    if count > 0:
+                        storage_notice = (f"legacy database {source} has {count} events written after "
+                                          "migration (an old agent-bridge process is still running?)")
+            except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
+                pass
         return {
             "project_root": str(self.root),
             "database": str(self.store.path),
             "state_dir": str(self.state_dir),
+            "storage": self.storage,
+            "storage_notice": storage_notice,
             "orchestrator": {"source": self.orch.source, "stages": self.orch.workflow.stages},
             "codex": codex,
             "adapters": adapters,
@@ -478,10 +542,23 @@ class Bridge:
         self._quota_fallback(task_id)
         self._route(task_id)
         row = self.store.get(task_id)
-        if not feedback:
-            reviews = [e for e in self.store.events(task_id, 200) if e["kind"] == "review"]
-            feedback = (reviews[-1]["detail"] or {}).get("notes", "") if reviews else ""
         attempts = self.store.attempts(task_id)
+        if not feedback:
+            for attempt in reversed(attempts):
+                review = attempt.get("review")
+                if isinstance(review, dict):
+                    feedback = review.get("notes", "")
+                    break
+                if attempt.get("outcome") == "ok":
+                    break
+            if not any(a.get("review") is not None for a in attempts):
+                clean = next((a for a in reversed(attempts) if a.get("outcome") == "ok"),
+                             None)
+                reviews = [e for e in self.store.events(task_id, 200)
+                           if e["kind"] == "review" and isinstance(e["detail"], dict)
+                           and (clean is None or
+                                e["ts"] >= (clean.get("ended_at") or clean["started_at"]))]
+                feedback = reviews[-1]["detail"].get("notes", "") if reviews else ""
         last_ver = attempts[-1].get("verification") if attempts else None
         if row["session_id"]:
             prompt = build_rework_prompt(task_id, feedback, last_ver)
@@ -491,6 +568,14 @@ class Bridge:
                 prompt += f"\n\n## Feedback from the previous attempt\n{feedback}"
         return await self._start(task_id, "resume", prompt, row["session_id"], expect, wait,
                                  actor)
+
+    def _hook_settings(self, agent: AgentConfig) -> str | None:
+        if agent.adapter == "claude-cli" and self.cfg.claude_hook_settings:
+            path = self.cfg.claude_hook_settings
+            if error := hook_settings_error(path, self.root):
+                raise ValueError(f"claude_hook_settings: {error}")
+            return path
+        return None
 
     async def _start(self, task_id: str, kind: str, prompt: str, session: str | None,
                      expect: set[State], wait: bool, actor: Actor) -> dict[str, Any]:
@@ -502,7 +587,7 @@ class Bridge:
             return self._summary(row)
         agent = self.orch.agent(self._agent_of(row) or "")
         account = self._account(agent.account or "")
-        availability = self.store.account_state(account.name)
+        availability = self._account_state(account.name, key=account_key(account))
         if availability["state"] != "available":
             raise ValueError(
                 f"account {account.name} unavailable ({availability['state']}: "
@@ -514,6 +599,7 @@ class Bridge:
                 f"claude-cli cannot scope writes to {bad}: Claude permission rules cannot hold "
                 "',', '(', ')', quotes or whitespace. Rename the paths, or ask the user to "
                 f"run: agent-bridge reassign {task_id} <codex agent>")
+        self._hook_settings(agent)
         used = row["attempts"] + 1  # budget counter; environment failures give it back
         seq = len(self.store.attempts(task_id)) + 1  # attempt row number, never reused
         slots = self._slots(account.name)
@@ -571,27 +657,51 @@ class Bridge:
             return self._stopping or self.store.get(task_id)["state"] == State.CANCELLED
 
         retries = 0
-        while True:
-            res: RunResult = await adapter.run(
-                RunRequest(prompt, account, sandbox, self._timeout(agent, spec.get("timeout_s")),
-                           session_id=session, model=agent.model, allow_bash=agent.allow_bash,
-                           write_paths=spec["allowed_paths"],
-                           deny_paths=[*spec.get("excluded_paths", []),
-                                       *self.cfg.protected_paths]),
-                on_start=lambda pid: self.store.update(task_id, codex_pid=pid,
-                                                        codex_started=process_started(pid)),
-                on_session=lambda sid: self.store.update(task_id, session_id=sid),
-                should_cancel=cancelled,
-            )
-            if res.session_id:
-                session = res.session_id
-                self.store.update(task_id, session_id=session, codex_pid=None, codex_started=None)
-            if res.outcome == "network" and retries < self.cfg.network_retries:
-                retries += 1
-                self.store.log(task_id, Actor.BRIDGE, "retry", {"error": res.error, "n": retries})
-                await asyncio.sleep(self.cfg.retry_backoff_s)
-                continue
-            break
+        log_path = _attempt_log_path(self.root, task_id, n)
+        log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(log_path.parent, 0o700)
+        if self.progress:
+            with contextlib.suppress(Exception):
+                self.progress(f"[{task_id} #{n}] log: {log_path}")
+        fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.chmod(log_path, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as log:
+            def on_line(stream: str, line: str) -> None:
+                _write_attempt_log_line(log, stream, line)
+                if stream == "stdout" and self.progress:
+                    try:
+                        ev = json.loads(line)
+                    except ValueError:
+                        return
+                    if isinstance(ev, dict) and (summary := describe_event(ev)):
+                        with contextlib.suppress(Exception):
+                            self.progress(f"[{task_id} #{n}] {summary}")
+
+            while True:
+                res: RunResult = await adapter.run(
+                    RunRequest(prompt, account, sandbox, self._timeout(agent, spec.get("timeout_s")),
+                               session_id=session, model=agent.model, allow_bash=agent.allow_bash,
+                               hook_settings=self.cfg.claude_hook_settings
+                               if agent.adapter == "claude-cli" else None,
+                               write_paths=spec["allowed_paths"],
+                               deny_paths=[*spec.get("excluded_paths", []),
+                                           *self.cfg.protected_paths]),
+                    on_start=lambda pid: self.store.update(task_id, codex_pid=pid,
+                                                            codex_started=process_started(pid)),
+                    on_session=lambda sid: self.store.update(task_id, session_id=sid),
+                    should_cancel=cancelled, on_line=on_line,
+                )
+                if res.session_id:
+                    session = res.session_id
+                    self.store.update(task_id, session_id=session, codex_pid=None,
+                                      codex_started=None)
+                if res.outcome == "network" and retries < self.cfg.network_retries:
+                    retries += 1
+                    self.store.log(task_id, Actor.BRIDGE, "retry", {"error": res.error,
+                                                                     "n": retries})
+                    await asyncio.sleep(self.cfg.retry_backoff_s)
+                    continue
+                break
 
         self._record_account(account.name, res)
         changes = diff(self.root, before, self.cfg.protected_paths)
@@ -625,9 +735,13 @@ class Bridge:
         skipped = ("agent reported blocked and changed nothing"
                    if agent_status == "blocked" and not changes["files"]
                    and not changes["head_changed"] else None)
-        checks = (await run_verification(spec.get("verification_commands", []), self.root,
-                                         self.cfg, should_cancel=cancelled)
-                  if "test" in self.orch.workflow.stages and not skipped else [])
+        commands = ([] if skipped or "test" not in self.orch.workflow.stages
+                    else spec.get("verification_commands", []))
+        if self.progress and commands:
+            with contextlib.suppress(Exception):
+                self.progress(f"[{task_id} #{n}] verifying ({len(commands)} commands)")
+        checks = (await run_verification(commands, self.root, self.cfg, should_cancel=cancelled)
+                  if commands else [])
         stopped = cancelled()  # checks cut short (or never started) prove nothing
         passed = (not violations and not stopped and all(c["passed"] for c in checks)
                   and agent_status == "completed")
@@ -673,6 +787,7 @@ class Bridge:
                        task_id: str | None, cancel: Callable[[], bool]) -> RunResult | None:
         """One read-only run of a planner or reviewer agent; None when its account is busy."""
         agent = self.orch.agents[name]
+        hook_settings = self._hook_settings(agent)
         account = self._account(agent.account or "")
         lock = AccountLock(account, self.cfg.lock_dir, self._slots(account.name))
         try:
@@ -684,7 +799,7 @@ class Bridge:
         try:
             res = await self._adapter(agent.adapter).run(
                 RunRequest(prompt, account, "read-only", self._timeout(agent, None),
-                           schema=schema, model=agent.model),
+                           schema=schema, model=agent.model, hook_settings=hook_settings),
                 should_cancel=cancel)
         finally:
             lock.release()
@@ -732,15 +847,18 @@ class Bridge:
         if row["state"] != State.REVIEW:
             raise TransitionError(f"{task_id} is {row['state']}; review needs REVIEW")
         detail = d.model_dump() | ({"reviewer": reviewer} if reviewer else {})
-        self.store.log(task_id, actor, "review", detail)
+        detail["actor"] = str(actor)
         if d.decision == "rework":
-            row = self.store.transition(task_id, State.REWORK, actor, detail)
+            row = self.store.transition(task_id, State.REWORK, actor, detail,
+                                        expect={State.REVIEW}, attempt_review=detail)
         elif d.decision == "block":
             row = self.store.transition(task_id, State.BLOCKED, actor, detail,
-                                        failure=f"BLOCKED by review: {d.notes}"[:500])
+                                        expect={State.REVIEW}, attempt_review=detail,
+                                        failure=("BLOCKED by review: " + redact(d.notes, 8000))[:500])
         else:
             self._assert_gates(task_id, need_review=False)
-            row = self.store.transition(task_id, State.APPROVED, actor, detail)
+            row = self.store.transition(task_id, State.APPROVED, actor, detail,
+                                        expect={State.REVIEW}, attempt_review=detail)
             if not row["needs_human"]:
                 row = self._close(task_id, Actor.BRIDGE)
         out = self._summary(row)
@@ -762,23 +880,31 @@ class Bridge:
         ver = last.get("verification") or {}
         if last.get("outcome") != "ok" or not ver.get("passed"):
             raise TransitionError(f"{task_id}: quality gate failed (last attempt not verified)")
-        if need_review and not any(
-            e["kind"] == "review" and (e["detail"] or {}).get("decision") == "approve"
-            for e in self.store.events(task_id, 500)
-        ):
+        review = last.get("review")
+        approved = isinstance(review, dict) and review.get("decision") == "approve"
+        if need_review and review is None:
+            approved = any(
+                e["kind"] == "review" and isinstance(e["detail"], dict)
+                and e["detail"].get("decision") == "approve"
+                and e["ts"] >= last["started_at"]
+                for e in self.store.events(task_id, 500)
+            )
+        if need_review and not approved:
             raise TransitionError(f"{task_id}: quality gate failed (no approving review)")
 
-    def _close(self, task_id: str, actor: Actor) -> dict[str, Any]:
+    def _close(self, task_id: str, actor: Actor,
+               event: tuple[str, Any] | None = None) -> dict[str, Any]:
         self._assert_gates(task_id)
-        return self.store.transition(task_id, State.DONE, actor, {"gates": "passed"})
+        return self.store.transition(task_id, State.DONE, actor, {"gates": "passed"},
+                                     extra_event=event)
 
     def human_approve(self, task_id: str) -> dict[str, Any]:
         """Only reachable from the interactive CLI (`agent-bridge approve`), never from MCP."""
         row = self.store.get(task_id)
         if row["state"] != State.APPROVED:
             raise TransitionError(f"{task_id} is {row['state']}; human approval needs APPROVED")
-        self.store.log(task_id, Actor.HUMAN, "human_approval", {"tty": True})
-        return self._summary(self._close(task_id, Actor.HUMAN))
+        return self._summary(self._close(task_id, Actor.HUMAN,
+                                         ("human_approval", {"tty": True})))
 
     # ---- task queries ----------------------------------------------------------------------
 
@@ -815,7 +941,9 @@ class Bridge:
         attempts = self.store.attempts(task_id)
         if attempts:
             a = attempts[-1]
+            log_path = self.state_dir / "logs" / f"{task_id}-{a['n']}.jsonl"
             out["last_attempt"] = {"n": a["n"], "outcome": a["outcome"],
+                                   "log": str(log_path) if log_path.exists() else None,
                                    "changed_files": (a.get("changes") or {}).get("files"),
                                    "verification_passed": (a.get("verification") or {}).get(
                                        "passed")}
@@ -825,9 +953,11 @@ class Bridge:
         row = self.store.get(task_id)
         attempts = []
         for a in self.store.attempts(task_id):
+            log_path = self.state_dir / "logs" / f"{task_id}-{a['n']}.jsonl"
             attempts.append({k: a.get(k) for k in (
                 "n", "kind", "outcome", "exit_code", "session_id", "final", "usage", "changes",
                 "verification", "stderr_tail")})
+            attempts[-1]["log"] = str(log_path) if log_path.exists() else None
         return {
             **self._summary(row),
             "spec": row["spec"],
@@ -990,19 +1120,13 @@ def project_tasks(state: str | None = None, limit: int = 10,
                   here: Path | None = None) -> dict[str, Any]:
     """Tasks of every project agent-bridge has run in (and `here`), and of their git worktrees
     (each keeps its own tasks), most recently active project first."""
-    roots: dict[str, None] = {}
-    for root in dict.fromkeys([*known_projects(), *([str(here)] if here else [])]):
-        out = subprocess.run(["git", "-C", root, "worktree", "list", "--porcelain"],
-                             capture_output=True, text=True, check=False)
-        roots |= dict.fromkeys([root, *(line.removeprefix("worktree ")
-                                        for line in out.stdout.splitlines()
-                                        if line.startswith("worktree "))])
+    roots = progress.discover_roots(here)
     projects = []
     for root in roots:
         try:
-            db = install.bridge_dir(install.git_dir(Path(root))) / "bridge.db"
-        except (OSError, subprocess.CalledProcessError):
-            continue  # the project or worktree is gone
+            db = storage.find_store(root)
+        except (OSError, subprocess.CalledProcessError, ValueError):
+            continue  # The store cannot be resolved.
         if not db.exists():
             continue
         try:
@@ -1011,7 +1135,8 @@ def project_tasks(state: str | None = None, limit: int = 10,
             continue  # locked mid-migration or not a bridge database
         if not data["counts"]:
             continue
-        projects.append({"project": Path(root).name, "root": root, "counts": data["counts"],
+        projects.append({"project": Path(root).name, "root": root, "root_missing": not Path(root).is_dir(),
+                         "counts": data["counts"],
                          "tasks": [{"task_id": t["id"], "state": t["state"],
                                     "agent": t.get("agent") or t.get("account"),
                                     "objective": (t.get("spec") or {}).get("objective", ""),

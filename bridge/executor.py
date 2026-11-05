@@ -16,7 +16,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import tempfile
 from collections import deque
@@ -25,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import osutil
 from .accounts import Account, account_env, codex_overrides
 from .config import BridgeConfig, state_dir
 from .security import PathError, clean_env, process_started, redact, rule_unsafe
@@ -116,6 +116,51 @@ def classify(text: str) -> str:
     return "crash"
 
 
+def describe_event(ev: dict[str, Any], limit: int = 200) -> str | None:
+    """Return a short, safe summary for user-visible execution progress."""
+    t = ev.get("type")
+    item = ev.get("item") or {}
+    summary = None
+    if t == "thread.started":
+        summary = f"session started ({ev.get('thread_id', 'unknown')})"
+    elif t == "item.completed" and item.get("type") == "command_execution":
+        summary = f"command finished (exit {item.get('exit_code', 'unknown')}): {item.get('command', '')}"
+    elif t == "item.completed" and item.get("type") == "file_change":
+        changes = item.get("changes") or []
+        summary = "file edits: " + ", ".join(str(c.get("path", "")) for c in changes
+                                               if isinstance(c, dict))
+    elif t == "item.completed" and item.get("type") == "agent_message":
+        summary = f"agent: {item.get('text', '')}"
+    elif t == "turn.completed":
+        summary = "turn completed"
+    elif t == "turn.failed":
+        summary = f"turn failed: {(ev.get('error') or {}).get('message', '')}"
+    elif t == "error":
+        summary = f"error: {ev.get('message', '')}"
+    elif t == "system" and ev.get("subtype") == "init":
+        summary = f"session started ({ev.get('session_id', 'unknown')})"
+    elif t == "assistant":
+        for block in (ev.get("message") or {}).get("content") or []:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                inp = block.get("input") or {}
+                detail = next((inp[k] for k in ("file_path", "command", "pattern")
+                               if inp.get(k)), "")
+                summary = f"tool {block.get('name', 'unknown')}: {detail}"
+                break
+        if summary is None:
+            texts = [str(block.get("text", ""))
+                     for block in (ev.get("message") or {}).get("content") or []
+                     if isinstance(block, dict) and block.get("type") == "text"]
+            if texts:
+                summary = "agent: " + " ".join(texts)
+    elif t == "result":
+        summary = f"result {ev.get('subtype', 'unknown')}: {ev.get('result', '')}"
+    if summary:
+        summary = "".join(char if char.isprintable() else " " for char in summary)
+        return redact(" ".join(summary.split()), limit)
+    return None
+
+
 @dataclass
 class RunRequest:
     prompt: str
@@ -126,6 +171,7 @@ class RunRequest:
     schema: dict[str, Any] = field(default_factory=lambda: OUTPUT_SCHEMA)
     model: str | None = None
     allow_bash: bool = False
+    hook_settings: str | None = None
     # Project-relative globs a writing run may change, and globs it must never change.
     write_paths: list[str] = field(default_factory=list)
     deny_paths: list[str] = field(default_factory=list)
@@ -156,7 +202,10 @@ class Adapter:
 
     def __init__(self, cfg: BridgeConfig, root: Path):
         self.cfg, self.root = cfg, root
-        self.state_dir = state_dir(root)
+
+    @property
+    def state_dir(self) -> Path:
+        return state_dir(self.root)
 
     @property
     def binary(self) -> str:
@@ -193,7 +242,8 @@ class Adapter:
     async def run(self, req: RunRequest, *,
                   on_start: Callable[[int], None] | None = None,
                   on_session: Callable[[str], None] | None = None,
-                  should_cancel: Callable[[], bool] | None = None) -> RunResult:
+                  should_cancel: Callable[[], bool] | None = None,
+                  on_line: Callable[[str, str], None] | None = None) -> RunResult:
         if req.sandbox not in ("read-only", "workspace-write"):
             raise ValueError(f"sandbox not allowed: {req.sandbox}")
         if not self.available():
@@ -207,7 +257,7 @@ class Adapter:
             env |= self.extra_env(req)
             env[AGENT_ENV] = "1"
             proc = await asyncio.create_subprocess_exec(
-                *argv, cwd=self.root, env=env, start_new_session=True,
+                *argv, cwd=self.root, env=env, **osutil.GROUP_KWARGS,
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024,
             )
@@ -227,8 +277,12 @@ class Adapter:
             async def read_stdout() -> None:
                 assert proc.stdout
                 async for raw in proc.stdout:
+                    line = raw.decode(errors="replace").rstrip()
+                    if on_line:
+                        with contextlib.suppress(Exception):
+                            on_line("stdout", line)
                     try:
-                        ev = json.loads(raw)
+                        ev = json.loads(line)
                     except ValueError:
                         continue
                     if isinstance(ev, dict):
@@ -237,7 +291,11 @@ class Adapter:
             async def read_stderr() -> None:
                 assert proc.stderr
                 async for raw in proc.stderr:
-                    stderr.append(raw.decode(errors="replace").rstrip())
+                    line = raw.decode(errors="replace").rstrip()
+                    if on_line:
+                        with contextlib.suppress(Exception):
+                            on_line("stderr", line)
+                    stderr.append(line)
 
             async def watchdog() -> str:
                 loop = asyncio.get_running_loop()
@@ -285,9 +343,9 @@ class Adapter:
 class CodexAdapter(Adapter):
     name, provider = "codex-cli", "openai"
 
-    def __init__(self, cfg: BridgeConfig, root: Path):
-        super().__init__(cfg, root)
-        self.schema_path = self.state_dir / "output_schema.json"
+    @property
+    def schema_path(self) -> Path:
+        return self.state_dir / "output_schema.json"
 
     @property
     def binary(self) -> str:
@@ -374,11 +432,12 @@ class ClaudeAdapter(Adapter):
             denied += [f"{t}(./{p})" for p in req.deny_paths for t in _CLAUDE_WRITE_TOOLS]
         if req.allow_bash:
             tools.append("Bash")
-        # No settings files at all: their permissions.allow rules extend --allowedTools and their
-        # hooks run shell commands, so the target project could widen a read-only agent.
+        # No user/project settings files; only the owner-configured hooks-only file is loaded.
         a = [self.binary, "-p", "--output-format", "stream-json", "--verbose",
-             "--strict-mcp-config", "--setting-sources", "",
-             "--permission-mode", "dontAsk", "--allowedTools", ",".join(tools),
+             "--strict-mcp-config", "--setting-sources", ""]
+        if req.hook_settings:
+            a += ["--settings", req.hook_settings]
+        a += ["--permission-mode", "dontAsk", "--allowedTools", ",".join(tools),
              "--json-schema", json.dumps(req.schema)]
         a += ["--disallowedTools", ",".join(denied)]
         if req.model:
@@ -565,9 +624,9 @@ ADAPTERS: dict[str, type[Adapter]] = {"codex-cli": CodexAdapter, "claude-cli": C
 
 async def kill_group(proc: asyncio.subprocess.Process) -> None:
     """SIGTERM the whole process group (agents spawn shells), then SIGKILL after a grace period."""
-    for sig, wait in ((signal.SIGTERM, KILL_GRACE_S), (signal.SIGKILL, KILL_GRACE_S)):
+    for force, wait in ((False, KILL_GRACE_S), (True, KILL_GRACE_S)):
         with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(proc.pid, sig)
+            osutil.kill_group(proc.pid, force=force)
         try:
             await asyncio.wait_for(proc.wait(), timeout=wait)
             return
@@ -581,7 +640,7 @@ def kill_stale(pid: int | None, started: str | None) -> bool:
     if not pid or not started or process_started(pid) != started:
         return False
     with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(pid, signal.SIGTERM)
+        osutil.kill_group(pid, force=False)
     return True
 
 

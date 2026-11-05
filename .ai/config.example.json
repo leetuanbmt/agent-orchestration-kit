@@ -3,6 +3,7 @@
   "model": null,
   "codex_bin": "codex",
   "claude_bin": "claude",
+  "claude_hook_settings": null,
   "opencode_bin": "opencode",
   "agy_bin": "agy",
   "ignore_user_config": true,

@@ -6,13 +6,71 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
 from bridge.config import BridgeConfig
+from bridge import storage
+from bridge.accounts import Account, AccountLock
 from bridge.service import Bridge
 from bridge.state import ConflictError
 from tests.conftest import run, spec
+
+
+# @pt.id T0033-default-lock
+# @pt.item Machine-wide default account lock
+# @pt.condition Different TMPDIR values and cached temporary directories
+# @pt.expected Same central lock conflicts and private directories are created
+# @pt.target AccountLock
+# @pt.method integration
+# @pt.legacy None
+def test_default_lock_ignores_tmpdir(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "first"))
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "first"))
+    first = AccountLock(Account("default", None), None)
+    first.acquire()
+    try:
+        assert first.path.parent == storage.home() / "locks"
+        for directory in (storage.home(), first.path.parent):
+            assert directory.stat().st_mode & 0o777 == 0o700
+        monkeypatch.setenv("TMPDIR", str(tmp_path / "second"))
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "second"))
+        second = AccountLock(Account("default", None), None)
+        assert second.path == first.path
+        try:
+            with pytest.raises(ConflictError):
+                second.acquire()
+        finally:
+            second.release()
+    finally:
+        first.release()
+
+
+# @pt.id T0033-lock-override
+# @pt.item Default and explicit lock directories
+# @pt.condition Bridge home overridden and existing default locks directory is permissive
+# @pt.expected Default follows home and tightens permissions; explicit directory wins
+# @pt.target AccountLock
+# @pt.method integration
+# @pt.legacy None
+def test_lock_directory_override(tmp_path, monkeypatch):
+    home = tmp_path / "central"
+    monkeypatch.setenv("AGENT_BRIDGE_HOME", str(home))
+    directory = home / "locks"
+    directory.mkdir(parents=True)
+    directory.chmod(0o755)
+    default = AccountLock(Account("default", None), None)
+    explicit = AccountLock(Account("default", None), str(tmp_path / "custom"))
+    try:
+        default.acquire()
+        explicit.acquire()
+        assert default.path.parent == directory
+        assert directory.stat().st_mode & 0o777 == 0o700
+        assert explicit.path.parent == tmp_path / "custom"
+    finally:
+        explicit.release()
+        default.release()
 
 
 @pytest.fixture

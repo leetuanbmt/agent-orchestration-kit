@@ -1,0 +1,107 @@
+"""Short event summaries for streaming execution progress."""
+
+import json
+
+from bridge.executor import describe_event
+from bridge import cli
+from bridge.service import _write_attempt_log_line
+
+
+# @pt.id T0048-event-text
+# @pt.item Configurable summaries and Claude text
+# @pt.condition Long messages and mixed assistant blocks
+# @pt.expected Limit is honoured and tools take precedence
+# @pt.target bridge.executor.describe_event
+# @pt.method unit
+# @pt.legacy none
+def test_event_limit_and_claude_text():
+    event = {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "Hello"}, {"type": "text", "text": "world"}]}}
+    assert describe_event(event) == "agent: Hello world"
+    event["message"]["content"].append({"type": "tool_use", "name": "Read", "input": {}})
+    assert describe_event(event) == "tool Read:"
+    event = {"type": "item.completed", "item": {"type": "agent_message", "text": "a" * 3000}}
+    assert len(describe_event(event)) == 201
+    assert len(describe_event(event, limit=2000)) == 2001
+
+
+# @pt.id KIT-UNIT-LOG-001-event-summaries
+# @pt.item Codex and Claude execution events have concise progress summaries
+# @pt.condition known supported event shapes are described and unknown events are ignored
+# @pt.expected summaries cover session, command, message, tool use and unknown event behavior
+# @pt.target bridge.executor.describe_event
+# @pt.method unit
+# @pt.legacy none (new kit)
+def test_describe_event_supported_shapes() -> None:
+    assert "session started" in describe_event({"type": "thread.started",
+                                                  "thread_id": "abc"})
+    assert "exit 0" in describe_event({"type": "item.completed", "item": {
+        "type": "command_execution", "command": "pytest", "exit_code": 0}})
+    assert "agent:" in describe_event({"type": "item.completed", "item": {
+        "type": "agent_message", "text": "done"}})
+    assert "Read" in describe_event({"type": "assistant", "message": {"content": [{
+        "type": "tool_use", "name": "Read", "input": {"file_path": "src/app.py"}}]}})
+    assert describe_event({"type": "unrecognized"}) is None
+
+
+# @pt.id KIT-UNIT-LOG-003-printable-event-summaries
+# @pt.item Command progress summaries contain only printable characters
+# @pt.condition a command contains terminal control and Unicode format characters
+# @pt.expected controls are removed while visible command text remains
+# @pt.target bridge.executor.describe_event
+# @pt.method unit
+# @pt.legacy none (new kit)
+def test_describe_event_replaces_non_printable_command_characters() -> None:
+    controls = "\x1b]0;pwned\x07\x1b[2J\x9b\x7f\u202e"
+    summary = describe_event({"type": "item.completed", "item": {
+        "type": "command_execution", "command": f"pytest {controls}", "exit_code": 0}})
+
+    assert "pytest" in summary
+    assert all(char not in summary for char in ("\x1b", "\x07", "\x9b", "\x7f", "\u202e"))
+    assert all(char.isprintable() for char in summary)
+
+
+# @pt.id KIT-UNIT-CLI-001-progress-stderr
+# @pt.item Execute progress is written to stderr and final output remains on stdout
+# @pt.condition CLI execute bridge emits one progress event and returns a summary
+# @pt.expected stderr contains progress; stdout contains only the serialized summary
+# @pt.target bridge.cli.main
+# @pt.method unit
+# @pt.legacy none (new kit)
+def test_execute_cli_routes_progress_to_stderr(monkeypatch, capsys) -> None:
+    class FakeBridge:
+        progress = None
+
+        def recover(self):
+            pass
+
+        def stop(self):
+            pass
+
+        async def execute_task(self, _task_id, wait=False):
+            self.progress("[task #1] session started")
+            return {"state": "REVIEW"}
+
+    monkeypatch.setattr(cli, "Bridge", FakeBridge)
+    cli.main(["execute", "task"])
+    captured = capsys.readouterr()
+    assert "[task #1] session started" in captured.err
+    assert json.loads(captured.out) == {"state": "REVIEW"}
+    assert "session started" not in captured.out
+
+
+# @pt.id KIT-UNIT-LOG-002-attempt-log-redaction
+# @pt.item Attempt log writer masks credential-shaped agent output
+# @pt.condition a line containing an sk key is passed through the attempt log writer
+# @pt.expected JSONL contains the redacted marker and omits the credential
+# @pt.target bridge.service._write_attempt_log_line
+# @pt.method unit
+# @pt.legacy none (new kit)
+def test_attempt_log_writer_redacts_credentials(tmp_path) -> None:
+    secret = "sk-1234567890abcdefghijklmnop"
+    path = tmp_path / "attempt.jsonl"
+    with path.open("w", encoding="utf-8") as log:
+        _write_attempt_log_line(log, "stdout", f"agent output {secret}")
+    row = json.loads(path.read_text())
+    assert "[REDACTED]" in row["line"]
+    assert secret not in path.read_text()

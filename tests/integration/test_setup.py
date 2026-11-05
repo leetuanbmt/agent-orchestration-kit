@@ -372,3 +372,32 @@ def test_config_init(repo, tmp_path):
     code, out = in_terminal()
     assert code == 1 and 'exists' in out
     assert target.read_text() == '# mine\n'
+
+
+# @pt.id KIT-SETUP-013-in-repo-symlinks
+# @pt.item Installing into a project whose .claude/skills is a symlink to another directory of the project
+# @pt.condition .claude/skills links to ../.agents/skills (a shared skills tree); then links that leave the work tree or enter .git
+# @pt.expected The in-repo link is followed: the skill lands in .agents/skills, no retired path stops the run, uninstall removes the skill and keeps the link and its directory; a link outside the work tree or into .git is refused before any file is written
+# @pt.target scripts/setup.sh, scripts/uninstall.sh, bridge.install._Target.path
+# @pt.method integration
+# @pt.legacy none
+def test_in_repo_symlinks(repo, tmp_path_factory):
+    write(repo, '.agents/skills/fix/SKILL.md', 'project skill\n')
+    (repo / '.claude').mkdir()
+    (repo / '.claude/skills').symlink_to('../.agents/skills', target_is_directory=True)
+    run('setup.sh', repo)
+    skill = repo / '.agents/skills/agent-orchestration/SKILL.md'
+    assert skill.read_bytes() == (KIT / '.claude/skills/agent-orchestration/SKILL.md').read_bytes()
+    assert (repo / '.claude/skills').is_symlink()
+    run('uninstall.sh', repo)
+    assert not (repo / '.agents/skills/agent-orchestration').exists()
+    assert (repo / '.claude/skills').is_symlink()
+    assert (repo / '.agents/skills/fix/SKILL.md').read_text() == 'project skill\n'
+
+    for link in [tmp_path_factory.mktemp('outside'), repo / '.git']:
+        (repo / '.claude/skills').unlink()
+        (repo / '.claude/skills').symlink_to(link, target_is_directory=True)
+        before = snapshot(repo)
+        result = run('setup.sh', repo, ok=False)
+        assert 'Refusing symlink or external path: .claude/skills/' in result.stdout + result.stderr
+        assert snapshot(repo) == before and not manifest_path(repo).exists()

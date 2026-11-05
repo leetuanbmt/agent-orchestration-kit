@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import shutil
@@ -53,7 +54,8 @@ EXAMPLES = install.KIT / "examples"
 RUN_CMDS = {"execute", "resume", "plan", "run-workflow"}
 # A caller's timeout (SIGALRM from `alarm`, SIGTERM from `timeout`) or Ctrl-C; the default action
 # would end the bridge at once and leave its agent's process group running with the task RUNNING.
-STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM)
+STOP_SIGNALS = tuple(getattr(signal, name) for name in ("SIGTERM", "SIGINT", "SIGHUP", "SIGALRM")
+                     if hasattr(signal, name))
 _signalled: list[int] = []
 
 
@@ -63,7 +65,9 @@ def _on_stop_signals(stop: Any) -> None:
         stop()
     loop = asyncio.get_running_loop()
     for sig in STOP_SIGNALS:
-        loop.add_signal_handler(sig, handler, sig)
+        # ponytail: Windows event loops have no signal handlers; Ctrl-C keeps its default there.
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(sig, handler, sig)
 
 
 def _config_here() -> Any:
@@ -116,6 +120,23 @@ async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "uninstall":
         install.uninstall(Path(args.dir), args.purge)
         return None
+    if args.cmd == "storage":
+        from . import storage
+        if args.storage_cmd == "relink":
+            return storage.relink(args.old_root, Path(args.new_root), apply=args.apply)
+        if args.storage_cmd == "prune":
+            return storage.prune(apply=args.apply)
+        if args.storage_cmd == "gc":
+            return storage.gc(args.logs_older_than, apply=args.apply)
+        if args.storage_cmd == "rollback":
+            return storage.rollback(Path(args.root), yes=args.yes)
+        if args.storage_cmd == "cleanup-legacy":
+            return storage.cleanup_legacy(apply=args.apply)
+        try:
+            here = find_root()
+        except RuntimeError:
+            here = None
+        return storage.migrate(here, apply=getattr(args, "apply", False))
     if args.cmd == "tasks":  # works anywhere: reads every known project's tasks
         try:
             here = find_root()
@@ -182,7 +203,7 @@ async def _run(args: argparse.Namespace) -> Any:
         if root is not None:
             cfg = load_config(root)
             if args.cmd == "account-list":
-                return Bridge(root, cfg).list_accounts()
+                return Bridge(root, cfg, create=False).list_accounts()
             orch = orchestrator.load(root, cfg)
             name = _pick(args, {k: a.provider for k, a in orch.accounts.items()})
             acc = resolve_account(orch, cfg, root, name)
@@ -202,8 +223,13 @@ async def _run(args: argparse.Namespace) -> Any:
             raise ValueError("account-login requires a configured named account (with its own "
                              "home)")
         return _login(cfg, acc, args.device_auth)
-    b = Bridge()
-    if args.cmd not in {"approve", "reassign"}:
+    readonly = args.cmd in {"health", "status", "result", "list", "agents", "workflow-status"}
+    if args.cmd == "status" and args.wait > 0:
+        readonly = False
+    b = Bridge(create=False) if readonly else Bridge()
+    if args.cmd in {"execute", "resume", "run-workflow"}:
+        b.progress = lambda line: print(line, file=sys.stderr, flush=True)
+    if not readonly and args.cmd not in {"approve", "reassign"}:
         b.recover()
     if args.cmd in RUN_CMDS:
         _on_stop_signals(b.stop)
@@ -257,8 +283,11 @@ def main(argv: list[str] | None = None) -> None:
     i.add_argument("--force", action="store_true", help="overwrite conflicting kit files")
     u = sub.add_parser("uninstall", help="remove the kit from a project, keeping user edits")
     u.add_argument("dir", nargs="?", default=".")
-    u.add_argument("--purge", action="store_true", help="also delete .ai/ (task history)")
+    u.add_argument("--purge", action="store_true", help="also delete .ai/ (config); task history stays in the bridge state directory")
     sub.add_parser("tui", help="interactive dashboard (the default without a subcommand)")
+    web = sub.add_parser("web", help="localhost progress dashboard")
+    web.add_argument("--port", type=int, default=8765)
+    web.add_argument("--open", action="store_true")
     sub.add_parser("serve", help="run the MCP stdio server")
     sub.add_parser("health", help="adapters, logins, quota and task counts; exit 1 when "
                               "not OK")
@@ -302,6 +331,24 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("status")
     s.add_argument("task_id")
     s.add_argument("--wait", type=float, default=0)
+    st = sub.add_parser("storage").add_subparsers(dest="storage_cmd", required=True)
+    st.add_parser("status")
+    sl = st.add_parser("relink", help="A human runs this after moving a repository")
+    sl.add_argument("old_root")
+    sl.add_argument("new_root")
+    sl.add_argument("--apply", action="store_true")
+    sm = st.add_parser("migrate", help="A human runs this after closing every Claude session, TUI and agent-bridge web")
+    sm.add_argument("--apply", action="store_true")
+    sr = st.add_parser("rollback", help="A human runs this to move a migrated central store aside")
+    sr.add_argument("root")
+    sr.add_argument("--yes", action="store_true")
+    sc = st.add_parser("cleanup-legacy", help="A human runs this to back up verified legacy files")
+    sc.add_argument("--apply", action="store_true")
+    sp = st.add_parser("prune", help="Preview removal of missing project roots from the registry")
+    sp.add_argument("--apply", action="store_true")
+    sg = st.add_parser("gc", help="Preview deletion of old logs of finished tasks")
+    sg.add_argument("--logs-older-than", type=float, required=True)
+    sg.add_argument("--apply", action="store_true")
     tk = sub.add_parser("tasks", help="tasks of every project and worktree agent-bridge has "
                                       "run in, grouped by project")
     tk.add_argument("--state")
@@ -332,6 +379,11 @@ def main(argv: list[str] | None = None) -> None:
     if os.environ.get(AGENT_ENV):
         print("refused: the bridge cannot run inside an agent it started", file=sys.stderr)
         raise SystemExit(2)
+    if args.cmd == "web":
+        from . import webui
+
+        webui.serve(args.port, args.open)
+        return
     if args.cmd in (None, "tui"):
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
             p.print_help()
@@ -361,6 +413,9 @@ def main(argv: list[str] | None = None) -> None:
             console.print(getattr(render, view)(out, **extra))
         else:
             print(dumps(out))
+    if args.cmd == "storage" and any(e["status"] in ("failed", "corrupt", "changed")
+                                     for e in out.get("sources", []) + out.get("entries", [])):
+        raise SystemExit(1)
     if _signalled:
         raise SystemExit(128 + _signalled[0])  # the run was stopped; its task is PAUSED
     if args.cmd == "health" and not out["ok"]:
