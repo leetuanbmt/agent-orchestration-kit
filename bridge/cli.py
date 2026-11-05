@@ -138,8 +138,10 @@ async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "init":
         changed = install.install(Path(args.dir), args.force, _server_entry())
         print("\n".join(f"updated {c}" for c in changed) or "already up to date")
-        print("Open claude in the project once to trust the folder; run agent-bridge there "
-              "for the TUI.")
+        print("next steps:\n"
+              "  1. agent-bridge health       check agent CLIs and logins\n"
+              "  2. claude                    open Claude Code here once and trust the folder\n"
+              "  3. agent-bridge              terminal dashboard (or: agent-bridge web)")
         return None
     if args.cmd == "uninstall":
         install.uninstall(Path(args.dir), args.purge)
@@ -307,8 +309,17 @@ async def _run(args: argparse.Namespace) -> Any:
 
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(prog="agent-bridge")
-    sub = p.add_subparsers(dest="cmd")
+    p = argparse.ArgumentParser(
+        prog="agent-bridge", formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="getting started:\n"
+               "  agent-bridge init          set up the kit in this git repository\n"
+               "  agent-bridge health        check agent CLIs, logins and quota\n"
+               "  agent-bridge config-init   list example role setups (optional)\n"
+               "  claude                     open Claude Code in the project and ask for a "
+               "change\n"
+               "\n"
+               "docs: https://github.com/leetuanbmt/agent-orchestration-kit#quick-start")
+    sub = p.add_subparsers(dest="cmd", metavar="<command>")
     i = sub.add_parser("init", help="install the kit into a project (default: this directory)")
     i.add_argument("dir", nargs="?", default=".")
     i.add_argument("--force", action="store_true", help="overwrite conflicting kit files")
@@ -317,8 +328,9 @@ def main(argv: list[str] | None = None) -> None:
     u.add_argument("--purge", action="store_true", help="also delete .ai/ (config); task history stays in the bridge state directory")
     sub.add_parser("tui", help="interactive dashboard (the default without a subcommand)")
     web = sub.add_parser("web", help="localhost progress dashboard")
-    web.add_argument("--port", type=int, default=8765)
-    web.add_argument("--open", action="store_true")
+    web.add_argument("--port", type=int, default=8765,
+                     help="port on 127.0.0.1; 0 picks a free one (default 8765)")
+    web.add_argument("--open", action="store_true", help="open the dashboard in a browser")
     sub.add_parser("serve", help="run the MCP stdio server")
     sub.add_parser("health", help="adapters, logins, quota and task counts; exit 1 when "
                               "not OK")
@@ -332,7 +344,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("account-list", help="usable accounts on this machine").add_argument(
         "--all", action="store_true",
         help="also list switch profiles, homes not added and CLIs without an account")
-    clear = sub.add_parser("account-clear")
+    clear = sub.add_parser("account-clear", help="clear a QUOTA/AUTH unavailable mark on an "
+                                                 "account after a human fixed it")
     clear.add_argument("name")
     login = sub.add_parser("account-login", help="HUMAN ONLY: log in an isolated account")
     login.add_argument("name")
@@ -356,16 +369,22 @@ def main(argv: list[str] | None = None) -> None:
                                             "providers")
     c = sub.add_parser("create", help="create a task from a JSON spec file")
     c.add_argument("spec")
-    for name in ("execute", "result"):
-        sub.add_parser(name).add_argument("task_id")
-    r = sub.add_parser("resume")
+    for name, text in (("execute", "start the executor agent on a READY task"),
+                       ("result", "full evidence of a task: patch, checks, scope violations, "
+                                  "reviews")):
+        sub.add_parser(name, help=text).add_argument("task_id")
+    r = sub.add_parser("resume", help="re-run a REWORK, FAILED or PAUSED task, continuing its "
+                                      "session")
     r.add_argument("task_id")
-    r.add_argument("--feedback", default="")
-    s = sub.add_parser("status")
+    r.add_argument("--feedback", default="", help="notes for the agent's next run")
+    s = sub.add_parser("status", help="compact status of a task; --wait blocks until it leaves "
+                                      "RUNNING/VERIFYING")
     s.add_argument("task_id")
-    s.add_argument("--wait", type=float, default=0)
-    st = sub.add_parser("storage").add_subparsers(dest="storage_cmd", required=True)
-    st.add_parser("status")
+    s.add_argument("--wait", type=float, default=0, help="seconds to wait, at most 55")
+    st = sub.add_parser("storage", help="where bridge state lives; migrate, relink, prune and "
+                                        "clean it up").add_subparsers(dest="storage_cmd",
+                                                                      required=True)
+    st.add_parser("status", help="show the state location and any legacy storage")
     sl = st.add_parser("relink", help="A human runs this after moving a repository")
     sl.add_argument("old_root")
     sl.add_argument("new_root")
@@ -386,21 +405,23 @@ def main(argv: list[str] | None = None) -> None:
                                       "run in, grouped by project")
     tk.add_argument("--state")
     tk.add_argument("--limit", type=int, default=10, help="tasks shown per project")
-    ls = sub.add_parser("list")
+    ls = sub.add_parser("list", help="tasks of this project, newest first")
     ls.add_argument("--state")
     ls.add_argument("--limit", type=int, default=50)
-    x = sub.add_parser("cancel")
+    x = sub.add_parser("cancel", help="cancel a non-terminal task")
     x.add_argument("task_id")
-    x.add_argument("--reason", required=True)
-    v = sub.add_parser("review")
+    x.add_argument("--reason", required=True, help="why the task is cancelled")
+    v = sub.add_parser("review", help="record the client review of a task in REVIEW")
     v.add_argument("task_id")
     v.add_argument("--decision", choices=["approve", "rework", "block"], required=True)
     v.add_argument("--notes", required=True)
     pl = sub.add_parser("plan", help="run the planner agent on an objective")
     pl.add_argument("objective")
     pl.add_argument("--context", default="")
-    for name in ("run-workflow", "workflow-status"):
-        sub.add_parser(name).add_argument("workflow_id")
+    for name, text in (("run-workflow", "run the tasks of a planned workflow in dependency "
+                                         "order"),
+                       ("workflow-status", "status of a workflow and its tasks")):
+        sub.add_parser(name, help=text).add_argument("workflow_id")
     sub.add_parser("approve", help="HUMAN ONLY: close an APPROVED task").add_argument("task_id")
     reass = sub.add_parser("reassign", help="HUMAN ONLY: move a task to another agent or account")
     reass.add_argument("task_id")
