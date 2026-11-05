@@ -1,7 +1,7 @@
 [project]
 name = "agent-orchestration-kit"
 version = "0.1.0"
-description = "Project-local Claude (planner/reviewer) <-> Codex CLI (executor) MCP bridge"
+description = "Local MCP server that orchestrates Claude Code and Codex CLI agents as planner, executor and reviewer across isolated accounts, and re-verifies their work"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
