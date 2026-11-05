@@ -268,7 +268,8 @@ class Bridge:
                 self.store.settle_usage(usage_id, cost, source)
 
     def _record_account(self, name: str, res: RunResult, usage_id: int | None = None,
-                        task_id: str | None = None) -> None:
+                        task_id: str | None = None) -> bool:
+        """Record a run's account marks and cost; False when the ledger write failed."""
         if res.rate_limits:
             self.store.save_quota(name, res.rate_limits, key=self._key(name))
         # Runs only start on an available account, so a mark seen after a successful run came from
@@ -285,13 +286,21 @@ class Bridge:
             cost, source = 0.0, "estimated"  # the provider refused the request
         elif cost is None and limits is not None and limits.reserve_usd > 0:
             cost, source = limits.reserve_usd, "estimated"
-        if usage_id is not None:
-            self.store.settle_usage(usage_id, cost, source)
-        else:
-            self.store.record_usage(name, key=self._usage_key(name), task_id=task_id,
-                                    cost_usd=cost, source=source)
+        try:
+            if usage_id is not None:
+                self.store.settle_usage(usage_id, cost, source)
+            else:
+                self.store.record_usage(name, key=self._usage_key(name), task_id=task_id,
+                                        cost_usd=cost, source=source)
+        except sqlite3.Error as e:
+            # The run's outcome stands; an open reservation is settled (fail closed) when the
+            # run ends.
+            self.store.log(task_id, Actor.BRIDGE, "usage_record_failed",
+                           {"account": name, "error": redact(str(e), 500)})
+            return False
         self.store.log(task_id, Actor.BRIDGE, "usage_recorded",
                        {"account": name, "cost_usd": cost, "source": source})
+        return True
 
     def _unavailable(self, name: str, need: str) -> str | None:
         """Why agent `name` cannot take work needing `need` right now; None when it can."""
@@ -542,8 +551,9 @@ class Bridge:
                        {"role": "executor", "agent": name, "account": account})
         return True
 
-    def _unroute(self, task_id: str, error: ConflictError) -> None:
-        """Undo a fresh routing whose account slot was taken between the check and the lock."""
+    def _unroute(self, task_id: str, error: ConflictError | LimitExceeded) -> None:
+        """Undo a fresh routing whose account slot was taken, or whose account went over its
+        limit, between the check and the start."""
         row = self.store.get(task_id)
         if row["session_id"]:
             return
@@ -686,7 +696,7 @@ class Bridge:
         try:
             return await self._start(task_id, "execute", prompt, None, {State.READY}, wait,
                                      actor)
-        except ConflictError as e:
+        except (ConflictError, LimitExceeded) as e:
             if routed:
                 self._unroute(task_id, e)
             raise
@@ -728,7 +738,7 @@ class Bridge:
         try:
             return await self._start(task_id, "resume", prompt, row["session_id"], expect, wait,
                                      actor)
-        except ConflictError as e:
+        except (ConflictError, LimitExceeded) as e:
             if routed:
                 self._unroute(task_id, e)
             raise
@@ -777,7 +787,7 @@ class Bridge:
                                {"account": account.name, "reason": str(e)})
             finally:
                 lock.release()
-            raise ValueError(
+            raise LimitExceeded(
                 f"account {account.name} over its configured limit: {e}. It takes work again "
                 "after the reset; with routing.quota_fallback enabled the bridge moves the task "
                 "to another eligible agent; a human can change the limit in "
@@ -803,9 +813,10 @@ class Bridge:
 
     async def _run(self, task_id: str, n: int, used: int, prompt: str,
                    session: str | None, lock: AccountLock, usage_id: int | None = None) -> None:
+        run_state: dict[str, bool] = {"adapter_called": False}
         try:
             try:
-                await self._run_inner(task_id, n, used, prompt, session, usage_id)
+                await self._run_inner(task_id, n, used, prompt, session, usage_id, run_state)
             except Exception as e:  # never leave a task stuck in RUNNING/VERIFYING
                 self.store.log(task_id, Actor.BRIDGE, "error", {"error": redact(repr(e), 2000)})
                 with contextlib.suppress(Exception):
@@ -816,8 +827,11 @@ class Bridge:
                             else State.PAUSED, Actor.BRIDGE, {"error": repr(e)},
                             failure=f"BRIDGE_ERROR: {redact(repr(e), 500)}")
             finally:
-                # A bridge error before the cost was known: fail closed (unknown cost).
-                self._settle_open(usage_id, None, "unavailable")
+                if run_state["adapter_called"]:
+                    # A bridge error before the cost was known: fail closed (unknown cost).
+                    self._settle_open(usage_id, None, "unavailable")
+                else:
+                    self._settle_open(usage_id, 0.0, "actual")  # the agent never started
                 lock.release()
                 # Tells a cancel_task in another process that this run let go of the account.
                 self.store.update(task_id, runner_pid=None)
@@ -827,7 +841,10 @@ class Bridge:
             self._runs.pop(task_id, None)
 
     async def _run_inner(self, task_id: str, n: int, used: int, prompt: str,
-                         session: str | None, usage_id: int | None = None) -> None:
+                         session: str | None, usage_id: int | None = None,
+                         run_state: dict[str, bool] | None = None) -> None:
+        if run_state is None:
+            run_state = {}
         row = self.store.get(task_id)
         spec, max_att = row["spec"], self._max_attempts(row)
         agent = self.orch.agent(self._agent_of(row) or "")
@@ -860,7 +877,9 @@ class Bridge:
                         with contextlib.suppress(Exception):
                             self.progress(f"[{task_id} #{n}] {summary}")
 
+            recorded = False  # the last attempt already has its own ledger row
             while True:
+                run_state["adapter_called"] = True
                 res: RunResult = await adapter.run(
                     RunRequest(prompt, account, sandbox, self._timeout(agent, spec.get("timeout_s")),
                                session_id=session, model=agent.model, allow_bash=agent.allow_bash,
@@ -879,6 +898,16 @@ class Bridge:
                     self.store.update(task_id, session_id=session, codex_pid=None,
                                       codex_started=None)
                 if res.outcome == "network" and retries < self.cfg.network_retries:
+                    # A failed attempt still costs: charge it on its own row, then retry only
+                    # while the account stays within its limits.
+                    charged = self._record_account(account.name, res, None, task_id)
+                    report = self._limit_report(account.name)
+                    if report["status"] == "limited":
+                        self.store.log(task_id, Actor.BRIDGE, "limit_blocked",
+                                       {"account": account.name, "reason": report["reason"],
+                                        "retry": True})
+                        recorded = charged
+                        break
                     retries += 1
                     self.store.log(task_id, Actor.BRIDGE, "retry", {"error": res.error,
                                                                      "n": retries})
@@ -886,7 +915,11 @@ class Bridge:
                     continue
                 break
 
-        self._record_account(account.name, res, usage_id, task_id)
+        if recorded:
+            # Charged above on its own row: release the reservation instead of charging twice.
+            self._settle_open(usage_id, 0.0, "actual")
+        else:
+            self._record_account(account.name, res, usage_id, task_id)
         changes = diff(self.root, before, self.cfg.protected_paths)
         record = dict(exit_code=res.exit_code, outcome=res.outcome, session_id=res.session_id,
                       final=res.final or {"raw": res.final_text[-3000:]}, usage=res.usage,

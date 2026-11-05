@@ -4,7 +4,7 @@
 Speaks the event shapes verified against claude 2.1.306: system/init, rate_limit_event,
 assistant, result (structured_output when --json-schema is given).
 
-FAKE_CLAUDE_SCENARIO: comma-separated, one per invocation (last repeats): ok | quota | auth | crash
+FAKE_CLAUDE_SCENARIO: comma-separated, one per invocation (last repeats): ok | quota | auth | network | crash
 FAKE_CLAUDE_WRITE:    "path=content;..." written on ok runs where a Write(./glob) rule allows the
                       path and no --disallowedTools rule denies it, like the real permission check.
 FAKE_CLAUDE_DECISION: "decision:notes" for reviewer runs (default "approve:looks good").
@@ -96,6 +96,9 @@ if scenario == "quota":
     sys.exit(1)
 if scenario == "auth":
     result(True, "Invalid API key · Please run /login", status=401)
+    sys.exit(1)
+if scenario == "network":
+    result(True, "API Error: Connection refused", status=503)
     sys.exit(1)
 if scenario == "crash":
     print("fatal: fake crash", file=sys.stderr)

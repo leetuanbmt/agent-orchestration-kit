@@ -104,6 +104,17 @@ def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
     return login_status(cfg, acc)
 
 
+def _limit_warnings(orch: orchestrator.OrchestratorConfig) -> list[str]:
+    """Budgets that fail closed on every run whose cost is unknown."""
+    return [f"accounts.{name}.limits: budget_usd without pricing or reserve_usd: a run whose CLI "
+            "reports no cost (Codex) or that fails before reporting blocks the budget until the "
+            "period resets"
+            for name, profile in sorted(orch.accounts.items())
+            if (limits := profile.limits) is not None and limits.enabled
+            and limits.budget_usd is not None and limits.pricing is None
+            and limits.reserve_usd == 0]
+
+
 async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "serve":
         from .server import _serve
@@ -146,9 +157,13 @@ async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "config-check":
         root = find_root()
         orch = orchestrator.load(root, load_config(root))
-        return {"ok": True, "source": orch.source, "stages": orch.workflow.stages,
-                "accounts": sorted(orch.accounts), "agents": sorted(orch.agents),
-                "roles": {r: orch.role(r).agents for r in orch.roles}}
+        out: dict[str, Any] = {
+            "ok": True, "source": orch.source, "stages": orch.workflow.stages,
+            "accounts": sorted(orch.accounts), "agents": sorted(orch.agents),
+            "roles": {r: orch.role(r).agents for r in orch.roles}}
+        if warnings := _limit_warnings(orch):
+            out["warnings"] = warnings
+        return out
     if args.cmd == "config-init" and args.example is None:
         for path in sorted(EXAMPLES.glob("*.yaml")):
             header = []
