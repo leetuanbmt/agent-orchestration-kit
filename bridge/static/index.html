@@ -3,20 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title></title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar">
+  <header class="topbar" id="topbar">
     <strong id="brand"></strong>
     <nav id="views" class="pills" aria-label="Views"></nav>
     <span id="live" class="pill live" role="status"></span>
     <div id="languages" class="pills"></div>
+    <label class="theme-control"><span id="theme-label" class="sr-only"></span><select id="theme"></select></label>
   </header>
+  <p id="offline-banner" class="banner" role="status" hidden></p>
   <main id="content">
     <section id="tasks-view">
-      <div class="filter-bar">
+      <div id="filters" class="filter-bar" role="search">
         <label><span id="search-label"></span><input id="search" type="search"></label>
         <label><span id="project-label"></span><select id="project"></select></label>
         <label><span id="worktree-label"></span><select id="worktree"></select></label>
@@ -25,7 +28,13 @@
       </div>
       <div id="statuses" class="pills"></div>
       <p id="task-count"></p>
-      <div class="table-wrap">
+      <div id="tasks-loading" class="skeleton">
+        <span id="loading-text" class="sr-only"></span>
+        <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+      </div>
+      <div id="tasks-table" class="table-wrap" hidden>
         <table aria-labelledby="task-count">
           <thead><tr id="columns"></tr></thead>
           <tbody id="task-rows"></tbody>
