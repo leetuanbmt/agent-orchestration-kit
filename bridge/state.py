@@ -9,11 +9,12 @@ import json
 import os
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from . import osutil
 from .models import ACTIVE, TERMINAL, Actor, State, TaskSpec, TransitionError, check_transition
 from .security import process_started, redact
 
@@ -76,8 +77,34 @@ CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id);
 """
 
 
+# Machine-wide usage ledger (in accounts.db when shared, else the local database): one row per
+# run, reserved before it starts and settled with its cost afterwards.
+USAGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS account_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL,
+    name TEXT,
+    task_id TEXT,
+    ts REAL NOT NULL,
+    state TEXT NOT NULL,            -- reserved | settled
+    reserved_usd REAL NOT NULL DEFAULT 0,
+    cost_usd REAL,
+    source TEXT,                    -- actual | estimated | unavailable
+    owner_pid INTEGER,
+    owner_started TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_account_usage_key_ts ON account_usage(key, ts);
+"""
+USAGE_SOURCES = {"actual", "estimated", "unavailable"}
+USAGE_RETENTION = 40 * 86400  # seconds; ledger rows older than this are pruned
+
+
 class ConflictError(RuntimeError):
     pass
+
+
+class LimitExceeded(ValueError):
+    """A budget check refused a usage reservation; the reason is the message."""
 
 
 class NotFound(KeyError):
@@ -176,6 +203,7 @@ class Store:
                     Path(str(shared) + suffix).chmod(0o600)
                 except OSError:
                     pass
+        self.usage_db.executescript(USAGE_SCHEMA)
         self._started = process_started(os.getpid())
 
     @contextmanager
@@ -270,6 +298,106 @@ class Store:
         if row is None:
             return None
         return {"rate_limits": json.loads(row["rate_limits"]), "observed_at": row["observed_at"]}
+
+    # ---- usage ledger ----------------------------------------------------------------------
+
+    @property
+    def usage_db(self) -> sqlite3.Connection:
+        """Where the usage ledger lives: machine-wide accounts.db, else this worktree's db."""
+        return self.shared if self.shared is not None else self.db
+
+    @contextmanager
+    def _usage_tx(self) -> Iterator[sqlite3.Connection]:
+        conn = self.usage_db
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+
+    def _expire_usage(self, conn: sqlite3.Connection, key: str) -> None:
+        """Settle reservations of `key` whose owner process is gone (crash safety, fail closed):
+        charged their reserved amount as estimated, or as unknown cost when nothing was reserved."""
+        pid, owners = os.getpid(), {}
+        rows = conn.execute("SELECT id, reserved_usd, owner_pid, owner_started FROM account_usage"
+                            " WHERE key=? AND state='reserved'", (key,)).fetchall()
+        for r in rows:
+            owner = (r["owner_pid"], r["owner_started"])
+            if owner == (pid, self._started):
+                continue  # this process: still running the reservation
+            if owner not in owners:
+                owners[owner] = bool(r["owner_pid"]) and osutil.alive(r["owner_pid"]) and \
+                    process_started(r["owner_pid"]) == r["owner_started"]
+            if owners[owner]:
+                continue
+            reserved = r["reserved_usd"] or 0.0
+            conn.execute("UPDATE account_usage SET state='settled', cost_usd=?, source=?"
+                         " WHERE id=? AND state='reserved'",
+                         (reserved if reserved > 0 else None,
+                          "estimated" if reserved > 0 else "unavailable", r["id"]))
+
+    @staticmethod
+    def _spend(conn: sqlite3.Connection, key: str,
+               starts: dict[str, float]) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for period, start in starts.items():
+            r = conn.execute(
+                "SELECT"
+                " COALESCE(SUM(CASE WHEN state='settled' THEN cost_usd END), 0) AS spent,"
+                " COALESCE(SUM(CASE WHEN state='reserved' THEN reserved_usd END), 0) AS reserved,"
+                " COALESCE(SUM(state='settled' AND cost_usd IS NULL), 0) AS unknown,"
+                " COALESCE(MAX(state='settled' AND source='estimated'), 0) AS estimated,"
+                " COUNT(*) AS runs"
+                " FROM account_usage WHERE key=? AND ts>=?", (key, start)).fetchone()
+            out[period] = {"spent": float(r["spent"]), "reserved": float(r["reserved"]),
+                           "unknown": int(r["unknown"]), "estimated": bool(r["estimated"]),
+                           "runs": int(r["runs"])}
+        return out
+
+    def reserve_usage(self, name: str, *, key: str, task_id: str | None, reserve: float,
+                      starts: dict[str, float],
+                      check: Callable[[dict[str, dict[str, Any]]], str | None]) -> int:
+        """Atomically check the budget and reserve `reserve` USD for one run.
+        Raises LimitExceeded (nothing inserted) when check(spend) returns a reason."""
+        now = time.time()
+        with self._usage_tx() as c:
+            c.execute("DELETE FROM account_usage WHERE ts<?", (now - USAGE_RETENTION,))
+            self._expire_usage(c, key)
+            reason = check(self._spend(c, key, starts))
+            if reason:
+                raise LimitExceeded(reason)
+            cur = c.execute(
+                "INSERT INTO account_usage(key, name, task_id, ts, state, reserved_usd,"
+                " owner_pid, owner_started) VALUES (?,?,?,?,'reserved',?,?,?)",
+                (key, name, task_id, now, float(reserve), os.getpid(), self._started))
+            return int(cur.lastrowid)
+
+    def settle_usage(self, usage_id: int, cost_usd: float | None, source: str) -> None:
+        """Record a reserved run's cost; a second settle of the same row does nothing."""
+        if source not in USAGE_SOURCES:
+            raise ValueError(f"invalid usage source: {source}")
+        with self._usage_tx() as c:
+            c.execute("UPDATE account_usage SET state='settled', cost_usd=?, source=?"
+                      " WHERE id=? AND state='reserved'", (cost_usd, source, usage_id))
+
+    def record_usage(self, name: str, *, key: str, task_id: str | None,
+                     cost_usd: float | None, source: str) -> int:
+        """Record a run that had no reservation (no budget), already settled, for reporting."""
+        if source not in USAGE_SOURCES:
+            raise ValueError(f"invalid usage source: {source}")
+        with self._usage_tx() as c:
+            cur = c.execute(
+                "INSERT INTO account_usage(key, name, task_id, ts, state, reserved_usd, cost_usd,"
+                " source, owner_pid, owner_started) VALUES (?,?,?,?,'settled',0,?,?,?,?)",
+                (key, name, task_id, time.time(), cost_usd, source, os.getpid(), self._started))
+            return int(cur.lastrowid)
+
+    def usage_spend(self, key: str, starts: dict[str, float]) -> dict[str, dict[str, Any]]:
+        with self._usage_tx() as c:
+            self._expire_usage(c, key)
+            return self._spend(c, key, starts)
 
     def active_on_account(self, name: str) -> int:
         q = (f"SELECT COUNT(*) FROM tasks WHERE COALESCE(account, 'default')=? "

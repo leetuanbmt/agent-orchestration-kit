@@ -10,6 +10,7 @@ FAKE_CLAUDE_WRITE:    "path=content;..." written on ok runs where a Write(./glob
 FAKE_CLAUDE_DECISION: "decision:notes" for reviewer runs (default "approve:looks good").
 FAKE_CLAUDE_PLAN:     JSON list of tasks for planner runs (default: one task).
 FAKE_CLAUDE_UTIL:     five-hour utilization 0-1 reported in rate_limit_event (default 0.2).
+FAKE_CLAUDE_COST:     run cost in USD reported as total_cost_usd in result events (unset: omitted).
 FAKE_CLAUDE_DIR:      scratch dir for the call counter and argv/prompt log.
 Allow rules in the project's .claude/settings.json count when --setting-sources loads project.
 An isolated CLAUDE_CONFIG_DIR is logged in when it holds `.credentials.json`.
@@ -78,6 +79,8 @@ def result(is_error, text, structured=None, status=None):
         ev["structured_output"] = structured
     if status:
         ev["api_error_status"] = status
+    if os.environ.get("FAKE_CLAUDE_COST"):
+        ev["total_cost_usd"] = float(os.environ["FAKE_CLAUDE_COST"])
     emit(ev)
 
 

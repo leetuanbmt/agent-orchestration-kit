@@ -191,6 +191,8 @@ class RunResult:
     # Normalised {"primary"|"secondary": {used_percent, window_minutes, resets_at}} when the CLI
     # reports its limits during the run.
     rate_limits: dict[str, Any] | None = None
+    # Provider-reported cost of the run in USD; None when the CLI reports none.
+    cost_usd: float | None = None
 
 
 class Adapter:
@@ -471,6 +473,9 @@ class ClaudeAdapter(Adapter):
         elif t == "result":
             res.session_id = ev.get("session_id") or res.session_id
             res.usage = ev.get("usage")
+            cost = ev.get("total_cost_usd")
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+                res.cost_usd = float(cost)
             if isinstance(ev.get("structured_output"), dict):
                 res.final = ev["structured_output"]
             res.final_text = str(ev.get("result") or "")
@@ -554,6 +559,9 @@ class OpenCodeAdapter(ReadOnlyAdapter):
             res.final_text = str(part["text"])
         elif t == "step_finish":
             res.usage = {k: part.get(k) for k in ("tokens", "cost") if k in part}
+            cost = part.get("cost")
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+                res.cost_usd = (res.cost_usd or 0.0) + float(cost)  # cost is per step
         elif t == "tool_use" and part.get("tool") == "bash":
             res.commands.append(str((part.get("state") or {}).get("input", ""))[:300])
         elif t == "error":
