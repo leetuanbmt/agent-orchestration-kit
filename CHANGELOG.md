@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   meaningful progress events on stderr.
 
 ### Changed
+- Web dashboard reworked around what needs you. A summary row counts tasks that need you, wait for review, run, and finished in the last 24 hours; a queue lists the tasks waiting on you in the bridge's priority order with the command to copy (`[` and `]` step through them). A Board view groups tasks into Needs you, In review, Running (elapsed time against the timeout) and Queued lanes, with finished work folded underneath. Every state shows a symbol and a label, not color alone, and a polite live region announces when the number of tasks needing you changes.
+- Dashboard task drawer: status, a lifecycle stepper and the next step with its command come first; verification checks read as pass or fail; the agent's final JSON is shown as summary, notes, tests and files, with the raw text kept below; raw fields are folded under *Technical details*. The page behind the drawer is `inert` while it is open.
+- Dashboard states and themes: a loading skeleton instead of a false "no task matches" before the first response; an offline banner with the time of the last data; light, dark and system themes from color tokens (stored per browser); on a phone each task is a card with labelled fields and the view buttons share one row. `/api/overview` and every other API are unchanged.
 - `bridge_run_workflow` no longer stops `WAITING` when the next task's account slot is held by another bridge process: it retries with backoff (5 s doubling to 60 s) for up to `routing.slot_wait_s` (default 1800 s) and lists the waiting tasks in `detail.waiting_for_slot`; shutdown and cancel end the wait within about a second. Set `routing.slot_wait_s: 0` for the old behaviour.
 - A read-only task can no longer run beside another task in the same worktree; parallel work needs separate git worktrees, as the README already says (audit REL-07).
 

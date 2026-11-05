@@ -547,11 +547,28 @@ giả, `HOME` mới, một project demo). Tạo lại bằng
 mặc định 8765; `--port 0` tự chọn port trống; Ctrl+C để dừng). URL được in ra chứa một token bí
 mật sinh cho mỗi lần chạy, mọi request API đều cần token này; đừng chia sẻ nó.
 
-Dashboard bao quát mọi project mà agent-bridge biết trên máy cùng các git worktree của chúng:
-approval đang chờ kèm lệnh chính xác, task bị blocked, failed hoặc paused, task chờ review, task
-đang chạy với thời gian đã chạy so với timeout, tiến độ tổng thể, hoạt động trong 24 giờ qua và
-bảng request có ngăn chi tiết (không có patch). Giao diện chuyển được giữa tiếng Việt và tiếng
-Anh.
+<img alt="Web dashboard: bộ đếm việc cần chú ý, hàng đợi task đang chờ bạn và bảng task" src="docs/images/web-tasks-light.png" width="900">
+
+Dashboard bao quát mọi dự án agent-bridge biết trên máy này cùng các git worktree của chúng:
+
+- **Tóm tắt và hàng đợi.** Bộ đếm task cần bạn, chờ duyệt, đang chạy và đã xong trong 24 giờ
+  qua, kèm danh sách task đang chờ bạn theo thứ tự ưu tiên của bridge, mỗi task có lệnh để sao
+  chép. Phím `[` và `]` mở task trước hoặc sau.
+- **Tasks, Board và Projects.** Bảng lọc theo từ khóa, dự án, worktree và trạng thái; board với
+  các cột Cần bạn, Đang duyệt, Đang chạy và Đang chờ (thẻ đang chạy cho biết thời gian đã chạy so
+  với timeout), việc đã xong được thu gọn bên dưới; và số liệu theo dự án, theo worktree.
+- **Ngăn chi tiết task.** Trạng thái, thanh tiến trình vòng đời, việc tiếp theo kèm lệnh, kết quả
+  từng lệnh kiểm tra (đạt hoặc không), vi phạm phạm vi, file thay đổi, tóm tắt của agent, review,
+  các lần chạy và log trực tiếp; các trường thô nằm trong *Chi tiết kỹ thuật*. Task đang chọn nằm
+  trong URL nên mở lại được bằng link.
+- **Dễ đọc ở mọi nơi.** Theme sáng, tối hoặc theo hệ thống; tiếng Anh hoặc tiếng Việt; trên điện
+  thoại mỗi task là một thẻ. Trạng thái luôn có ký hiệu và nhãn, không chỉ dựa vào màu.
+- **Cập nhật trực tiếp.** Làm mới mỗi 3 giây. Khi không kết nối được bridge, dashboard báo rõ và
+  hiện thời điểm của dữ liệu cuối cùng nhận được.
+
+<img alt="Chế độ Board với theme tối" src="docs/images/web-board-dark.png" width="900">
+
+<img alt="Ngăn chi tiết task với thanh vòng đời, việc tiếp theo và tóm tắt dễ đọc" src="docs/images/web-drawer-light.png" width="640"> <img alt="Bố cục trên điện thoại, các nút view trên một hàng" src="docs/images/web-mobile-light.png" width="240">
 
 Dashboard web chỉ đọc: nó mở từng `bridge.db` bằng SQLite `mode=ro`, không khởi chạy agent nào
 và không thực hiện thao tác nào dành cho con người. Nó chỉ lắng nghe trên `127.0.0.1` và từ chối
