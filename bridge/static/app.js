@@ -46,7 +46,13 @@ const I18N = {
     nextResult: 'Open the result to see what the agent did and decide what happens next.',
     nextApprove: 'This task is waiting for your approval before it can finish.',
     nextResume: 'Resume the task when you are ready for the agent to continue.',
-    checkFailed: 'Failed'
+    checkFailed: 'Failed',
+    board: 'Board', inReview: 'In review', queued: 'Queued', finished: 'Finished ({n})', nothingHere: 'Nothing here',
+    done24h: 'Done in 24 h', summary: 'Summary', queueTitle: 'Waiting on you ({n})',
+    queueHint: 'Press [ or ] to open the previous or next item.',
+    elapsedOf: '{elapsed} of {limit}', elapsedOnly: 'Running for {elapsed}', quotaLeft: '{n}% quota left', timeUsed: 'Time used',
+    announce: '{n} tasks need you', announceOne: '1 task needs you', announceNone: 'No task needs you now',
+    testsRun: 'Tests run', filesChanged: 'Files changed', rawOutput: 'Raw output'
   },
   vi: {
     log: 'Nhật ký', messagesOnly: 'Chỉ tin nhắn agent', logTail: 'Đang hiển thị 256 KB cuối', noLog: 'Không có nhật ký cho lần chạy này',
@@ -87,11 +93,25 @@ const I18N = {
     nextResult: 'Mở kết quả để xem agent đã làm gì và quyết định bước tiếp theo.',
     nextApprove: 'Tác vụ này đang chờ bạn phê duyệt trước khi hoàn tất.',
     nextResume: 'Tiếp tục tác vụ khi bạn sẵn sàng để agent làm tiếp.',
-    checkFailed: 'Không đạt'
+    checkFailed: 'Không đạt',
+    board: 'Bảng', inReview: 'Đang duyệt', queued: 'Trong hàng đợi', finished: 'Đã kết thúc ({n})', nothingHere: 'Không có gì ở đây',
+    done24h: 'Xong trong 24 giờ', summary: 'Tóm tắt', queueTitle: 'Đang chờ bạn ({n})',
+    queueHint: 'Nhấn [ hoặc ] để mở mục trước hoặc sau.',
+    elapsedOf: '{elapsed} / {limit}', elapsedOnly: 'Đã chạy {elapsed}', quotaLeft: 'còn {n}% quota', timeUsed: 'Thời gian đã dùng',
+    announce: '{n} tác vụ cần bạn', announceOne: '1 tác vụ cần bạn', announceNone: 'Hiện không có tác vụ nào cần bạn',
+    testsRun: 'Kiểm thử đã chạy', filesChanged: 'Tệp đã thay đổi', rawOutput: 'Kết quả thô'
   }
 };
 const $ = id => document.getElementById(id);
 const GROUPS = ['open', 'needsYou', 'awaitingReview', 'running', 'waiting', 'done', 'cancelled', 'all'];
+const VIEWS = ['tasks', 'board', 'projects'];
+const NEEDS_KINDS = ['needs', 'failed', 'blocked', 'paused'];
+// Board lanes, left to right, with the heading key of each.
+const LANES = [['needsYou', 'needsYou'], ['awaitingReview', 'inReview'], ['running', 'running'], ['waiting', 'queued']];
+// One glyph per state family, so a status reads without color.
+const GLYPHS = {needs: '!', review_wait: '◐', running: '▶', queued: '○', done: '✓', failed: '✕', blocked: '✕', paused: '‖', cancelled: '–'};
+const SUMMARY = [['needsYou', 'needs'], ['awaitingReview', 'review_wait'], ['running', 'running'], ['done24h', 'done']];
+let attentionShown = [], lastOpened = '', lastNeeds = null;
 const expanded = new Set();
 let language = navigator.language.toLowerCase().startsWith('vi') ? 'vi' : 'en';
 try { const saved = localStorage.getItem('dashboard-language'); if (['vi', 'en'].includes(saved)) language = saved; } catch {}
@@ -231,12 +251,57 @@ function selectOptions(select, options, value) {
 function clearFilters() { setState({p: '', w: '', s: 'open', q: ''}); }
 function openItem(pid, tid) { returnFocus = document.activeElement; setState({t: `${pid}:${tid}`}); }
 function statusLabel(task) {
+  const reason = task.exception === 'paused' ? task.reason || pauseReason(task.failure) : '';
   return task.exception === 'needs' ? `${tr(task.state)} · ${tr('needs')}`
-    : `${tr(task.exception || task.state)}${task.exception === 'paused' && task.reason ? ` · ${tr(task.reason)}` : ''}`;
+    : `${tr(task.exception || task.state)}${reason ? ` · ${tr(reason)}` : ''}`;
 }
-function statusClass(task) {
-  return `badge status-${task.exception || (matches(task, 'running') ? 'running' : String(task.state || '').toLowerCase())}`;
+function statusFamily(task) {
+  if (task.exception) return task.exception;
+  if (matches(task, 'running')) return 'running';
+  return {DONE: 'done', CANCELLED: 'cancelled'}[task.state] || 'queued';
 }
+// A status badge: an aria-hidden glyph whose shape tells the state family, then the text label.
+function badge(family, label) {
+  const node = el('span', undefined, `badge status-${family}`), glyph = el('span', GLYPHS[family] || GLYPHS.queued, 'glyph');
+  attr(glyph, 'aria-hidden', 'true'); node.append(glyph, el('span', label));
+  return node;
+}
+function statusBadge(task, label = statusLabel(task)) { return badge(statusFamily(task), label); }
+function boardOrder(a, b) {
+  const rank = task => attentionRank.get(`${task.pid}:${task.task_id}`) ?? Infinity;
+  return (rank(a) - rank(b)) || (b.updated_at || 0) - (a.updated_at || 0) ||
+    (a.task_id < b.task_id ? -1 : a.task_id > b.task_id ? 1 : a.pid < b.pid ? -1 : a.pid > b.pid ? 1 : 0);
+}
+let attentionRank = new Map(), runningByKey = new Map();
+function runningInfo(task) {
+  const run = runningByKey.get(`${task.pid}:${task.task_id}`);
+  if (!run || run.started_at == null) return null;
+  const elapsed = Math.max(0, Math.floor(Date.now() / 1000 - run.started_at));
+  return {elapsed, timeout: run.timeout_s || 0, quota: run.quota_left == null ? null : Math.round(run.quota_left)};
+}
+function renderCard(node, task) {
+  attr(node, 'role', 'listitem');
+  const card = button(undefined, () => openItem(task.pid, task.task_id), 'card');
+  const top = el('span', undefined, 'card-top'); top.append(statusBadge(task), el('code', task.task_id));
+  const objective = el('span', task.objective || '', 'card-objective'); attr(objective, 'title', task.objective || '');
+  const meta = el('span', `${task.agent ?? task.account ?? tr('dash')} · ${relative(task.updated_at)}`, 'card-meta muted');
+  if (task.updated_at != null) attr(meta, 'title', new Date(task.updated_at * 1000).toLocaleString(state.lang));
+  card.append(top, objective, meta);
+  const run = matches(task, 'running') ? runningInfo(task) : null;
+  if (run) {
+    const line = el('span', undefined, 'card-progress');
+    let label = tr('elapsedOnly', {elapsed: duration(run.elapsed)});
+    if (run.timeout) {
+      const bar = el('progress'); attr(bar, 'max', run.timeout); attr(bar, 'value', Math.min(run.elapsed, run.timeout));
+      attr(bar, 'aria-label', tr('timeUsed')); line.append(bar);
+      label = tr('elapsedOf', {elapsed: duration(run.elapsed), limit: duration(run.timeout)});
+    }
+    if (run.quota != null) label += ` · ${tr('quotaLeft', {n: run.quota})}`;
+    line.append(el('span', label)); card.append(line);
+  }
+  node.append(card);
+}
+function cardSignature(task) { return [task, relative(task.updated_at), matches(task, 'running') ? runningInfo(task) : null]; }
 function pauseReason(failure) {
   const prefix = (failure || '').split(':')[0];
   return ['QUOTA', 'AUTH', 'NETWORK', 'INTERRUPTED', 'MISSING_BINARY'].includes(prefix) ? prefix : 'OTHER';
@@ -247,6 +312,70 @@ function taskLocation(task, full = false) {
   const worktree = checkout ? checkout.pid === group.project.pid ? 'main' : checkout.name : tr('unknown');
   return {label: group && (full || !state.p && state.g !== '1') ? `${group.project.name} › ${worktree}` : worktree,
     branch: checkout?.branch || tr('dash')};
+}
+// Summary counters, the ranked attention queue and the Needs-you announcement.
+function renderMonitor(scoped, tasks) {
+  attentionRank = new Map((overview?.attention || []).map((a, i) => [`${a.pid}:${a.task_id}`, i]));
+  runningByKey = new Map((overview?.running || []).map(r => [`${r.pid}:${r.task_id}`, r]));
+  // The server already ranked the list; keep its order exactly.
+  const attention = (overview?.attention || []).filter(a => scoped(a.pid));
+  attentionShown = attention;
+  const now = Date.now() / 1000, everywhere = !state.p && !state.w;
+  const counts = {
+    needsYou: attention.filter(a => NEEDS_KINDS.includes(a.kind)).length,
+    awaitingReview: attention.filter(a => a.kind === 'review_wait').length,
+    running: (overview?.running || []).filter(r => scoped(r.pid)).length,
+    done24h: everywhere ? overview?.activity?.done_24h ?? 0
+      : tasks.filter(t => scoped(t.pid) && t.state === 'DONE' && now - (t.updated_at || 0) <= 86400).length
+  };
+  $('summary').hidden = !overview; attr($('summary'), 'aria-label', tr('summary')); attr($('summary'), 'role', 'group');
+  patch($('summary'), SUMMARY, ([key]) => key, ([key]) => [counts[key]], (node, [key, family]) => {
+    attr(node, 'class', `counter counter-${family}`);
+    const glyph = el('span', GLYPHS[family], 'counter-glyph'); attr(glyph, 'aria-hidden', 'true');
+    const parts = [glyph, el('span', counts[key], 'counter-value'), el('span', tr(key), 'counter-label')];
+    if (key === 'done24h') { const box = el('div', undefined, 'counter-static'); box.append(...parts); node.append(box); return; }
+    const action = button(undefined, () => setState({view: 'tasks', s: key})); action.append(...parts); node.append(action);
+  });
+  $('attention').hidden = !attention.length;
+  text($('attention-title'), tr('queueTitle', {n: attention.length})); text($('attention-hint'), tr('queueHint'));
+  patch($('attention-list'), attention, a => `${a.pid}:${a.task_id}`, a => [a, relative(a.since)], (node, item) => {
+    attr(node, 'role', 'listitem'); attr(node, 'class', 'attention-item');
+    node.onclick = () => openItem(item.pid, item.task_id);
+    const open = el('button', undefined, 'attention-open'); open.type = 'button';
+    const head = el('span', undefined, 'attention-head');
+    head.append(badge(item.kind, tr(item.kind)), el('code', item.task_id));
+    if (item.reason) head.append(el('span', tr(item.reason), 'muted'));
+    const since = el('span', relative(item.since), 'muted');
+    if (item.since != null) attr(since, 'title', new Date(item.since * 1000).toLocaleString(state.lang));
+    head.append(since);
+    const objective = el('span', (item.objective || '').split('\n')[0], 'attention-objective'); attr(objective, 'title', item.objective || '');
+    open.append(head, objective); node.append(open);
+    if (item.command) {
+      const line = el('div', undefined, 'attention-command');
+      const copy = button('⧉', event => { event.stopPropagation(); copyCommand(item.command, event.currentTarget); }, 'copy-icon');
+      attr(copy, 'aria-label', tr('copy')); attr(copy, 'title', tr('copy'));
+      line.append(el('code', item.command), copy); node.append(line);
+    }
+  });
+  // Announce only a change in the Needs-you count, never the first load or a filter switch.
+  if (overview) {
+    const key = `${state.p}|${state.w}`, n = counts.needsYou;
+    if (lastNeeds && lastNeeds.key === key && lastNeeds.n !== n)
+      text($('announcer'), tr(n === 0 ? 'announceNone' : n === 1 ? 'announceOne' : 'announce', {n}));
+    lastNeeds = {key, n};
+  }
+}
+function renderBoard(filtered) {
+  for (const [group, label] of LANES) {
+    const items = filtered.filter(t => matches(t, group)).sort(boardOrder);
+    text($(`lane-${group}-title`), `${tr(label)} (${items.length})`);
+    patch($(`lane-${group}`), items, t => `${t.pid}:${t.task_id}`, cardSignature, renderCard);
+    const empty = $(`lane-${group}-empty`); text(empty, tr('nothingHere')); empty.hidden = !overview || items.length > 0;
+  }
+  const finished = filtered.filter(t => matches(t, 'done') || matches(t, 'cancelled'))
+    .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0) || boardOrder(a, b));
+  text($('finished-summary'), tr('finished', {n: finished.length}));
+  patch($('finished-cards'), finished.slice(0, 20), t => `${t.pid}:${t.task_id}`, cardSignature, renderCard);
 }
 function renderOverview() {
   document.documentElement.lang = state.lang; document.title = tr('brand'); text($('brand'), tr('brand'));
@@ -263,11 +392,15 @@ function renderOverview() {
     node.replaceChildren(button(tr(lang), () => setState({lang}))); attr(node.firstChild, 'aria-pressed', lang === state.lang);
   });
   const groups = projectGroups(), tasks = overview?.tasks || [];
-  patch($('views'), ['tasks', 'projects'], x => x, x => [state.view, tasks.filter(t => matches(t, 'open')).length, groups.length], (node, view) => {
-    const tab = button(`${tr(view)} (${view === 'tasks' ? tasks.filter(t => matches(t, 'open')).length : groups.length})`, () => setState({view}));
+  const openCount = tasks.filter(t => matches(t, 'open')).length;
+  patch($('views'), VIEWS, x => x, x => [state.view, openCount, groups.length], (node, view) => {
+    const label = view === 'board' ? tr('board') : `${tr(view)} (${view === 'tasks' ? openCount : groups.length})`;
+    const tab = button(label, () => setState({view}));
     attr(tab, 'aria-pressed', state.view === view); node.replaceChildren(tab);
   });
   $('tasks-view').hidden = state.view !== 'tasks'; $('projects-view').hidden = state.view !== 'projects';
+  $('board-view').hidden = state.view !== 'board'; $('monitor').hidden = state.view === 'projects';
+  $('group-worktree').hidden = state.view !== 'tasks';
   text($('search-label'), tr('search')); text($('project-label'), tr('project')); text($('worktree-label'), tr('worktree'));
   attr($('search'), 'placeholder', tr('searchPlaceholder'));
   text($('group-worktree'), tr('groupWorktree')); attr($('group-worktree'), 'aria-pressed', state.g === '1');
@@ -278,8 +411,11 @@ function renderOverview() {
   $('worktree').disabled = !selected; text($('clear'), tr('clear'));
   $('clear').hidden = !state.p && !state.w && !state.q && state.s === 'open';
   const ids = selected ? new Set(selected.members.map(p => p.pid)) : null;
-  const filtered = tasks.filter(t => (!state.p || ids?.has(t.pid)) && (!state.w || t.pid === state.w) &&
+  const scoped = pid => (!state.p || !!ids?.has(pid)) && (!state.w || pid === state.w);
+  const filtered = tasks.filter(t => scoped(t.pid) &&
     `${t.task_id} ${t.objective}`.toLocaleLowerCase().includes(state.q.toLocaleLowerCase()));
+  renderMonitor(scoped, tasks);
+  if (state.view === 'board') renderBoard(filtered);
   patch($('statuses'), GROUPS, x => x, x => [state.s, filtered.filter(t => matches(t, x)).length], (node, group) => {
     const chip = button(`${tr(group)} (${filtered.filter(t => matches(t, group)).length})`, () => setState({s: group}));
     attr(chip, 'aria-pressed', state.s === group); node.replaceChildren(chip);
@@ -301,7 +437,7 @@ function renderOverview() {
       attr(cell, 'colspan', '6'); attr(cell, 'scope', 'rowgroup'); attr(row, 'class', 'worktree-header'); row.append(cell); return;
     }
     activate(row, () => openItem(task.pid, task.task_id));
-    const status = el('td'); status.append(el('span', statusLabel(task), statusClass(task)));
+    const status = el('td'); status.append(statusBadge(task));
     const name = el('td', undefined, 'task-cell'), line = el('div', undefined, 'task-line');
     const objective = el('span', (task.objective || '').split('\n')[0], 'objective');
     attr(objective, 'title', task.objective || ''); line.append(el('code', task.task_id), objective); name.append(line);
@@ -361,10 +497,11 @@ function setState(change, replace = false) {
 }
 function readState() {
   const params = new URLSearchParams(location.hash.slice(1)), previous = state;
-  state = {view: params.get('view') === 'projects' ? 'projects' : 'tasks', p: params.get('p') || '', w: params.get('w') || '',
+  state = {view: VIEWS.includes(params.get('view')) ? params.get('view') : 'tasks', p: params.get('p') || '', w: params.get('w') || '',
     s: GROUPS.includes(params.get('s')) ? params.get('s') : 'open', q: params.get('q') || '', t: params.get('t') || '', g: params.get('g') === '1' ? '1' : '',
     lang: ['vi', 'en'].includes(params.get('lang')) ? params.get('lang') : state.lang};
   try { localStorage.setItem('dashboard-language', state.lang); } catch {}
+  if (state.t) lastOpened = state.t;
   renderOverview(); if (previous.t !== state.t) loadDetail(); else renderDetail();
 }
 function closeDrawer() { stopLog(); setState({t: ''}); }
@@ -496,7 +633,7 @@ function records(parent, key, records, fields) {
 }
 function drawerHead(task) {
   const head = el('div', undefined, 'drawer-head');
-  head.append(el('code', task.task_id), el('span', statusLabel(task), statusClass(task)));
+  head.append(el('code', task.task_id), statusBadge(task));
   if (task.risk_level) head.append(el('span', tr('risk', {level: tr(task.risk_level)}), 'chip'));
   const who = [task.agent, task.account].filter(Boolean).join(' · ');
   if (who) head.append(el('span', who, 'muted'));
@@ -508,7 +645,7 @@ function lifecycle(task) {
   if (index < 0) {
     const box = el('div', undefined, 'state-box');
     const reason = task.state === 'PAUSED' ? tr(task.reason || pauseReason(task.failure)) : '';
-    box.append(el('span', `${tr(task.state)}${reason ? ` · ${reason}` : ''}`, statusClass(task)));
+    box.append(statusBadge(task, `${tr(task.state)}${reason ? ` · ${reason}` : ''}`));
     if (task.failure) box.append(el('h3', tr('failure')), el('pre', task.failure));
     return box;
   }
@@ -533,6 +670,34 @@ function codeList(items) {
   const list = el('ul', undefined, 'plain-list');
   for (const item of items) { const li = el('li'); li.append(el('code', item)); list.append(li); }
   return list;
+}
+// The agent's final text: readable fields when it is a JSON object, the raw text kept folded below.
+function finalSummary(raw) {
+  if (!raw) return [el('p', tr('none'), 'muted')];
+  let data = null;
+  try { data = JSON.parse(raw); } catch {}
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return [el('pre', raw)];
+  const nodes = [], filled = value => value != null && String(value).trim() !== '';
+  if (filled(data.summary)) nodes.push(el('p', data.summary, 'final-summary'));
+  if (filled(data.status)) {
+    const line = el('p', undefined, 'final-status');
+    line.append(el('strong', `${tr('status')}: `), el('span', data.status)); nodes.push(line);
+  }
+  if (filled(data.notes)) {
+    const notes = el('p', undefined, 'final-notes');
+    notes.append(el('strong', `${tr('notes')}: `), el('span', data.notes)); nodes.push(notes);
+  }
+  for (const [field, label] of [['tests_run', 'testsRun'], ['files_changed', 'filesChanged']]) {
+    const items = Array.isArray(data[field]) ? data[field].filter(filled) : [];
+    if (!items.length) continue;
+    const list = el('ul', undefined, 'final-list');
+    for (const item of items) list.append(el('li', typeof item === 'object' ? JSON.stringify(item) : item));
+    nodes.push(el('h4', tr(label), 'final-label'), list);
+  }
+  const details = el('details', undefined, 'final-raw');
+  details.append(el('summary', tr('rawOutput')), el('pre', raw));
+  nodes.push(details);
+  return nodes;
 }
 function setInert(value) {
   for (const node of [$('content'), $('topbar'), $('footer')]) if (node.inert !== value) node.inert = value;
@@ -591,7 +756,7 @@ function renderDetail() {
   const files = section('files');
   files.append(task.files?.length ? codeList(task.files) : el('p', tr('none'), 'muted'));
   const summary = section('final');
-  summary.append(task.final ? el('pre', task.final) : el('p', tr('none'), 'muted'));
+  summary.append(...finalSummary(task.final));
   const reviews = section('reviews');
   if (!task.reviews?.length) reviews.append(el('p', tr('none'), 'muted'));
   else {
@@ -648,6 +813,18 @@ $('theme').onchange = event => {
   applyTheme();
 };
 $('close').addEventListener('click', closeDrawer);
+// [ and ] step through the attention queue, unless the reader is typing or the drawer is open.
+document.addEventListener('keydown', event => {
+  if (!['[', ']'].includes(event.key) || event.ctrlKey || event.metaKey || event.altKey || !$('drawer').hidden) return;
+  const target = event.target;
+  if (target instanceof Element && (target.closest('input, select, textarea') || target.isContentEditable)) return;
+  const items = attentionShown, n = items.length;
+  if (!n) return;
+  event.preventDefault();
+  const index = items.findIndex(a => `${a.pid}:${a.task_id}` === lastOpened), step = event.key === ']' ? 1 : -1;
+  const item = items[index < 0 ? (step > 0 ? 0 : n - 1) : (index + step + n) % n];
+  openItem(item.pid, item.task_id);
+});
 document.addEventListener('keydown', event => {
   if ($('drawer').hidden) return;
   if (event.key === 'Escape') { event.preventDefault(); closeDrawer(); }
