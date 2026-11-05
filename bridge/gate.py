@@ -229,18 +229,45 @@ class AccountGate:
         return rule_unsafe([*spec["allowed_paths"], *spec.get("excluded_paths", []),
                             *cfg.protected_paths])
 
+    def _ineligible(self, name: str, need: str, spec: dict[str, Any] | None) -> str | None:
+        """Why agent `name` cannot take this work (including scoping `spec`'s paths)."""
+        reason = self._unavailable(name, need)
+        if reason is None and spec and (bad := self._unscopable(self.bridge.orch.agents[name],
+                                                                spec)):
+            reason = f"cannot scope writes to {bad}"
+        return reason
+
     def _pick(self, role: str, need: str, spec: dict[str, Any] | None = None) -> str:
-        """First eligible agent of `role` in configured order (able to scope `spec`'s paths)."""
+        """The agent of `role` for new work (able to scope `spec`'s paths): the first eligible
+        one in configured order, or with strategy quota the best-ranked eligible one."""
         orch = self.bridge.orch
+        if orch.role(role).strategy == "quota":
+            return self._ranked(role, need, spec)[0][0]
         reasons = []
         for name in orch.role(role).agents:
-            reason = self._unavailable(name, need)
-            if reason is None and spec and (bad := self._unscopable(orch.agents[name], spec)):
-                reason = f"cannot scope writes to {bad}"
+            reason = self._ineligible(name, need, spec)
             if reason is None:
                 return name
             reasons.append(f"{name}: {reason}")
         raise ValueError(f"no eligible {role} agent ({'; '.join(reasons)})")
+
+    def _ranked(self, role: str, need: str,
+                spec: dict[str, Any] | None = None) -> list[tuple[str, float | None]]:
+        """Every eligible agent of `role` with its account's remaining quota percent, most
+        remaining first; unknown quota (or no account) after every known value; ties keep list
+        order. Raises the same ValueError as _pick when none is eligible."""
+        orch = self.bridge.orch
+        reasons, eligible = [], []
+        for name in orch.role(role).agents:
+            reason = self._ineligible(name, need, spec)
+            if reason is not None:
+                reasons.append(f"{name}: {reason}")
+                continue
+            account = orch.agents[name].account
+            eligible.append((name, self._remaining(account) if account else None))
+        if not eligible:
+            raise ValueError(f"no eligible {role} agent ({'; '.join(reasons)})")
+        return sorted(eligible, key=lambda c: (c[1] is None, -(c[1] or 0.0)))
 
     def _executors_on(self, account: str) -> list[str]:
         orch = self.bridge.orch
@@ -307,17 +334,25 @@ class AccountGate:
         })
 
     def _route(self, task_id: str) -> bool:
-        """Bind an unpinned task to the first eligible executor; later runs keep that agent.
+        """Bind an unpinned task to an eligible executor (the first in order, or with strategy
+        quota the one with the most remaining quota); later runs keep that agent.
 
         True when this call bound the task (so a lost slot race can undo it)."""
         row = self.store.get(task_id)
         if self.bridge._agent_of(row) is not None:
             return False
-        name = self._pick("executor", "write", row["spec"])
+        extra: dict[str, Any] = {}
+        if self.bridge.orch.role("executor").strategy == "quota":
+            ranked = self._ranked("executor", "write", row["spec"])
+            name = ranked[0][0]
+            extra = {"strategy": "quota", "remaining_pct": ranked[0][1],
+                     "candidates": [{"agent": n, "remaining_pct": r} for n, r in ranked]}
+        else:
+            name = self._pick("executor", "write", row["spec"])
         account = self.bridge.orch.agents[name].account
         self.store.update(task_id, agent=name, account=account)
         self.store.log(task_id, Actor.BRIDGE, "agent_routed",
-                       {"role": "executor", "agent": name, "account": account})
+                       {"role": "executor", "agent": name, "account": account, **extra})
         return True
 
     def _unroute(self, task_id: str, error: ConflictError | LimitExceeded) -> None:
