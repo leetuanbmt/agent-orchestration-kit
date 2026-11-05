@@ -288,9 +288,11 @@ bound it:
 | `max_switches` | 1–20, default 3. Automatic moves per task; after that the bridge logs `auto_switch_skipped` ("switch limit reached") and the task waits. |
 | `keep_sessions` | Default `false`. `true` refuses to move a task that already has an agent session, so its context is never dropped silently. |
 
-When every candidate is over its limit, the task is not started and the error names each
-account's reason. Nothing retries in the background; run the task again after a reset or after
-a human changes the limits.
+When no account can take an unpinned task, the task is not started and the "no eligible
+executor agent" error lists every account's reason. A bound task whose fallback finds no
+eligible candidate logs `auto_switch_skipped` ("no eligible fallback"), and its start is
+refused with its own account's limit and reset time. Nothing retries in the background; run
+the task again after a reset or after a human changes the limits.
 
 **Inspecting usage.** `agent-bridge usage [account]` (or the `bridge_account_usage` MCP tool)
 shows each check with used, threshold, remaining, reset time, source and status. Accounts over
