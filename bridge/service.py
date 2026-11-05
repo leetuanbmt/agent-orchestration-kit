@@ -230,6 +230,13 @@ class Bridge:
             return f"account {account.name} {state}"
         if self.store.active_on_account(account.name) >= self._slots(account.name):
             return f"account {account.name} busy"
+        # Other bridge processes on this machine share the account's slot lock files.
+        try:
+            lock = AccountLock(account, self.cfg.lock_dir, self._slots(account.name))
+        except ValueError as e:
+            return str(e)
+        if not lock.free():
+            return f"account {account.name} busy in another bridge process"
         return None
 
     def _unscopable(self, agent: AgentConfig, spec: dict[str, Any]) -> list[str]:
@@ -394,16 +401,29 @@ class Bridge:
             "account": account, "remaining_pct": remaining, "reason": "no eligible fallback",
         })
 
-    def _route(self, task_id: str) -> None:
-        """Bind an unpinned task to the first eligible executor; later runs keep that agent."""
+    def _route(self, task_id: str) -> bool:
+        """Bind an unpinned task to the first eligible executor; later runs keep that agent.
+
+        True when this call bound the task (so a lost slot race can undo it)."""
         row = self.store.get(task_id)
         if self._agent_of(row) is not None:
-            return
+            return False
         name = self._pick("executor", "write", row["spec"])
         account = self.orch.agents[name].account
         self.store.update(task_id, agent=name, account=account)
         self.store.log(task_id, Actor.BRIDGE, "agent_routed",
                        {"role": "executor", "agent": name, "account": account})
+        return True
+
+    def _unroute(self, task_id: str, error: ConflictError) -> None:
+        """Undo a fresh routing whose account slot was taken between the check and the lock."""
+        row = self.store.get(task_id)
+        if row["session_id"]:
+            return
+        name, account = row["agent"], row["account"]
+        self.store.update(task_id, agent=None, account=None)
+        self.store.log(task_id, Actor.BRIDGE, "agent_unrouted",
+                       {"agent": name, "account": account, "reason": redact(str(error), 500)})
 
     async def health(self) -> dict[str, Any]:
         codex: dict[str, Any] = {"path": self._adapter("codex-cli").available()}
@@ -527,10 +547,16 @@ class Bridge:
             raise TransitionError(f"{task_id} has unfinished dependencies: "
                                   f"{row['spec']['depends_on']}")
         self._quota_fallback(task_id)
-        self._route(task_id)
+        routed = self._route(task_id)
         row = self.store.get(task_id)
         prompt = build_prompt(task_id, row["spec"], self.cfg.protected_paths)
-        return await self._start(task_id, "execute", prompt, None, {State.READY}, wait, actor)
+        try:
+            return await self._start(task_id, "execute", prompt, None, {State.READY}, wait,
+                                     actor)
+        except ConflictError as e:
+            if routed:
+                self._unroute(task_id, e)
+            raise
 
     async def resume_task(self, task_id: str, feedback: str = "", wait: bool = False,
                           actor: Actor = Actor.CLIENT) -> dict[str, Any]:
@@ -540,7 +566,7 @@ class Bridge:
             raise TransitionError(f"{task_id} is {row['state']}; resume needs one of "
                                   f"{sorted(expect)}")
         self._quota_fallback(task_id)
-        self._route(task_id)
+        routed = self._route(task_id)
         row = self.store.get(task_id)
         attempts = self.store.attempts(task_id)
         if not feedback:
@@ -566,8 +592,13 @@ class Bridge:
             prompt = build_prompt(task_id, row["spec"], self.cfg.protected_paths)
             if feedback:
                 prompt += f"\n\n## Feedback from the previous attempt\n{feedback}"
-        return await self._start(task_id, "resume", prompt, row["session_id"], expect, wait,
-                                 actor)
+        try:
+            return await self._start(task_id, "resume", prompt, row["session_id"], expect, wait,
+                                     actor)
+        except ConflictError as e:
+            if routed:
+                self._unroute(task_id, e)
+            raise
 
     def _hook_settings(self, agent: AgentConfig) -> str | None:
         if agent.adapter == "claude-cli" and self.cfg.claude_hook_settings:
