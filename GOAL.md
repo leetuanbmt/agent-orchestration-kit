@@ -21,19 +21,19 @@ dependencies in the plan.
   VERIFIED (T0053-T0056 DONE). Deferred review follow-ups: total event-detail size cap, private
   key split across list items, `task_result` without per-attempt review, legacy fallback event
   limits. Push as leetuanbmt over HTTPS.
-- [ ] PR-2 Close the evidence window (SEC-01 fixes 1-2, SEC-04)
-- [ ] PR-3 Fail-closed evidence (REL-01)
-- [ ] PR-4 Contain protected-path writes (SEC-02)
-- [ ] PR-5 Patch truncation and evidence schema (SEC-06)
-- [ ] PR-6 Bind approval to verified content (SEC-05)
-- [ ] PR-7 Ignored-file evidence (SEC-03), measurement first
-- [ ] PR-8 Recoverable verification (REL-02 recovery half; the cancel half landed in `950113b`)
-- [ ] PR-10 Input hardening (SEC-07, SEC-09, SEC-10)
-- [ ] PR-11 Trust-model documentation (SEC-08)
-- [ ] PR-12 CI, approval before creating the workflow file
-- [ ] PR-9 Sandboxed verification (SEC-01 fix 3), probe first
-- [ ] PR-13 Recovery details (REL-04, REL-05, REL-07)
-- [ ] Final check (read-only)
+- [x] PR-2 Close the evidence window (SEC-01 fixes 1-2, SEC-04) — done in `claude/charming-heisenberg-n2y2f6` (3101afd), 2026-11-05, VERIFIED (KIT-SEC-EVID-001..005, KIT-UNIT-047; test_sec01/test_sec04 now fail).
+- [x] PR-3 Fail-closed evidence (REL-01) — done in `claude/charming-heisenberg-n2y2f6` (09d6574), 2026-11-05, VERIFIED (KIT-UNIT-048, KIT-REL-EVID-001/002; test_rel01 still passes because it stubs review._git, see the QA report).
+- [x] PR-4 Contain protected-path writes (SEC-02) — done in `claude/charming-heisenberg-n2y2f6` (98ff857), 2026-11-05, VERIFIED (KIT-SEC-PROT-001/002; test_sec02 now fails); agent instruction files sensitive through a constant, since .ai/config.example.json must not change.
+- [x] PR-5 Patch truncation and evidence schema (SEC-06) — done in `claude/charming-heisenberg-n2y2f6` (c49f21c), 2026-11-05, VERIFIED (KIT-UNIT-049; test_sec06 now fails).
+- [x] PR-6 Bind approval to verified content (SEC-05) — done in `claude/charming-heisenberg-n2y2f6` (1e4ccb8), 2026-11-05, VERIFIED (KIT-SEC-BIND-001..004; test_sec05 now fails); bound to file content, not HEAD.
+- [x] PR-7 Ignored-file evidence (SEC-03), measurement first — done in `claude/charming-heisenberg-n2y2f6` (2428763), 2026-11-05, VERIFIED (KIT-SEC-IGN-001..003, KIT-UNIT-050; test_sec03 now fails); measured 80 ms here, about 220 ms for 100 000 ignored files; enforced without a review stage instead of an ignored_scope switch.
+- [x] PR-8 Recoverable verification (REL-02 recovery half; the cancel half landed in `950113b`) — done in `claude/charming-heisenberg-n2y2f6` (8cc5f9b), 2026-11-05, VERIFIED (KIT-REL-RECOVER-001).
+- [x] PR-10 Input hardening (SEC-07, SEC-09, SEC-10) — done in `claude/charming-heisenberg-n2y2f6` (9a4aa5b), 2026-11-05, VERIFIED (KIT-UNIT-054; test_sec07 now fails).
+- [x] PR-11 Trust-model documentation (SEC-08) — done in `claude/charming-heisenberg-n2y2f6` (89e8341), 2026-11-05, VERIFIED (KIT-UNIT-055; README, README.vi, REPORT and the security rules match the code).
+- [x] PR-12 CI, approval before creating the workflow file — done in `claude/charming-heisenberg-n2y2f6` (7fad951), 2026-11-05, IMPLEMENTED: .github/workflows/ci.yml awaits a human review.
+- [x] PR-9 Sandboxed verification (SEC-01 fix 3), probe first — done in `claude/charming-heisenberg-n2y2f6` (9cc0b3a), 2026-11-05, VERIFIED with Landlock instead of the Codex probe, which needs a Codex CLI not available here (KIT-SEC-SBX-001..004, KIT-UNIT-052/053).
+- [x] PR-13 Recovery details (REL-04, REL-05, REL-07) — done in `claude/charming-heisenberg-n2y2f6` (fd2f52c), 2026-11-05, VERIFIED (KIT-REL-REC-001..003).
+- [x] Final check — 2026-11-05: every finding fixed or (SEC-08) mitigated and documented; 10 of 11 reproductions fail; `scripts/check.sh --e2e` 635 passed, 0 failed; proposed readiness table in `docs/qa/e2e-qa-report.md`. Also fixed: QA-BUG-007 (`06d1c4c`), QA-BUG-008 (`a590f07`), QA-BUG-009 (`3efeeb1`).
 
 ## Inputs
 

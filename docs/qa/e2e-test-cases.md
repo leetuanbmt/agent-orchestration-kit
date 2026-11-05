@@ -1,9 +1,8 @@
 # E2E test cases
 
 Generated from the `@pt.*` metadata in `tests/qa/` and the JUnit results of the
-run on 2026-11-05 (`scripts/check.sh --e2e tests/qa`). A known failure is an `xfail(strict=True)`
-test tied to a defect in [the QA report](e2e-qa-report.md#defects); it turns into a failure once
-the defect is fixed, so the marker must then be removed.
+final run on 2026-11-05 (`scripts/check.sh --e2e`, after the fixes). The first QA run, before the
+fixes, had six known failures (QA-BUG-001..006); see [the QA report](e2e-qa-report.md).
 
 ## Task lifecycle
 
@@ -32,11 +31,11 @@ the defect is fixed, so the marker must then be removed.
 | QA-E2E-024-timeout | A hanging agent is killed at its timeout | timeout_s 30 (the minimum) and an agent that hangs with a child process | FAILED with TIMEOUT after about 30 s; the agent and its child are killed | PASS |
 | QA-E2E-025-nojson | An agent that does not return its final JSON | the agent prints plain text as its final message | REWORK because the agent status is unknown; the raw text is kept in the result | PASS |
 | QA-E2E-026-missing-binary | The executor CLI is not installed | codex_bin points to a missing program | health is NOT OK (exit 1); execute pauses the task with MISSING_BINARY and gives the attempt back | PASS |
-| QA-E2E-027-scope-violation | An agent writing outside its allowed paths | allowed_paths src/**; the agent also writes docs/notes.md, then a run that writes .env | REWORK with a scope violation naming the file each time; never REVIEW | [docs/notes.md] PASS<br>[.env] PASS |
+| QA-E2E-027-scope-violation | An agent writing outside its allowed paths | allowed_paths src/**; the agent also writes docs/notes.md, then a run that writes .env | a scope violation naming the file each time, never REVIEW: REWORK for docs/notes.md, BLOCKED for the protected .env | [docs/notes.md] PASS<br>[.env] PASS |
 | QA-E2E-028-head-moved | An agent committing on its own | the agent runs git commit | REWORK with head_changed true | PASS |
 | QA-E2E-030-invalid-specs | Invalid task specs are refused at creation | each bad spec in BAD_SPECS | exit 1 with a message naming the problem, no traceback, and no task is created | [protected-path] PASS<br>[traversal] PASS<br>[absolute] PASS<br>[git-dir] PASS<br>[ai-config] PASS<br>[not-allowlisted] PASS<br>[objective-too-long] PASS<br>[timeout-too-low] PASS<br>[timeout-too-high] PASS<br>[attempts-too-high] PASS<br>[unknown-field] PASS<br>[bad-risk] PASS<br>[empty-objective] PASS<br>[no-paths] PASS<br>[danger-sandbox] PASS |
-| QA-E2E-031-bad-files | Spec files that are missing or not JSON | a path that does not exist, a non-JSON file and a JSON list | exit 1 with a one-line error and no Python traceback | [None] FAIL (known: QA-BUG-003)<br>[not json] PASS<br>[[1, 2]] PASS |
-| QA-E2E-035-shell-syntax | Verification commands written with shell operators | a verification command "python3 -c 'print(1)' && python3 -c 'raise SystemExit(1)'" | refused at creation: commands run without a shell, so the second part would never run | FAIL (known: QA-BUG-004) |
+| QA-E2E-031-bad-files | Spec files that are missing or not JSON | a path that does not exist, a non-JSON file and a JSON list | exit 1 with a one-line error naming the file and no Python traceback | [None] PASS<br>[not json] PASS<br>[[1, 2]] PASS |
+| QA-E2E-035-shell-syntax | Verification commands written with shell operators | a verification command "python3 -c 'print(1)' && python3 -c 'raise SystemExit(1)'" | refused at creation: commands run without a shell, so the second part would never run | PASS |
 | QA-E2E-032-unknown-ids | Commands on a task that does not exist, or in the wrong state | status/result/execute/cancel/resume on T9999; review on a READY task; an invalid decision and state filter | each exits non-zero with a short message and no traceback | PASS |
 | QA-E2E-033-boundaries | Boundary values a user can hit | empty project; a 4000-character Vietnamese objective (the maximum); max_attempts 1 and 5; timeout_s 30 | empty listings; the long objective is stored whole and shown cut to 200 characters; the limits are accepted | PASS |
 | QA-E2E-034-many-tasks | Listing and creating at volume | 150 tasks created through the CLI | list returns 50 by default and at most 200 with --limit 500; each create stays under 2 s; list stays under 2 s | PASS |
@@ -51,7 +50,7 @@ the defect is fixed, so the marker must then be removed.
 | QA-E2E-043-no-fallback | Without fallback a QUOTA pause waits for the user | quota_fallback disabled; claude1 reports a usage limit | PAUSED; resume is refused naming account-clear; no account_auto_switched event; claude2 never runs | PASS |
 | QA-E2E-044-budget | A daily budget stops an account; the next account takes the work | cl1 has budget_usd day 1.0 and reserve_usd 0.5; each run costs 0.7 | run 1 on cl1 spends 0.7; usage shows the spend and agents shows claude1 over limit; a task pinned to claude1 is refused with the limit message; an unpinned task runs on claude2 | PASS |
 | QA-E2E-045-account-isolation | Every run uses its own account's auth home and never sees provider keys | two Codex accounts with their own homes; OPENAI_API_KEY and ANTHROPIC_API_KEY set in the user's shell | each run gets CODEX_HOME of its account; the agent process has no OPENAI_API_KEY | PASS |
-| QA-E2E-046-usage-agrees-with-gate | `usage` tells the user an account will refuse its next run | cl1 has budget_usd day 1.0 and reserve_usd 0.5; one run cost 0.7, so the next run (0.7 + 0.5 > 1.0) is refused | usage reports cl1 as limited (or otherwise not ok), matching agents and execute | FAIL (known: QA-BUG-002) |
+| QA-E2E-046-usage-agrees-with-gate | `usage` tells the user an account will refuse its next run | cl1 has budget_usd day 1.0 and reserve_usd 0.5; one run cost 0.7, so the next run (0.7 + 0.5 > 1.0) is refused | usage reports cl1 as limited (or otherwise not ok), matching agents and execute | PASS |
 
 ## Multi-bridge, parallelism, recovery
 
@@ -81,7 +80,7 @@ the defect is fixed, so the marker must then be removed.
 | QA-E2E-070-web-http-guards | The dashboard's HTTP guards | requests without a token, with a wrong token, with a foreign Host header, with POST/DELETE, and with traversal or malformed ids | 401, 401, 421, 405, 404; the real token gets 200 JSON; security headers on every response; the token is long and random | PASS |
 | QA-E2E-071-web-port-busy | Starting a second dashboard on a port in use | `agent-bridge web --port <port of the running one>` | exit 1 with a hint to use --port 0, no traceback | PASS |
 | QA-E2E-072-web-log | Reading an attempt's log from the dashboard API | the REVIEW task's first attempt log, paged | 200 with log lines; a bad query is 404 | PASS |
-| QA-E2E-073-web-browser | The dashboard in a real browser | one scenario each: load, drawer, no_token, xss, live, language, search, mobile, offline (see tests/qa/web/dashboard.cjs) | every check of the scenario passes and the page raises no JavaScript error | [load] PASS<br>[drawer] PASS<br>[no_token] PASS<br>[xss] PASS<br>[live] PASS<br>[language] PASS<br>[search] PASS<br>[offline] PASS<br>[mobile] FAIL (known: QA-BUG-005) |
+| QA-E2E-073-web-browser | The dashboard in a real browser | one scenario each: load, drawer, no_token, xss, live, language, search, mobile, offline (see tests/qa/web/dashboard.cjs) | every check of the scenario passes and the page raises no JavaScript error | [load] PASS<br>[drawer] PASS<br>[no_token] PASS<br>[xss] PASS<br>[live] PASS<br>[language] PASS<br>[search] PASS<br>[offline] PASS<br>[mobile] PASS |
 | QA-E2E-074-web-performance | Overview at volume | 300 tasks in the project | /api/overview answers in under 1 s; the browser table with every task is ready in under 3 s | PASS |
 
 ## Security
@@ -94,8 +93,8 @@ the defect is fixed, so the marker must then be removed.
 | QA-E2E-083-codex-sandbox-flags | What the Codex executor is allowed to do | a normal run | the argv asks for the workspace-write sandbox, never danger-full-access, and the run happens in the project | PASS |
 | QA-E2E-084-claude-permissions | What a Claude CLI executor is allowed to do | a claude-cli writer with allowed_paths src/** | strict MCP config (no servers), no settings sources, dontAsk mode, Edit/Write scoped to ./src/**, the kit's credential read denies and protected-path write denies passed, no Bash | PASS |
 | QA-E2E-085-human-only-guard | The kit `init` installs keeps human-only commands away from Claude Code | the .claude/settings.json written by `agent-bridge init` | approve, reassign, account-add/login/remove and config-init are denied; no secret values in the installed files | PASS |
-| QA-E2E-086-verification-sandbox | Verification commands are confined to the project | a task whose verification command (an allowlisted interpreter) writes a file in $HOME, outside the worktree | the write is refused, or the file at least shows up as a violation | FAIL (known: QA-BUG-001) |
-| QA-E2E-087-claude-credential-reads | A Claude agent cannot read Claude logins or the project's .env | a claude-cli executor on an account whose home is outside ~/.agent-bridge/homes (as in every shipped example: ~/.claude-accounts/<name>) | --disallowedTools holds Read denies for ~/.claude/.credentials.json, every configured anthropic account home and ./.env | FAIL (known: QA-BUG-006) |
+| QA-E2E-086-verification-sandbox | Verification commands are confined to the project | a task whose verification command (an allowlisted interpreter) writes a file in $HOME, outside the worktree | under the default verify_sandbox auto (Landlock) the write is refused, the check fails with Permission denied and the task goes to REWORK | PASS |
+| QA-E2E-087-claude-credential-reads | A Claude agent cannot read Claude logins or the project's .env | a claude-cli executor on an account whose home is outside ~/.agent-bridge/homes (as in every shipped example: ~/.claude-accounts/<name>) | --disallowedTools holds Read denies for ~/.claude/.credentials.json, every configured anthropic account home and ./.env | PASS |
 
 ## Workflows, reviewer agent, shutdown, storage, TUI
 
