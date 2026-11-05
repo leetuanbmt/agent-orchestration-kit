@@ -206,7 +206,7 @@ def test_crash_marks_failed(make_bridge, monkeypatch) -> None:
 # @pt.id KIT-INT-008-scope-violations
 # @pt.item Out-of-scope edits and commits are caught after the run
 # @pt.condition codex edits a file outside allowed_paths; codex commits; codex edits .env; codex writes the git-ignored .ai/orchestrator.yaml
-# @pt.expected verification fails with the matching scope violation each time
+# @pt.expected verification fails with the matching scope violation each time; a protected file stops the task BLOCKED for a human instead of REWORK
 # @pt.target bridge.review.scope_violations, bridge.review.diff
 # @pt.method integration
 # @pt.legacy none (new kit)
@@ -223,13 +223,14 @@ def test_scope_violation_blocks_review(make_bridge, monkeypatch, scenario, write
     b = make_bridge()
     t = run(b.create_task(spec()))["task_id"]
     out = run(b.execute_task(t, wait=True))
-    assert out["state"] == State.REWORK and needle in out["failure"]
+    expected = State.BLOCKED if needle.startswith("protected") else State.REWORK
+    assert out["state"] == expected and needle in out["failure"]
 
 
 # @pt.id KIT-INT-008b-existing-orchestrator-config
 # @pt.item Edits to an existing .ai/orchestrator.yaml are caught
 # @pt.condition the git-ignored .ai/orchestrator.yaml exists before the run; codex rewrites it, or deletes it
-# @pt.expected verification fails with "protected file changed: .ai/orchestrator.yaml" both times
+# @pt.expected verification fails with "protected file changed: .ai/orchestrator.yaml" both times and the task is BLOCKED
 # @pt.target bridge.review.snapshot, bridge.review.diff
 # @pt.method integration
 # @pt.legacy none: the ignored file was never hashed
@@ -241,7 +242,7 @@ def test_existing_orchestrator_config_guarded(make_bridge, monkeypatch, repo, wr
     (repo / ".ai" / "orchestrator.yaml").write_text("# user's routing\n")
     t = run(b.create_task(spec()))["task_id"]
     out = run(b.execute_task(t, wait=True))
-    assert out["state"] == State.REWORK
+    assert out["state"] == State.BLOCKED
     assert "protected file changed: .ai/orchestrator.yaml" in out["failure"]
 
 

@@ -93,12 +93,17 @@ def run_failure_state(outcome: str, used: int, max_attempts: int) -> State:
     return S.BLOCKED if used >= max_attempts else S.FAILED
 
 
+PROTECTED_VIOLATION = "protected file changed: "
+
+
 def verdict(violations: list[str], checks: list[dict], agent_status: str, stopped: bool,
             used: int, max_attempts: int) -> tuple[bool, State, str | None]:
     """The bridge's gate on a verified attempt: (passed, next state, failure text).
 
     Only a clean scope, every check passed, checks not cut short and the agent reporting
-    `completed` reach REVIEW; anything else is REWORK, BLOCKED once the budget is gone."""
+    `completed` reach REVIEW. A changed protected file (config, secrets, .git) BLOCKS: the
+    worktree may now hold tampered settings, so a human looks before anything runs again.
+    Anything else is REWORK, BLOCKED once the budget is gone."""
     passed = (not violations and not stopped and all(c["passed"] for c in checks)
               and agent_status == "completed")
     if passed:
@@ -107,6 +112,10 @@ def verdict(violations: list[str], checks: list[dict], agent_status: str, stoppe
                                       if not c["passed"]]
                         + ([f"agent status: {agent_status}"]
                            if agent_status != "completed" else []))[:1000]
+    protected = [v.split(": ", 1)[1] for v in violations if v.startswith(PROTECTED_VIOLATION)]
+    if protected:
+        return False, S.BLOCKED, (f"PROTECTED: {', '.join(protected)}: inspect and restore "
+                                  f"them, then create a new task; {failure}")[:1000]
     return False, S.REWORK if used < max_attempts else S.BLOCKED, failure
 
 

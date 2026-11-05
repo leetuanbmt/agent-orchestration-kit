@@ -29,7 +29,7 @@ from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, Orchestrato
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .registry import remember_project
-from .review import parse_command, snapshot
+from .review import EvidenceError, parse_command, protected_dirty, snapshot
 from .runner import _write_attempt_log_line as _write_attempt_log_line
 from .runner import TaskRunner
 from .security import hook_settings_error, PathError, process_started, redact, validate_pattern
@@ -410,12 +410,17 @@ class Bridge:
             source, count = written
             storage_notice = (f"legacy database {source} has {count} events written after "
                               "migration (an old agent-bridge process is still running?)")
+        try:
+            dirty = protected_dirty(self.root, self.cfg)
+        except EvidenceError as e:  # cannot tell: do not report the project as fine
+            dirty = [f"(git status failed: {redact(str(e), 200)})"]
         return {
             "project_root": str(self.root),
             "database": str(self.store.path),
             "state_dir": str(self.state_dir),
             "storage": self.storage,
             "storage_notice": storage_notice,
+            "protected_dirty": dirty,
             "orchestrator": {"source": self.orch.source, "stages": self.orch.workflow.stages},
             "codex": codex,
             "adapters": adapters,
@@ -425,7 +430,7 @@ class Bridge:
             "active_tasks": active,
             "task_counts": counts,
             "ok": all(a["path"] for a in adapters.values())
-                  and ("codex-cli" not in used or codex.get("logged_in", False)),
+                  and ("codex-cli" not in used or codex.get("logged_in", False)) and not dirty,
         }
 
     # ---- tasks -----------------------------------------------------------------------------
