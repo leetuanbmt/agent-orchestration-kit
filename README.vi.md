@@ -61,6 +61,9 @@ một vòng giao việc lặp lại được và kiểm toán được trong t�
   `BLOCKED` kèm chẩn đoán.
 - **Cổng duyệt của con người.** Task rủi ro cao và thay đổi ở path nhạy cảm (migration, auth,
   deploy, CI, secret) phải chờ `agent-bridge approve` trong một terminal interactive.
+- **Giới hạn theo từng account.** Ngưỡng 5 giờ, theo tuần và ngân sách USD (tùy chọn) cho
+  từng account, kiểm tra trước mỗi lần chạy và giữ chỗ nguyên tử giữa các bridge; `agent-bridge
+  usage` cho biết đã dùng bao nhiêu và khi nào reset.
 - **Account cô lập.** Mỗi account có auth home riêng (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, hoặc cả
   một `HOME` với agy), giới hạn chạy song song và theo dõi quota. Quota fallback (tùy chọn) chuyển
   việc sang account khác.
@@ -238,6 +241,7 @@ Các ví dụ đi kèm (`agent-bridge config-init <name>`):
 | [`single-agent`](examples/single-agent.yaml) | Codex | Codex | Codex |
 | [`gates-only`](examples/gates-only.yaml) | — | Codex | Không có: chỉ gate tất định |
 | [`other-reviewers`](examples/other-reviewers.yaml) | agy | Codex | opencode |
+| [`account-limits`](examples/account-limits.yaml) | Phiên Claude Code | Claude headless trên hai account, rồi Codex, có giới hạn theo account và failover | Phiên Claude Code |
 
 Account do con người đăng nhập, theo project (`agent-bridge account-login <name>`) hoặc dùng
 chung toàn máy (`agent-bridge account-add <name> --provider …`). Quota fallback mặc định tắt;
@@ -447,6 +451,7 @@ Các lệnh này in bảng trong terminal và in JSON khi có `--json` hoặc kh
 ```bash
 agent-bridge health        # adapter, quota mỗi account, số task
 agent-bridge agents        # role, agent và tình trạng sẵn sàng
+agent-bridge usage         # giới hạn theo account: đã dùng, còn lại, thời điểm reset
 agent-bridge account-list  # account và trạng thái login; --all thêm profile và CLI chưa dùng
 agent-bridge list          # task của project này, mới nhất trước
 agent-bridge tasks         # task của mọi project và worktree trên máy

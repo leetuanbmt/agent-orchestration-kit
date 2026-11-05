@@ -8,12 +8,14 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from . import osutil
 from .models import ACTIVE, TERMINAL, Actor, State, TaskSpec, TransitionError, check_transition
 from .security import process_started, redact
 
@@ -76,8 +78,35 @@ CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id);
 """
 
 
+# Machine-wide usage ledger (in accounts.db when shared, else the local database): one row per
+# run, reserved before it starts and settled with its cost afterwards.
+USAGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS account_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL,
+    name TEXT,
+    task_id TEXT,
+    ts REAL NOT NULL,
+    state TEXT NOT NULL,            -- reserved | settled
+    reserved_usd REAL NOT NULL DEFAULT 0,
+    cost_usd REAL,
+    source TEXT,                    -- actual | estimated | unavailable
+    owner_pid INTEGER,
+    owner_started TEXT,
+    gated INTEGER NOT NULL DEFAULT 0  -- 1: charged against a budget (unknown cost blocks it)
+);
+CREATE INDEX IF NOT EXISTS idx_account_usage_key_ts ON account_usage(key, ts);
+"""
+USAGE_SOURCES = {"actual", "estimated", "unavailable"}
+USAGE_RETENTION = 40 * 86400  # seconds; ledger rows older than this are pruned
+
+
 class ConflictError(RuntimeError):
     pass
+
+
+class LimitExceeded(ValueError):
+    """A budget check refused a usage reservation; the reason is the message."""
 
 
 class NotFound(KeyError):
@@ -125,14 +154,82 @@ def overview(path: Path, state: str | None, limit: int) -> dict[str, Any]:
     return {"counts": counts, "tasks": [r for r in map(_row, rows) if r]}
 
 
+class _LockedCursor(sqlite3.Cursor):
+    """A cursor whose statements and fetches hold its connection's lock."""
+
+    def __init__(self, connection: _LockedConnection):
+        super().__init__(connection)
+        self._lock = connection.lock
+
+    def execute(self, *args: Any) -> _LockedCursor:
+        with self._lock:
+            return super().execute(*args)  # type: ignore[return-value]
+
+    def executemany(self, *args: Any) -> _LockedCursor:
+        with self._lock:
+            return super().executemany(*args)  # type: ignore[return-value]
+
+    def executescript(self, *args: Any) -> _LockedCursor:
+        with self._lock:
+            return super().executescript(*args)  # type: ignore[return-value]
+
+    def fetchone(self) -> Any:
+        with self._lock:
+            return super().fetchone()
+
+    def fetchall(self) -> list[Any]:
+        with self._lock:
+            return super().fetchall()
+
+    def fetchmany(self, *args: Any) -> list[Any]:
+        with self._lock:
+            return super().fetchmany(*args)
+
+    def __next__(self) -> Any:
+        with self._lock:
+            return super().__next__()
+
+
+class _LockedConnection(sqlite3.Connection):
+    """A connection whose cursors (Connection.execute included) hold `lock`, so statements
+    from two threads never interleave on it."""
+
+    lock: threading.RLock
+
+    def cursor(self, factory: Any = None) -> Any:  # type: ignore[override]
+        return super().cursor(factory or _LockedCursor)
+
+    # Explicitly through the locked cursor: the C shortcuts need not call the overrides above.
+    def execute(self, *args: Any) -> Any:  # type: ignore[override]
+        return self.cursor().execute(*args)
+
+    def executemany(self, *args: Any) -> Any:  # type: ignore[override]
+        return self.cursor().executemany(*args)
+
+    def executescript(self, *args: Any) -> Any:  # type: ignore[override]
+        return self.cursor().executescript(*args)
+
+
+def _connect(path: Path, lock: threading.RLock) -> sqlite3.Connection:
+    conn = sqlite3.connect(path, timeout=10, isolation_level=None, check_same_thread=False,
+                           factory=_LockedConnection)
+    conn.lock = lock  # type: ignore[attr-defined]
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 class Store:
     def __init__(self, path: Path, shared: Path | None = None):
         memory = str(path) == ":memory:"
+        # One lock for every statement on this Store's connections: the TUI reads from a worker
+        # thread while the event loop writes. Transactions hold it throughout (re-entrant).
+        self._lock = threading.RLock()
+        # Bumped on every ledger or quota write through this Store (cache invalidation).
+        self.usage_revision = 0
         if not memory:
             path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
-        self.db = sqlite3.connect(path, timeout=10, isolation_level=None, check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
+        self.db = _connect(path, self._lock)
         self.db.execute("PRAGMA journal_mode=WAL")
         if not memory:
             path.chmod(0o600)
@@ -158,9 +255,7 @@ class Store:
         self.shared = None
         if shared is not None:
             shared.parent.mkdir(parents=True, exist_ok=True)
-            self.shared = sqlite3.connect(shared, timeout=10, isolation_level=None,
-                                          check_same_thread=False)
-            self.shared.row_factory = sqlite3.Row
+            self.shared = _connect(shared, self._lock)
             self.shared.execute("PRAGMA journal_mode=WAL")
             shared.chmod(0o600)
             self.shared.executescript("""
@@ -176,17 +271,23 @@ class Store:
                     Path(str(shared) + suffix).chmod(0o600)
                 except OSError:
                     pass
+        self.usage_db.executescript(USAGE_SCHEMA)
+        columns = {r["name"] for r in self.usage_db.execute("PRAGMA table_info(account_usage)")}
+        if "gated" not in columns:  # ledgers from older versions: their rows are ungated
+            self.usage_db.execute(
+                "ALTER TABLE account_usage ADD COLUMN gated INTEGER NOT NULL DEFAULT 0")
         self._started = process_started(os.getpid())
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
-        self.db.execute("BEGIN IMMEDIATE")
-        try:
-            yield self.db
-            self.db.execute("COMMIT")
-        except BaseException:
-            self.db.execute("ROLLBACK")
-            raise
+        with self._lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                yield self.db
+                self.db.execute("COMMIT")
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
 
     def _event(self, c: sqlite3.Connection, task_id: str | None, actor: Actor | str, kind: str,
                src: str | None = None, dst: str | None = None, detail: Any = None) -> None:
@@ -226,17 +327,18 @@ class Store:
             return
         columns = ["key", "name", *values]
         updates = ",".join(f"{column}=excluded.{column}" for column in columns[1:])
-        self.shared.execute("BEGIN IMMEDIATE")
-        try:
-            self.shared.execute(
-                f"INSERT INTO {table}({','.join(columns)})"
-                f" VALUES ({','.join('?' for _ in columns)})"
-                f" ON CONFLICT(key) DO UPDATE SET {updates}",
-                (key, name, *values.values()))
-            self.shared.execute("COMMIT")
-        except BaseException:
-            self.shared.execute("ROLLBACK")
-            raise
+        with self._lock:
+            self.shared.execute("BEGIN IMMEDIATE")
+            try:
+                self.shared.execute(
+                    f"INSERT INTO {table}({','.join(columns)})"
+                    f" VALUES ({','.join('?' for _ in columns)})"
+                    f" ON CONFLICT(key) DO UPDATE SET {updates}",
+                    (key, name, *values.values()))
+                self.shared.execute("COMMIT")
+            except BaseException:
+                self.shared.execute("ROLLBACK")
+                raise
 
     def account_state(self, name: str, *, key: str | None = None) -> dict[str, Any]:
         if self.shared is not None and key is not None:
@@ -256,6 +358,7 @@ class Store:
                       " ON CONFLICT(name) DO UPDATE SET rate_limits=excluded.rate_limits,"
                       " observed_at=excluded.observed_at",
                       (name, json.dumps(rate_limits), now))
+        self.usage_revision += 1
 
         self._share("account_quota", key, name, rate_limits=json.dumps(rate_limits),
                     observed_at=now)
@@ -270,6 +373,139 @@ class Store:
         if row is None:
             return None
         return {"rate_limits": json.loads(row["rate_limits"]), "observed_at": row["observed_at"]}
+
+    # ---- usage ledger ----------------------------------------------------------------------
+
+    @property
+    def usage_db(self) -> sqlite3.Connection:
+        """Where the usage ledger lives: machine-wide accounts.db, else this worktree's db."""
+        return self.shared if self.shared is not None else self.db
+
+    @contextmanager
+    def _usage_tx(self) -> Iterator[sqlite3.Connection]:
+        with self._lock:
+            conn = self.usage_db
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+            finally:
+                self.usage_revision += 1
+
+    def _dead_owners(self, key: str) -> set[tuple[Any, Any]]:
+        """Owners (pid, start time) of open reservations of `key` whose process is gone.
+
+        Runs outside any transaction so the ps calls never hold the ledger's write lock. An
+        owner is gone when its pid is unset or dead, or when ps reports a different start time
+        (the pid was reused); an unknown start time (recorded or from a failed ps) proves
+        nothing, so that owner counts as alive while its pid is."""
+        rows = self.usage_db.execute(
+            "SELECT DISTINCT owner_pid, owner_started FROM account_usage"
+            " WHERE key=? AND state='reserved'", (key,)).fetchall()
+        me, dead = (os.getpid(), self._started), set()
+        for r in rows:
+            owner = (r["owner_pid"], r["owner_started"])
+            if owner == me:
+                continue  # this process: still running the reservation
+            pid = owner[0]
+            if not pid or not osutil.alive(pid):
+                dead.add(owner)
+                continue
+            if owner[1] is None:
+                continue  # no recorded start time to compare with
+            started = process_started(pid)
+            if started is not None and started != owner[1]:
+                dead.add(owner)
+        return dead
+
+    @staticmethod
+    def _expire_usage(conn: sqlite3.Connection, key: str, dead: set[tuple[Any, Any]]) -> None:
+        """Settle reservations of `key` held by the `dead` owners (crash safety, fail closed):
+        charged their reserved amount as estimated, or as unknown cost when nothing was reserved.
+        Only rows still reserved are touched, so a settle that won the race is kept."""
+        for owner_pid, owner_started in dead:
+            rows = conn.execute(
+                "SELECT id, reserved_usd FROM account_usage WHERE key=? AND state='reserved'"
+                " AND owner_pid IS ? AND owner_started IS ?",
+                (key, owner_pid, owner_started)).fetchall()
+            for r in rows:
+                reserved = r["reserved_usd"] or 0.0
+                conn.execute("UPDATE account_usage SET state='settled', cost_usd=?, source=?"
+                             " WHERE id=? AND state='reserved'",
+                             (reserved if reserved > 0 else None,
+                              "estimated" if reserved > 0 else "unavailable", r["id"]))
+
+    @staticmethod
+    def _spend(conn: sqlite3.Connection, key: str,
+               starts: dict[str, float]) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for period, start in starts.items():
+            r = conn.execute(
+                "SELECT"
+                " COALESCE(SUM(CASE WHEN state='settled' THEN cost_usd END), 0) AS spent,"
+                " COALESCE(SUM(CASE WHEN state='reserved' THEN reserved_usd END), 0) AS reserved,"
+                " COALESCE(SUM(state='settled' AND cost_usd IS NULL AND gated=1), 0) AS unknown,"
+                " COALESCE(MAX(state='settled' AND source='estimated'), 0) AS estimated,"
+                " COUNT(*) AS runs"
+                " FROM account_usage WHERE key=? AND ts>=?", (key, start)).fetchall()[0]
+            out[period] = {"spent": float(r["spent"]), "reserved": float(r["reserved"]),
+                           "unknown": int(r["unknown"]), "estimated": bool(r["estimated"]),
+                           "runs": int(r["runs"])}
+        return out
+
+    def reserve_usage(self, name: str, *, key: str, task_id: str | None, reserve: float,
+                      starts: dict[str, float],
+                      check: Callable[[dict[str, dict[str, Any]]], str | None]) -> int:
+        """Atomically check the budget and reserve `reserve` USD for one run.
+        Raises LimitExceeded (nothing inserted) when check(spend) returns a reason."""
+        dead = self._dead_owners(key)  # ps runs before the write lock is taken
+        now = time.time()
+        with self._usage_tx() as c:
+            c.execute("DELETE FROM account_usage WHERE ts<?", (now - USAGE_RETENTION,))
+            self._expire_usage(c, key, dead)
+            reason = check(self._spend(c, key, starts))
+            if reason:
+                raise LimitExceeded(reason)
+            cur = c.execute(
+                "INSERT INTO account_usage(key, name, task_id, ts, state, reserved_usd,"
+                " owner_pid, owner_started, gated) VALUES (?,?,?,?,'reserved',?,?,?,1)",
+                (key, name, task_id, now, float(reserve), os.getpid(), self._started))
+            return int(cur.lastrowid)
+
+    def settle_usage(self, usage_id: int, cost_usd: float | None, source: str) -> None:
+        """Record a reserved run's cost; a second settle of the same row does nothing."""
+        if source not in USAGE_SOURCES:
+            raise ValueError(f"invalid usage source: {source}")
+        with self._usage_tx() as c:
+            c.execute("UPDATE account_usage SET state='settled', cost_usd=?, source=?"
+                      " WHERE id=? AND state='reserved'", (cost_usd, source, usage_id))
+
+    def record_usage(self, name: str, *, key: str, task_id: str | None,
+                     cost_usd: float | None, source: str, gated: bool = False) -> int:
+        """Record a run that had no reservation, already settled: for reporting (no budget), or
+        charged against a budget when `gated` (an unknown cost then blocks that budget)."""
+        if source not in USAGE_SOURCES:
+            raise ValueError(f"invalid usage source: {source}")
+        with self._usage_tx() as c:
+            cur = c.execute(
+                "INSERT INTO account_usage(key, name, task_id, ts, state, reserved_usd, cost_usd,"
+                " source, owner_pid, owner_started, gated)"
+                " VALUES (?,?,?,?,'settled',0,?,?,?,?,?)",
+                (key, name, task_id, time.time(), cost_usd, source, os.getpid(), self._started,
+                 int(gated)))
+            return int(cur.lastrowid)
+
+    def usage_spend(self, key: str, starts: dict[str, float], *,
+                    expire: bool = True) -> dict[str, dict[str, Any]]:
+        """Spend per period: a plain read unless a dead owner's reservation needs settling.
+        With expire=False it never writes (and runs no ps): dead owners' rows stay reserved."""
+        if expire and (dead := self._dead_owners(key)):
+            with self._usage_tx() as c:
+                self._expire_usage(c, key, dead)
+        return self._spend(self.usage_db, key, starts)
 
     def active_on_account(self, name: str) -> int:
         q = (f"SELECT COUNT(*) FROM tasks WHERE COALESCE(account, 'default')=? "
@@ -460,3 +696,8 @@ class Store:
             "SELECT * FROM events WHERE task_id=? ORDER BY id DESC LIMIT ?", (tid, limit)
         ).fetchall()
         return [r for r in map(_row, reversed(rows)) if r]
+
+    def count_events(self, tid: str, kind: str) -> int:
+        """How many events of `kind` task `tid` has, over its whole history."""
+        return int(self.db.execute("SELECT COUNT(*) FROM events WHERE task_id=? AND kind=?",
+                                   (tid, kind)).fetchone()[0])

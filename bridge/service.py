@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import hashlib
 import json
 import os
@@ -26,19 +27,23 @@ from .executor import ADAPTERS, PLAN_SCHEMA, REVIEW_SCHEMA, Adapter, RunRequest,
     build_plan_prompt, build_prompt, build_review_prompt, build_rework_prompt, describe_event, \
     kill_stale
 from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError
-from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig
+from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AccountLimits, AgentConfig, \
+    OrchestratorConfig
 from .orchestrator import load as load_orchestrator
-from .quota import codex_home_for, read_quota, remaining_pct
+from .quota import BUDGET_PERIODS, codex_home_for, evaluate_limits, numeric, period_bounds, \
+    read_quota, remaining_pct, run_cost
 from .review import diff, parse_command, run_verification, scope_violations, snapshot, \
     touches_sensitive
 from .security import hook_settings_error, PathError, process_started, redact, rule_unsafe, validate_pattern
-from .state import ConflictError, Store, overview
+from .state import ConflictError, LimitExceeded, Store, overview
 
 # Outcomes that mean "the environment, not the code": park the task, never auto-retry.
 PAUSE_OUTCOMES = {"quota", "auth", "network", "missing_binary"}
 REBINDABLE = {State.READY, State.REWORK, State.FAILED, State.PAUSED}
 # How long cancel waits for the runner to stop: one poll plus the agent's TERM and KILL grace.
 CANCEL_WAIT_S = 15
+# How long a limit report is reused by routing and listings (the start gate never reuses one).
+LIMIT_REPORT_TTL_S = 2.0
 
 
 def _alive(pid: int | None) -> bool:
@@ -106,6 +111,8 @@ class Bridge:
         self._workflows: dict[str, asyncio.Task[None]] = {}
         self.progress: Callable[[str], None] | None = None
         self._stopping = False
+        # (name, reserve) -> (monotonic time, store usage revision, report)
+        self._reports: dict[tuple[str, float], tuple[float, int, dict[str, Any]]] = {}
 
     # ---- helpers ---------------------------------------------------------------------------
 
@@ -181,17 +188,28 @@ class Bridge:
         if state["state"] != "quota" or state.get("updated_at") is None:
             return state
         quota = self._account_quota(name)
+        now = time.time()
+        configured = self._limits(name)
+        cooldown = configured.cooldown_s if configured is not None else None
+        if cooldown is not None and now - state["updated_at"] >= cooldown:
+            windows = ([quota.get(w) for w in ("primary", "secondary")]
+                       if isinstance(quota, dict) else [])
+            resets = [w.get("resets_at") for w in windows if isinstance(w, dict)]
+            if not any(numeric(r) and r > now for r in resets):
+                # No reset time is readable: lift the mark once the cooldown has elapsed.
+                self.store.set_account_state(name, "available", actor=Actor.BRIDGE, key=key)
+                self.store.log(None, Actor.BRIDGE, "account_cooldown_elapsed",
+                               {"name": name, "cooldown_s": cooldown})
+                return self.store.account_state(name, key=key)
         if not isinstance(quota, dict):
             return state
-        now = time.time()
         limits = {window: quota.get(window) for window in ("primary", "secondary")}
         remaining = remaining_pct(limits, now)
         if remaining is None or remaining <= 0:
             return state
         for window in limits.values():
             reset = window.get("resets_at") if isinstance(window, dict) else None
-            if (isinstance(reset, (int, float)) and not isinstance(reset, bool)
-                    and state["updated_at"] < reset <= now):
+            if numeric(reset) and state["updated_at"] < reset <= now:
                 self.store.set_account_state(name, "available", actor=Actor.BRIDGE, key=key)
                 return self.store.account_state(name, key=key)
         return state
@@ -200,7 +218,75 @@ class Bridge:
         quota = self._account_quota(name)
         return quota.get("remaining_pct") if isinstance(quota, dict) else None
 
-    def _record_account(self, name: str, res: RunResult) -> None:
+    def _limits(self, name: str) -> AccountLimits | None:
+        profile = self.orch.accounts.get(name)
+        return profile.limits if profile is not None else None
+
+    def _usage_key(self, name: str) -> str:
+        """Ledger key: the machine-wide account identity, else the name in this project."""
+        return self._key(name) or f"name:{name}"
+
+    @staticmethod
+    def _period_starts(now: float) -> dict[str, float]:
+        return {p: period_bounds(p, now)[0] for p in BUDGET_PERIODS}
+
+    def _rate_limits(self, name: str) -> dict[str, Any] | None:
+        quota = self._account_quota(name)
+        if not isinstance(quota, dict):
+            return None
+        return {"primary": quota.get("primary"), "secondary": quota.get("secondary")}
+
+    def _evaluate(self, name: str, reserve: float = 0.0, *, expire: bool = True) -> dict[str, Any]:
+        now = time.time()
+        spend = self.store.usage_spend(self._usage_key(name), self._period_starts(now),
+                                       expire=expire)
+        return {**evaluate_limits(self._limits(name), self._rate_limits(name), spend, now,
+                                  reserve), "spend": spend}
+
+    def _limit_report(self, name: str, reserve: float = 0.0) -> dict[str, Any]:
+        """Limit checks with spend for routing and listings, reused for LIMIT_REPORT_TTL_S
+        unless this process wrote the ledger or quota meanwhile. Not the start gate: _reserve."""
+        key, revision = (name, reserve), self.store.usage_revision
+        cached = self._reports.get(key)
+        if (cached is not None and cached[1] == revision
+                and time.monotonic() - cached[0] < LIMIT_REPORT_TTL_S):
+            return copy.deepcopy(cached[2])
+        report = self._evaluate(name, reserve)
+        # The read may have settled a dead owner's reservation: key on the revision after it.
+        self._reports[key] = (time.monotonic(), self.store.usage_revision, report)
+        return copy.deepcopy(report)
+
+    def _reserve(self, name: str, task_id: str | None) -> int | None:
+        """Authoritative limit gate before a run: the open reservation id on a budgeted account.
+
+        Raises LimitExceeded with the reason when the account is over one of its limits."""
+        found = self._limits(name)
+        if found is None or not found.enabled:
+            return None
+        limits: AccountLimits = found
+        now = time.time()
+        rate_limits = self._rate_limits(name)
+
+        def check(spend: dict[str, dict[str, Any]]) -> str | None:
+            return evaluate_limits(limits, rate_limits, spend, now, limits.reserve_usd)["reason"]
+
+        if limits.budget_usd is None:
+            if reason := check({}):
+                raise LimitExceeded(reason)
+            return None
+        return self.store.reserve_usage(name, key=self._usage_key(name), task_id=task_id,
+                                        reserve=limits.reserve_usd,
+                                        starts=self._period_starts(now), check=check)
+
+    def _settle_open(self, usage_id: int | None, cost: float | None, source: str) -> None:
+        """Settle a reservation that is still open; a settled one is left as it is."""
+        if usage_id is not None:
+            with contextlib.suppress(Exception):
+                self.store.settle_usage(usage_id, cost, source)
+
+    def _record_account(self, name: str, res: RunResult, usage_id: int | None = None,
+                        task_id: str | None = None) -> bool:
+        """Record a run's account marks and cost; False when the ledger write failed."""
         if res.rate_limits:
             self.store.save_quota(name, res.rate_limits, key=self._key(name))
         # Runs only start on an available account, so a mark seen after a successful run came from
@@ -209,6 +295,33 @@ class Bridge:
         if res.outcome in {"quota", "auth"}:
             self.store.set_account_state(name, res.outcome, res.error, actor=Actor.BRIDGE,
                                          key=self._key(name))
+        limits = self._limits(name)
+        cost, source = run_cost(res.cost_usd, res.usage, limits.pricing if limits else None)
+        if res.outcome == "missing_binary":
+            cost, source = 0.0, "actual"  # nothing ran
+        elif res.outcome in {"auth", "quota"} and res.cost_usd is None and not res.usage:
+            cost, source = 0.0, "estimated"  # the provider refused the request
+        elif cost is None and limits is not None and limits.reserve_usd > 0:
+            cost, source = limits.reserve_usd, "estimated"
+        try:
+            if usage_id is not None:
+                self.store.settle_usage(usage_id, cost, source)
+            else:
+                # Gated: charged against a budget (a network-retried attempt on a budgeted
+                # account), so an unknown cost blocks it as an unsettled reservation would.
+                gated = (limits is not None and limits.enabled
+                         and limits.budget_usd is not None)
+                self.store.record_usage(name, key=self._usage_key(name), task_id=task_id,
+                                        cost_usd=cost, source=source, gated=gated)
+        except sqlite3.Error as e:
+            # The run's outcome stands; an open reservation is settled (fail closed) when the
+            # run ends.
+            self.store.log(task_id, Actor.BRIDGE, "usage_record_failed",
+                           {"account": name, "error": redact(str(e), 500)})
+            return False
+        self.store.log(task_id, Actor.BRIDGE, "usage_recorded",
+                       {"account": name, "cost_usd": cost, "source": source})
+        return True
 
     def _unavailable(self, name: str, need: str) -> str | None:
         """Why agent `name` cannot take work needing `need` right now; None when it can."""
@@ -228,6 +341,12 @@ class Bridge:
         state = self._account_state(account.name, key=account_key(account))["state"]
         if state != "available":
             return f"account {account.name} {state}"
+        limits = self._limits(account.name)
+        if limits is not None:
+            report = self._limit_report(
+                account.name, reserve=limits.reserve_usd if limits.budget_usd else 0.0)
+            if report["status"] == "limited":
+                return f"account {account.name} over limit: {report['reason']}"
         if self.store.active_on_account(account.name) >= self._slots(account.name):
             return f"account {account.name} busy"
         # Other bridge processes on this machine share the account's slot lock files.
@@ -273,6 +392,8 @@ class Bridge:
         registry = load_registry()
         for account in listing["accounts"]:
             account["quota"] = self._account_quota(account["name"])
+            if self._limits(account["name"]) is not None:
+                account["limits"] = self._limit_report(account["name"])
             state = self._account_state(account["name"], key=self._key(account["name"]))
             account.update(state=state["state"], last_error=state["last_error"],
                            max_concurrency=self._slots(account["name"]),
@@ -286,6 +407,21 @@ class Bridge:
             for provider in sorted(PROVIDERS - used)
             if (path := shutil.which(binary(self.cfg, provider)))]
         return listing
+
+    def usage_report(self, name: str | None = None) -> dict[str, Any]:
+        """Per-account state, limit checks with spend, and provider quota; read-only.
+
+        Limits are human-owned config (.ai/orchestrator.yaml); this only reports them."""
+        if name is not None and name not in self.orch.accounts:
+            raise ValueError(f"unknown account {name!r}; known: {sorted(self.orch.accounts)}")
+        names = [name] if name is not None else list(self.orch.accounts)
+        # Read-only: the stored state as is (no QUOTA lift) and spend without settling a dead
+        # owner's reservation.
+        return {"accounts": [
+            {"name": n, "provider": self.orch.accounts[n].provider,
+             "state": self.store.account_state(n, key=self._key(n)),
+             "limits": self._evaluate(n, expire=False), "quota": self._account_quota(n)}
+            for n in names], "generated_at": time.time()}
 
     def list_agents(self, logins: dict[str, bool | None] | None = None) -> dict[str, Any]:
         """`logins` (account → logged in, from a listing already made) skips the login probes.
@@ -366,7 +502,8 @@ class Bridge:
         return self._summary(self.store.get(task_id))
 
     def _quota_fallback(self, task_id: str) -> None:
-        """Opt-in: move a task off an account below the quota threshold. Never on AUTH."""
+        """Opt-in: move a task off an account in QUOTA state, below the quota threshold or over
+        one of its configured limits. Never on AUTH; capped per task by max_switches."""
         policy = self.orch.routing.quota_fallback
         if not policy.enabled:
             return
@@ -378,8 +515,28 @@ class Bridge:
         state = self._account_state(account, key=self._key(account))["state"]
         if state == "auth":
             return
+        limit = None
+        limits = self._limits(account)
+        if limits is not None:
+            report = self._limit_report(
+                account, reserve=limits.reserve_usd if limits.budget_usd else 0.0)
+            if report["status"] == "limited":
+                limit = report["reason"]
         remaining = 0 if state == "quota" else self._remaining(account)
-        if remaining is None or remaining >= policy.min_remaining_pct:
+        low = remaining is not None and remaining < policy.min_remaining_pct
+        if not low and limit is None:
+            return
+        reason = ("quota" if state == "quota" and low else
+                  "limit" if limit is not None else "below_threshold")
+        switches = self.store.count_events(task_id, "account_auto_switched")
+        if switches >= policy.max_switches:
+            self.store.log(task_id, Actor.BRIDGE, "auto_switch_skipped", {
+                "account": account,
+                "reason": f"switch limit reached ({switches}/{policy.max_switches})"})
+            return
+        if policy.keep_sessions and row["session_id"]:
+            self.store.log(task_id, Actor.BRIDGE, "auto_switch_skipped", {
+                "account": account, "reason": "keep_sessions: the task has an agent session"})
             return
         for name in policy.agents or self.orch.role("executor").agents:
             candidate = self.orch.agents[name]
@@ -393,12 +550,13 @@ class Bridge:
             if to_remaining is not None and to_remaining < policy.min_remaining_pct:
                 continue
             self._rebind(task_id, name, Actor.BRIDGE, "account_auto_switched", {
-                "reason": "quota" if state == "quota" else "below_threshold",
-                "remaining_pct": remaining, "to_remaining_pct": to_remaining,
+                "reason": reason, "remaining_pct": remaining, "to_remaining_pct": to_remaining,
+                **({"limit": limit} if reason == "limit" else {}),
             })
             return
         self.store.log(task_id, Actor.BRIDGE, "auto_switch_skipped", {
             "account": account, "remaining_pct": remaining, "reason": "no eligible fallback",
+            **({"limit": limit} if limit is not None else {}),
         })
 
     def _route(self, task_id: str) -> bool:
@@ -415,8 +573,9 @@ class Bridge:
                        {"role": "executor", "agent": name, "account": account})
         return True
 
-    def _unroute(self, task_id: str, error: ConflictError) -> None:
-        """Undo a fresh routing whose account slot was taken between the check and the lock."""
+    def _unroute(self, task_id: str, error: ConflictError | LimitExceeded) -> None:
+        """Undo a fresh routing whose account slot was taken, or whose account went over its
+        limit, between the check and the start."""
         row = self.store.get(task_id)
         if row["session_id"]:
             return
@@ -453,6 +612,11 @@ class Bridge:
         for name in self.orch.accounts:
             remaining = self._remaining(name)
             quota[name] = remaining if remaining is not None else "UNKNOWN"
+        limits: dict[str, dict[str, Any]] = {}
+        for name in self.orch.accounts:
+            if self._limits(name) is not None:
+                report = self._limit_report(name)
+                limits[name] = {"status": report["status"], "reason": report["reason"]}
         storage_notice = None
         if self.storage == "legacy":
             storage_notice = ("legacy storage: run `agent-bridge storage status`, then "
@@ -482,6 +646,7 @@ class Bridge:
             "adapters": adapters,
             "sandbox": self.cfg.sandbox,
             "quota": quota,
+            "limits": limits,
             "active_tasks": active,
             "task_counts": counts,
             "ok": all(a["path"] for a in adapters.values())
@@ -553,7 +718,7 @@ class Bridge:
         try:
             return await self._start(task_id, "execute", prompt, None, {State.READY}, wait,
                                      actor)
-        except ConflictError as e:
+        except (ConflictError, LimitExceeded) as e:
             if routed:
                 self._unroute(task_id, e)
             raise
@@ -595,7 +760,7 @@ class Bridge:
         try:
             return await self._start(task_id, "resume", prompt, row["session_id"], expect, wait,
                                      actor)
-        except ConflictError as e:
+        except (ConflictError, LimitExceeded) as e:
             if routed:
                 self._unroute(task_id, e)
             raise
@@ -637,12 +802,29 @@ class Bridge:
         lock = AccountLock(account, self.cfg.lock_dir, slots)
         lock.acquire()
         try:
+            usage_id = self._reserve(account.name, task_id)
+        except LimitExceeded as e:
+            try:
+                self.store.log(task_id, Actor.BRIDGE, "limit_blocked",
+                               {"account": account.name, "reason": str(e)})
+            finally:
+                lock.release()
+            raise LimitExceeded(
+                f"account {account.name} over its configured limit: {e}. It takes work again "
+                "after the reset; with routing.quota_fallback enabled the bridge moves the task "
+                "to another eligible agent; a human can change the limit in "
+                ".ai/orchestrator.yaml") from None
+        except BaseException:
+            lock.release()
+            raise
+        try:
             row = self.store.transition(task_id, State.RUNNING, actor, {"attempt": seq},
                                         expect, account_limit=slots, attempts=used,
                                         runner_pid=os.getpid(), failure=None)
             self.store.start_attempt(task_id, seq, kind)
-            coro = self._run(task_id, seq, used, prompt, session, lock)
+            coro = self._run(task_id, seq, used, prompt, session, lock, usage_id)
         except BaseException:
+            self._settle_open(usage_id, 0.0, "actual")  # the run never started
             lock.release()
             raise
         if wait:
@@ -652,10 +834,10 @@ class Bridge:
         return self._summary(self.store.get(task_id))
 
     async def _run(self, task_id: str, n: int, used: int, prompt: str,
-                   session: str | None, lock: AccountLock) -> None:
+                   session: str | None, lock: AccountLock, usage_id: int | None = None) -> None:
         try:
             try:
-                await self._run_inner(task_id, n, used, prompt, session)
+                await self._run_inner(task_id, n, used, prompt, session, usage_id)
             except Exception as e:  # never leave a task stuck in RUNNING/VERIFYING
                 self.store.log(task_id, Actor.BRIDGE, "error", {"error": redact(repr(e), 2000)})
                 with contextlib.suppress(Exception):
@@ -666,6 +848,9 @@ class Bridge:
                             else State.PAUSED, Actor.BRIDGE, {"error": repr(e)},
                             failure=f"BRIDGE_ERROR: {redact(repr(e), 500)}")
             finally:
+                # A bridge error before the cost was known: fail closed (unknown cost). A run
+                # that never reached the agent was already settled 0.0 by _run_inner.
+                self._settle_open(usage_id, None, "unavailable")
                 lock.release()
                 # Tells a cancel_task in another process that this run let go of the account.
                 self.store.update(task_id, runner_pid=None)
@@ -675,28 +860,33 @@ class Bridge:
             self._runs.pop(task_id, None)
 
     async def _run_inner(self, task_id: str, n: int, used: int, prompt: str,
-                         session: str | None) -> None:
-        row = self.store.get(task_id)
-        spec, max_att = row["spec"], self._max_attempts(row)
-        agent = self.orch.agent(self._agent_of(row) or "")
-        account = self._account(agent.account or "")
-        adapter = self._adapter(agent.adapter)
-        sandbox = (spec.get("sandbox") or self.cfg.sandbox) if agent.writes else "read-only"
-        before = snapshot(self.root, self.cfg.protected_paths)
+                         session: str | None, usage_id: int | None = None) -> None:
+        try:
+            row = self.store.get(task_id)
+            spec, max_att = row["spec"], self._max_attempts(row)
+            agent = self.orch.agent(self._agent_of(row) or "")
+            account = self._account(agent.account or "")
+            adapter = self._adapter(agent.adapter)
+            sandbox = (spec.get("sandbox") or self.cfg.sandbox) if agent.writes else "read-only"
+            before = snapshot(self.root, self.cfg.protected_paths)
+            log_path = _attempt_log_path(self.root, task_id, n)
+            log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(log_path.parent, 0o700)
+            if self.progress:
+                with contextlib.suppress(Exception):
+                    self.progress(f"[{task_id} #{n}] log: {log_path}")
+            fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            os.chmod(log_path, 0o600)
+            log_file = os.fdopen(fd, "a", encoding="utf-8")
+        except BaseException:
+            self._settle_open(usage_id, 0.0, "actual")  # the agent never started
+            raise
 
         def cancelled() -> bool:
             return self._stopping or self.store.get(task_id)["state"] == State.CANCELLED
 
         retries = 0
-        log_path = _attempt_log_path(self.root, task_id, n)
-        log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(log_path.parent, 0o700)
-        if self.progress:
-            with contextlib.suppress(Exception):
-                self.progress(f"[{task_id} #{n}] log: {log_path}")
-        fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        os.chmod(log_path, 0o600)
-        with os.fdopen(fd, "a", encoding="utf-8") as log:
+        with log_file as log:
             def on_line(stream: str, line: str) -> None:
                 _write_attempt_log_line(log, stream, line)
                 if stream == "stdout" and self.progress:
@@ -708,6 +898,7 @@ class Bridge:
                         with contextlib.suppress(Exception):
                             self.progress(f"[{task_id} #{n}] {summary}")
 
+            recorded = False  # the last attempt already has its own ledger row
             while True:
                 res: RunResult = await adapter.run(
                     RunRequest(prompt, account, sandbox, self._timeout(agent, spec.get("timeout_s")),
@@ -727,6 +918,16 @@ class Bridge:
                     self.store.update(task_id, session_id=session, codex_pid=None,
                                       codex_started=None)
                 if res.outcome == "network" and retries < self.cfg.network_retries:
+                    # A failed attempt still costs: charge it on its own row, then retry only
+                    # while the account stays within its limits.
+                    charged = self._record_account(account.name, res, None, task_id)
+                    report = self._limit_report(account.name)
+                    if report["status"] == "limited":
+                        self.store.log(task_id, Actor.BRIDGE, "limit_blocked",
+                                       {"account": account.name, "reason": report["reason"],
+                                        "retry": True})
+                        recorded = charged
+                        break
                     retries += 1
                     self.store.log(task_id, Actor.BRIDGE, "retry", {"error": res.error,
                                                                      "n": retries})
@@ -734,7 +935,11 @@ class Bridge:
                     continue
                 break
 
-        self._record_account(account.name, res)
+        if recorded:
+            # Charged above on its own row: release the reservation instead of charging twice.
+            self._settle_open(usage_id, 0.0, "actual")
+        else:
+            self._record_account(account.name, res, usage_id, task_id)
         changes = diff(self.root, before, self.cfg.protected_paths)
         record = dict(exit_code=res.exit_code, outcome=res.outcome, session_id=res.session_id,
                       final=res.final or {"raw": res.final_text[-3000:]}, usage=res.usage,
@@ -816,7 +1021,8 @@ class Bridge:
 
     async def _consult(self, name: str, prompt: str, schema: dict[str, Any],
                        task_id: str | None, cancel: Callable[[], bool]) -> RunResult | None:
-        """One read-only run of a planner or reviewer agent; None when its account is busy."""
+        """One read-only run of a planner or reviewer agent; None when its account is busy or
+        over its limit."""
         agent = self.orch.agents[name]
         hook_settings = self._hook_settings(agent)
         account = self._account(agent.account or "")
@@ -828,13 +1034,26 @@ class Bridge:
                            {"agent": name, "reason": str(e)})
             return None
         try:
-            res = await self._adapter(agent.adapter).run(
-                RunRequest(prompt, account, "read-only", self._timeout(agent, None),
-                           schema=schema, model=agent.model, hook_settings=hook_settings),
-                should_cancel=cancel)
-        finally:
+            usage_id = self._reserve(account.name, task_id)
+        except LimitExceeded as e:
             lock.release()
-        self._record_account(account.name, res)
+            self.store.log(task_id, Actor.BRIDGE, "agent_skipped",
+                           {"agent": name, "reason": f"account {account.name} over limit: {e}"})
+            return None
+        except BaseException:
+            lock.release()
+            raise
+        try:
+            try:
+                res = await self._adapter(agent.adapter).run(
+                    RunRequest(prompt, account, "read-only", self._timeout(agent, None),
+                               schema=schema, model=agent.model, hook_settings=hook_settings),
+                    should_cancel=cancel)
+            finally:
+                lock.release()
+            self._record_account(account.name, res, usage_id, task_id)
+        finally:
+            self._settle_open(usage_id, None, "unavailable")
         return res
 
     async def _review_stage(self, task_id: str) -> None:
@@ -1026,8 +1245,9 @@ class Bridge:
             prompt = build_plan_prompt(objective, context, self.cfg.protected_paths)
             res = await self._consult(name, prompt, PLAN_SCHEMA, None, lambda: self._stopping)
             if res is None or res.outcome != "ok" or not isinstance(res.final, dict):
-                raise ValueError(f"planner {name} failed: "
-                                 f"{res.outcome + ': ' + res.error if res else 'account busy'}")
+                why = (res.outcome + ": " + res.error if res
+                       else "account busy or over its limit")
+                raise ValueError(f"planner {name} failed: {why}")
             planned = res.final.get("tasks") or []
             if not planned:
                 raise ValueError(f"planner {name} returned no tasks")

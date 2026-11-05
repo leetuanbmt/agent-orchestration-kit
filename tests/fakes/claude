@@ -4,12 +4,13 @@
 Speaks the event shapes verified against claude 2.1.306: system/init, rate_limit_event,
 assistant, result (structured_output when --json-schema is given).
 
-FAKE_CLAUDE_SCENARIO: comma-separated, one per invocation (last repeats): ok | quota | auth | crash
+FAKE_CLAUDE_SCENARIO: comma-separated, one per invocation (last repeats): ok | quota | auth | network | crash
 FAKE_CLAUDE_WRITE:    "path=content;..." written on ok runs where a Write(./glob) rule allows the
                       path and no --disallowedTools rule denies it, like the real permission check.
 FAKE_CLAUDE_DECISION: "decision:notes" for reviewer runs (default "approve:looks good").
 FAKE_CLAUDE_PLAN:     JSON list of tasks for planner runs (default: one task).
 FAKE_CLAUDE_UTIL:     five-hour utilization 0-1 reported in rate_limit_event (default 0.2).
+FAKE_CLAUDE_COST:     run cost in USD reported as total_cost_usd in result events (unset: omitted).
 FAKE_CLAUDE_DIR:      scratch dir for the call counter and argv/prompt log.
 Allow rules in the project's .claude/settings.json count when --setting-sources loads project.
 An isolated CLAUDE_CONFIG_DIR is logged in when it holds `.credentials.json`.
@@ -78,6 +79,8 @@ def result(is_error, text, structured=None, status=None):
         ev["structured_output"] = structured
     if status:
         ev["api_error_status"] = status
+    if os.environ.get("FAKE_CLAUDE_COST"):
+        ev["total_cost_usd"] = float(os.environ["FAKE_CLAUDE_COST"])
     emit(ev)
 
 
@@ -93,6 +96,9 @@ if scenario == "quota":
     sys.exit(1)
 if scenario == "auth":
     result(True, "Invalid API key · Please run /login", status=401)
+    sys.exit(1)
+if scenario == "network":
+    result(True, "API Error: Connection refused", status=503)
     sys.exit(1)
 if scenario == "crash":
     print("fatal: fake crash", file=sys.stderr)

@@ -47,7 +47,7 @@ def _server_entry() -> dict[str, Any]:
 
 # Commands a person reads: a table in a terminal, JSON with --json or through a pipe.
 VIEWS = {"account-list": "accounts_view", "health": "health_view", "agents": "agents_view",
-         "list": "tasks_view", "tasks": "projects_view"}
+         "list": "tasks_view", "tasks": "projects_view", "usage": "usage_view"}
 HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove"}
 EXAMPLES = install.KIT / "examples"
 # Commands that drive agent runs: a stop signal lets them kill their agent and park the task.
@@ -104,6 +104,17 @@ def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
     return login_status(cfg, acc)
 
 
+def _limit_warnings(orch: orchestrator.OrchestratorConfig) -> list[str]:
+    """Budgets that fail closed on every run whose cost is unknown."""
+    return [f"accounts.{name}.limits: budget_usd without pricing or reserve_usd: a run whose CLI "
+            "reports no cost (Codex) or that fails before reporting blocks the budget until the "
+            "period resets"
+            for name, profile in sorted(orch.accounts.items())
+            if (limits := profile.limits) is not None and limits.enabled
+            and limits.budget_usd is not None and limits.pricing is None
+            and limits.reserve_usd == 0]
+
+
 async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "serve":
         from .server import _serve
@@ -146,9 +157,13 @@ async def _run(args: argparse.Namespace) -> Any:
     if args.cmd == "config-check":
         root = find_root()
         orch = orchestrator.load(root, load_config(root))
-        return {"ok": True, "source": orch.source, "stages": orch.workflow.stages,
-                "accounts": sorted(orch.accounts), "agents": sorted(orch.agents),
-                "roles": {r: orch.role(r).agents for r in orch.roles}}
+        out: dict[str, Any] = {
+            "ok": True, "source": orch.source, "stages": orch.workflow.stages,
+            "accounts": sorted(orch.accounts), "agents": sorted(orch.agents),
+            "roles": {r: orch.role(r).agents for r in orch.roles}}
+        if warnings := _limit_warnings(orch):
+            out["warnings"] = warnings
+        return out
     if args.cmd == "config-init" and args.example is None:
         for path in sorted(EXAMPLES.glob("*.yaml")):
             header = []
@@ -223,7 +238,8 @@ async def _run(args: argparse.Namespace) -> Any:
             raise ValueError("account-login requires a configured named account (with its own "
                              "home)")
         return _login(cfg, acc, args.device_auth)
-    readonly = args.cmd in {"health", "status", "result", "list", "agents", "workflow-status"}
+    readonly = args.cmd in {"health", "status", "result", "list", "agents", "workflow-status",
+                            "usage"}
     if args.cmd == "status" and args.wait > 0:
         readonly = False
     b = Bridge(create=False) if readonly else Bridge()
@@ -254,6 +270,8 @@ async def _run(args: argparse.Namespace) -> Any:
             return await b.list_tasks(args.state, args.limit)
         case "agents":
             return b.list_agents()
+        case "usage":
+            return b.usage_report(args.account)
         case "plan":
             return await b.plan(args.objective, args.context, wait=True)
         case "run-workflow":
@@ -296,6 +314,8 @@ def main(argv: list[str] | None = None) -> None:
                                        "example; without one, list the examples").add_argument(
         "example", nargs="?", choices=sorted(p.stem for p in EXAMPLES.glob("*.yaml")))
     sub.add_parser("agents", help="list agents, roles and availability")
+    sub.add_parser("usage", help="per-account usage, limits, remaining quota and reset "
+                                 "times").add_argument("account", nargs="?")
     sub.add_parser("account-list", help="usable accounts on this machine").add_argument(
         "--all", action="store_true",
         help="also list switch profiles, homes not added and CLIs without an account")

@@ -55,6 +55,18 @@ async def bridge_list_accounts() -> dict[str, Any]:
 
 
 @mcp.tool()
+async def bridge_account_usage(account: str | None = None) -> dict[str, Any]:
+    """Read-only per-account usage: state, configured limit checks (used, threshold,
+    remaining, reset time, source), spend by day/week/month and provider quota. Pass `account`
+    to narrow it to one account. Limits are human-owned config in .ai/orchestrator.yaml;
+    this tool cannot change them."""
+    async def usage() -> dict[str, Any]:
+        return bridge().usage_report(account)
+
+    return await _safe(usage())
+
+
+@mcp.tool()
 async def bridge_list_agents() -> dict[str, Any]:
     """Configured agents (adapter, provider, account, model, read/write), their roles, whether
     each can take work now, and the workflow stages."""

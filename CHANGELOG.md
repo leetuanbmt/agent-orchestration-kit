@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `agent-bridge web` requires a per-launch secret token on every API request; the printed dashboard URL carries the key.
 
 ### Added
+- Per-account limits (`accounts.<name>.limits` in `.ai/orchestrator.yaml`): 5-hour, weekly and any-window percentage thresholds, USD budgets per UTC day / week / month with an optional per-run `reserve_usd`, user-supplied token `pricing` for cost estimates, and a QUOTA-mark `cooldown_s`. Routing skips an account over its limit and the start gate refuses it; budgets are checked and reserved atomically in the machine-wide `accounts.db`, so concurrent bridges cannot overspend. Accounts without `limits` behave as before.
+- Usage ledger: every run's cost, including network-retried attempts, is recorded with its source (`actual`, `estimated` or `unavailable`); a run with unknown cost fails closed against a budget.
+- `agent-bridge usage [account] [--json]` and the read-only `bridge_account_usage` MCP tool show used, threshold, remaining, reset time, source and status per limit; `account-list` marks an account `over limit`; `health` reports each account's limit status; `config-check` warns about a budget that would fail closed on every run.
+- `routing.quota_fallback` also moves a task off an account that is over a configured limit, bounded by `max_switches` (default 3) and optionally refused for tasks with a session (`keep_sessions`).
+- Example `account-limits` (`agent-bridge config-init account-limits`).
 - Human-run `storage relink <old-root> <new-root> [--apply]` reattaches central history after moving or renaming a repository or worktree, with a dry run by default.
 - `storage prune [--apply]` removes missing roots from the project registry, and
   `storage gc --logs-older-than DAYS [--apply]` deletes old central attempt logs of terminal tasks;
