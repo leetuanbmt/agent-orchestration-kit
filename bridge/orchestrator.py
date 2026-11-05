@@ -220,6 +220,11 @@ class WorkflowConfig(BaseModel):
 
     stages: list[str] = ["execute", "test", "review"]
     max_rework: int = Field(2, ge=0, le=4)
+    # Verification runs code the executor wrote. auto: confine its writes to the worktree and a
+    # private temp dir where the kernel supports Landlock; strict: also deny TCP, and refuse to
+    # run checks without Landlock; none: no confinement.
+    verify_sandbox: Literal["auto", "strict", "none"] = "auto"
+    verify_writable: list[str] = []  # extra directories checks may write (e.g. ~/.cache/uv)
 
     @model_validator(mode="after")
     def _stages(self) -> WorkflowConfig:
@@ -232,6 +237,9 @@ class WorkflowConfig(BaseModel):
             raise ValueError("a workflow needs the execute stage")
         if not {"test", "review"} & set(self.stages):
             raise ValueError("a workflow needs a gate: test, review or both")
+        relative = [p for p in self.verify_writable if not Path(p).expanduser().is_absolute()]
+        if relative:
+            raise ValueError(f"verify_writable needs absolute paths (or ~/...): {relative}")
         if self.stages != [s for s in STAGES if s in self.stages]:
             raise ValueError(f"stages must keep the order {list(STAGES)}")
         return self

@@ -1,0 +1,83 @@
+"""Write confinement for verification commands: Linux Landlock, from the standard library.
+
+Verification runs code the executor wrote. Under Landlock the command may write only to the
+worktree, a private temporary directory and the human-configured extra paths; reads are not
+restricted. `strict` also denies TCP connect and bind (Landlock ABI 4+).
+
+The confining wrapper runs as `python -I -c WRAPPER`, a string fixed when the bridge starts: it
+imports nothing from disk, so an agent that edits files in the worktree (even this module, when
+the kit works on itself) cannot switch the confinement off.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import sys
+from typing import Literal
+
+Mode = Literal["auto", "strict", "none"]
+
+WRAPPER = r'''
+import ctypes, os, struct, sys
+args = sys.argv[1:]
+cut = args.index("--")
+writable, network, cmd = args[:cut - 1], args[cut - 1] == "net", args[cut + 1:]
+libc = ctypes.CDLL(None, use_errno=True)
+abi = libc.syscall(444, None, 0, 1)
+if abi < 1:
+    sys.exit("agent-bridge sandbox: Landlock is not available on this kernel")
+fs = sum(1 << b for b in (1, 4, 5, 6, 7, 8, 9, 10, 11, 12))  # every way to write or create
+fs |= (1 << 13 if abi >= 2 else 0) | (1 << 14 if abi >= 3 else 0)
+net = 0 if network or abi < 4 else 3  # TCP bind and connect
+attr = struct.pack("QQ", fs, net) if abi >= 4 else struct.pack("Q", fs)
+ruleset = libc.syscall(444, ctypes.create_string_buffer(attr, len(attr)), len(attr), 0)
+if ruleset < 0:
+    sys.exit(f"agent-bridge sandbox: landlock_create_ruleset failed ({ctypes.get_errno()})")
+for path, rights in [*((p, fs) for p in writable), ("/dev", 1 << 1)]:
+    try:
+        fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
+    except OSError:
+        continue
+    rule = ctypes.create_string_buffer(struct.pack("=Qi", rights, fd), 12)
+    if libc.syscall(445, ruleset, 1, rule, 0) < 0:
+        sys.exit(f"agent-bridge sandbox: cannot allow {path} ({ctypes.get_errno()})")
+    os.close(fd)
+if libc.prctl(38, 1, 0, 0, 0) or libc.syscall(446, ruleset, 0):
+    sys.exit(f"agent-bridge sandbox: landlock_restrict_self failed ({ctypes.get_errno()})")
+os.close(ruleset)
+os.execvp(cmd[0], cmd)
+'''
+
+
+def landlock_abi() -> int:
+    """The kernel's Landlock ABI version, 0 when it has none (or this is not Linux)."""
+    if not sys.platform.startswith("linux"):
+        return 0
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        return max(int(libc.syscall(444, None, 0, 1)), 0)
+    except (OSError, AttributeError):
+        return 0
+
+
+def wrap(argv: list[str], writable: list[str], mode: Mode) -> list[str] | None:
+    """argv run under the sandbox, the argv itself for `none` (or `auto` without Landlock), and
+    None when `strict` cannot be honoured: the check must then fail rather than run unconfined."""
+    if mode == "none":
+        return argv
+    if not landlock_abi():
+        return None if mode == "strict" else argv
+    return [sys.executable, "-I", "-c", WRAPPER, *writable,
+            "net" if mode == "auto" else "nonet", "--", *argv]
+
+
+def describe(mode: Mode) -> str:
+    """One line for health: what verification commands run under here."""
+    abi = landlock_abi()
+    if mode == "none":
+        return "none (verify_sandbox: none)"
+    if not abi:
+        return ("unavailable: checks are refused (strict)" if mode == "strict" else
+                "unavailable on this system: checks run unconfined (auto)")
+    return f"landlock ABI {abi}: writes confined" + (", TCP denied" if mode == "strict" and abi >= 4
+                                                     else "")

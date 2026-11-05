@@ -137,7 +137,7 @@ def test_runner_killed_then_recovered(sandbox: Sandbox) -> None:
 # @pt.method e2e
 # @pt.legacy none
 def test_cancel_during_verification(sandbox: Sandbox) -> None:
-    marker = sandbox.base / "verify.pid"
+    marker = sandbox.root / "src" / "verify.pid"  # checks may write only in the worktree
     cmd = (f"python3 -c \"import os,time; open('{marker}','w').write(str(os.getpid())); "
            "time.sleep(30)\"")
     task = sandbox.create(verification_commands=[cmd])

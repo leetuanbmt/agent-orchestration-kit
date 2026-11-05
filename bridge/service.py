@@ -31,6 +31,7 @@ from .quota import codex_home_for, read_quota, remaining_pct
 from .registry import remember_project
 from .review import EvidenceError, content_hashes, parse_command, protected_dirty, snapshot
 from .runner import _write_attempt_log_line as _write_attempt_log_line
+from .sandbox import describe as describe_sandbox
 from .runner import TaskRunner
 from .security import hook_settings_error, PathError, process_started, redact, validate_pattern
 from .state import ConflictError, LimitExceeded, Store, overview
@@ -425,6 +426,7 @@ class Bridge:
             "codex": codex,
             "adapters": adapters,
             "sandbox": self.cfg.sandbox,
+            "verify_sandbox": describe_sandbox(self.orch.workflow.verify_sandbox),
             "quota": quota,
             "limits": limits,
             "active_tasks": active,

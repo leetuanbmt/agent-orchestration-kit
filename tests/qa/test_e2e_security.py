@@ -145,19 +145,20 @@ def test_init_denies_human_only_commands(sandbox: Sandbox) -> None:
 # @pt.id QA-E2E-086-verification-sandbox
 # @pt.item Verification commands are confined to the project
 # @pt.condition a task whose verification command (an allowlisted interpreter) writes a file in $HOME, outside the worktree
-# @pt.expected the write is refused, or the file at least shows up as a violation
+# @pt.expected under the default verify_sandbox auto (Landlock) the write is refused, the check fails with Permission denied and the task goes to REWORK
 # @pt.target bridge.review.run_verification (audit finding SEC-01)
 # @pt.method e2e
 # @pt.legacy none
-@pytest.mark.xfail(strict=True, reason="QA-BUG-001 (audit SEC-01, open): verification commands run "
-                   "unsandboxed with the user's permissions; a task or planner spec can run any "
-                   "code through an allowlisted interpreter")
 def test_verification_cannot_write_outside(sandbox: Sandbox) -> None:
+    if "unavailable" in sandbox.ok("health")["verify_sandbox"]:
+        pytest.skip("no Landlock on this kernel: verify_sandbox auto runs checks unconfined")
     target = sandbox.home / "written-by-a-check"
     task = sandbox.create(verification_commands=[
         f"python3 -c \"open('{target}', 'w').write('x')\""])
-    sandbox.ok("execute", task)
+    out = sandbox.ok("execute", task)
     assert not target.exists(), "a verification command wrote outside the worktree"
+    check = sandbox.ok("result", task)["attempts"][-1]["verification"]["checks"][0]
+    assert out["state"] == "REWORK" and "Permission denied" in check["output_tail"], check
 
 
 # @pt.id QA-E2E-087-claude-credential-reads
