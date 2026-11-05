@@ -20,10 +20,23 @@ from .config import BridgeConfig
 from .security import clean_env, matches, redact
 
 
-def _git(root: Path, *args: str, env: dict[str, str] | None = None) -> str:
-    out = subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=False,
-                         env={**os.environ, **env} if env else None)
-    return out.stdout.decode(errors="replace") if out.returncode == 0 else ""
+class EvidenceError(RuntimeError):
+    """Git could not report the worktree, so a run cannot be judged: never treat that as clean."""
+
+
+def _git(root: Path, *args: str, env: dict[str, str] | None = None,
+         required: bool = True) -> str:
+    try:
+        out = subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=False,
+                             env={**os.environ, **env} if env else None)
+    except OSError as e:
+        raise EvidenceError(f"git {args[0]}: {e}") from e
+    if out.returncode != 0:
+        if not required:
+            return ""
+        detail = redact(out.stderr.decode(errors="replace").strip(), 300)
+        raise EvidenceError(f"git {args[0]} failed with exit {out.returncode}: {detail}")
+    return out.stdout.decode(errors="replace")
 
 
 def _worktree_tree(root: Path) -> str | None:
@@ -79,7 +92,8 @@ def snapshot(root: Path, protected: list[str]) -> dict[str, Any]:
     # The bridge's own config; orchestrator.yaml is git-ignored, so _dirty misses it.
     files.update(f for f in (".ai/config.json", ".ai/orchestrator.yaml") if (root / f).is_file())
     return {
-        "head": _git(root, "rev-parse", "HEAD").strip() or None,
+        # A repository without commits has no HEAD; that is not an evidence failure.
+        "head": _git(root, "rev-parse", "--verify", "-q", "HEAD", required=False).strip() or None,
         "tree": _worktree_tree(root),
         "files": {f: _hash(root / f) for f in files},
     }

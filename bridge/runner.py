@@ -14,7 +14,8 @@ from pydantic import ValidationError
 from .accounts import AccountLock, account_key
 from .executor import REVIEW_SCHEMA, RunRequest, RunResult, build_review_prompt, describe_event
 from .models import ACTIVE, Actor, ReviewDecision, State, run_failure_state, verdict
-from .review import diff, recheck, run_verification, scope_violations, touches_sensitive
+from .review import EvidenceError, diff, recheck, run_verification, scope_violations, \
+    touches_sensitive
 from .security import process_started, redact
 from .state import LimitExceeded
 
@@ -110,6 +111,8 @@ class TaskRunner:
         try:
             try:
                 await self._run_inner(task_id, n, used, prompt, session, usage_id)
+            except EvidenceError as e:  # no evidence, no verdict: pause, never pass or fail
+                self._park_without_evidence(task_id, n, used, e)
             except Exception as e:  # never leave a task stuck in RUNNING/VERIFYING
                 self.store.log(task_id, Actor.BRIDGE, "error", {"error": redact(repr(e), 2000)})
                 with contextlib.suppress(Exception):
@@ -271,6 +274,18 @@ class TaskRunner:
             return  # cancelled while verifying
         self.store.transition(task_id, dst, Actor.BRIDGE, record["verification"],
                               failure=failure, needs_human=int(needs_human))
+
+    def _park_without_evidence(self, task_id: str, n: int, used: int, error: EvidenceError) -> None:
+        """Git could not show what the run changed. The attempt proves nothing either way, so the
+        task pauses (an environment failure, attempt given back) instead of being judged."""
+        message = redact(str(error), 500)
+        self.store.log(task_id, Actor.BRIDGE, "error", {"error": message})
+        with contextlib.suppress(Exception):
+            self.store.finish_attempt(task_id, n, outcome="evidence_error")
+        with contextlib.suppress(Exception):
+            if self.store.get(task_id)["state"] in ACTIVE:
+                self.store.transition(task_id, State.PAUSED, Actor.BRIDGE, {"error": message},
+                                      failure=f"EVIDENCE_ERROR: {message}", attempts=used - 1)
 
     def _park_if_stopping(self, task_id: str, used: int) -> bool:
         """PAUSE a run this bridge stopped (shutdown or a stop signal). An interrupted run is an
