@@ -341,28 +341,39 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
 **Bridge áp dụng cho mọi adapter:**
 
 - **Path.** Kiểm tra khi tạo task (đường dẫn tuyệt đối, `..`, `~`, symlink thoát ra ngoài, path
-  protected, glob quá rộng) và sau mỗi lượt chạy (hash snapshot, diff toàn worktree, `HEAD` không
-  được đổi). Path protected (`.env*`, key, `.git/`, `.ai/`, `.mcp.json`,
-  `.claude/settings*.json`) không bao giờ được cho phép. Kiểm tra sau lượt chạy chỉ thấy các file
-  `git status` liệt kê, nên output bị git-ignore (thư mục build, `tools/bin/…`) không bị tính là
-  vi phạm phạm vi và không nằm trong patch. File protected ở thư mục gốc và `.ai/config.json` /
-  `.ai/orchestrator.yaml` vẫn được kiểm tra dù bị ignore; output không bị ignore thì bị tính là
-  thay đổi ngoài phạm vi.
-- **Verification.** Bridge tự chạy lại, chỉ dùng argv (không qua shell), file thực thi phải nằm
-  trong allowlist, có timeout.
+  protected, glob bao trùm cả project như `**/*`) và sau mỗi lượt chạy (hash snapshot, diff toàn
+  worktree, `HEAD` không được đổi). Path protected (`.env*`, key, `.git/`, `.ai/`, `.mcp.json`,
+  `.claude/settings*.json`) không bao giờ được cho phép; lượt chạy nào sửa một path như vậy, git
+  hook của repo hoặc `.git/config` sẽ bị BLOCKED chờ con người (`PROTECTED: …`). File bị
+  git-ignore được theo dõi qua kích thước và mtime: thay đổi được liệt kê trong `ignored_files`,
+  file protected thì chặn, và khi workflow không có stage `review` thì mọi thay đổi ngoài
+  `allowed_paths` đều là vi phạm (trừ cache của công cụ).
+- **Verification.** Bridge tự chạy lại, chỉ dùng argv (không toán tử shell, không dùng đường dẫn
+  làm chương trình), file thực thi phải nằm trong allowlist, có timeout. Trên Linux có Landlock,
+  lệnh kiểm tra chỉ ghi được vào worktree, một `TMPDIR` riêng và `workflow.verify_writable`
+  (`workflow.verify_sandbox`: mặc định `auto`, `strict` chặn thêm TCP, `none` để tắt); sau đó
+  worktree được diff lại và những gì lệnh kiểm tra thay đổi được xét như thay đổi của agent. Không
+  tiến trình nào do agent hay lệnh kiểm tra khởi động sống lâu hơn nó (process group bị kết thúc).
+- **Bằng chứng.** Lệnh git lỗi sẽ làm task tạm dừng (`EVIDENCE_ERROR`) thay vì cho ra diff rỗng.
+  Patch được lưu giữ từng file từ đầu và ghi rõ phần bị lược. Attempt kết thúc sớm (quota, crash,
+  timeout, runner chết) mà để lại thay đổi ngoài task sẽ chặn task (`SCOPE: …`), để lần resume
+  không lấy chúng làm trạng thái gốc.
 - **Duyệt.** Executor không tự approve được. Client hoặc reviewer agent approve; bridge chỉ tự
-  approve khi workflow không có stage `review`. Task rủi ro cao hoặc đụng path nhạy cảm cần con
-  người duyệt trong terminal interactive.
+  approve khi workflow không có stage `review`. Task rủi ro cao, đụng path nhạy cảm, hoặc sửa chỉ
+  dẫn cho agent (`CLAUDE.md`, `AGENTS.md`, `.claude/**`, `.codex/**`, `.envrc`, `.vscode/**`) cần
+  con người duyệt trong terminal interactive. Muốn approve hoặc đóng task, mọi file mà attempt đã
+  đụng vào phải còn đúng nội dung đã được kiểm chứng.
 - **Process.** Agent và lệnh verification khởi chạy từ argv list trong process group riêng; khi
   timeout hoặc bị huỷ, bridge gửi SIGTERM rồi SIGKILL. Runner kiểm tra lệnh huỷ mỗi giây, ở bất kỳ
   process nào (kể cả CLI `execute`): nó kill agent hoặc lệnh kiểm tra đang chạy, bỏ các kiểm tra
   còn lại và giải phóng account, và `cancel` chờ việc đó xong rồi mới trả về. Process group mồ côi của runner đã chết bị kill ở lần khởi động
   sau, chỉ khi PID là process `codex`, `claude`, `opencode` hoặc `agy`.
 - **Environment và output.** Biến có dạng credential (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`,
-  `*PASSWORD*`, `AWS_*`) bị xoá trước khi agent hoặc lệnh verification chạy. Output được lưu đều
-  đi qua bước che secret.
-- **Chống đệ quy.** Mọi process agent nhận `AGENT_BRIDGE_AGENT=1`; server và CLI từ chối khởi
-  động khi có biến này.
+  `*PASSWORD*`, `AWS_*`, và luôn luôn `SSH_AUTH_SOCK`, `*_DSN`, `*DATABASE_URL*`, `*CREDENTIALS*`,
+  `KUBECONFIG`, `DOCKER_AUTH_CONFIG`) bị xoá trước khi agent hoặc lệnh verification chạy. Output
+  được lưu đều đi qua bước che secret.
+- **Chống đệ quy.** Mọi process agent nhận `AGENT_BRIDGE_AGENT=1`; server, CLI và Python API
+  `Bridge` đều từ chối khởi động khi có biến này.
 - **Audit.** Mọi lần chuyển trạng thái, attempt, quyết định định tuyến, review, thay đổi account
   và trạng thái workflow đều là một event trong `bridge.db`.
 
@@ -375,8 +386,9 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   nào), `--setting-sources ""` (không nạp settings, allow rule hay hook của user lẫn project),
   `--permission-mode dontAsk` và allowlist Read/Glob/Grep. Khi `allow_write: true`, nó có thêm
   Edit/Write giới hạn trong `allowed_paths` của task, còn path bị loại trừ và path protected bị
-  chặn. Tool đọc vẫn đọc được mọi thứ user của bạn đọc được, và `allow_bash: true` hoàn toàn
-  không bị giới hạn path. Nên dùng Codex làm executor và không bao giờ bật `allow_bash` cho việc
+  chặn. Việc đọc credential của Codex/agent-bridge/agy, `~/.claude/.credentials.json`, home của mọi
+  account đã cấu hình và file `.env*`/key của project bị chặn; các file khác mà user của bạn đọc
+  được vẫn đọc được, và `allow_bash: true` hoàn toàn không bị giới hạn path. Nên dùng Codex làm executor và không bao giờ bật `allow_bash` cho việc
   không đáng tin cậy.
 - **opencode và agy** chỉ đọc. opencode chạy với edit, bash, webfetch và thư mục bên ngoài bị
   chặn qua `OPENCODE_CONFIG_CONTENT`; agy chạy `--mode plan --sandbox` và vẫn giữ các tool trình
@@ -389,14 +401,23 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
 sao chép token của profile khác. Bridge chỉ đọc các event `rate_limits` của Codex trong
 `<home>/sessions/**/rollout-*.jsonl`; không bao giờ đọc `auth.json` hay file credential khác.
 
+**Mô hình tin cậy.** Mọi thứ kit chạy đều chạy với quyền user của bạn. Bước duyệt của con người
+chống lại sai sót và việc model vượt quyền; nó không phải ranh giới chống lại code chạy dưới tên
+bạn. Bất cứ thứ gì chạy được với quyền user của bạn đều ghi được database của bridge hoặc xoá
+`AGENT_BRIDGE_AGENT`, nên các bước chỉ dành cho con người dựa vào việc agent bị giới hạn (sandbox
+của Codex, permission rule của Claude, sandbox của verification), không dựa vào một bước kiểm tra
+quyền bên trong bridge.
+
 **Giới hạn đã biết:**
 
 - Deny rule trong `.claude/settings.json` chỉ định hướng cho Claude Code, không phải ranh giới bảo
   mật. Việc kiểm tra terminal interactive cho lệnh chỉ dành cho con người có thể bị vượt qua nếu
   agent tự cấp một pseudo-terminal.
-- Lệnh verification chạy ngoài sandbox của Codex, với quyền của bạn.
-- Snapshot sau lượt chạy bao gồm file được track, file đã sửa và file protected ở cấp gốc; thay
-  đổi ở một file secret lồng sâu và bị git-ignore sẽ không bị phát hiện.
+- Lệnh verification chỉ bị giới hạn ở nơi có Landlock (Linux 5.13+); ở nơi khác chúng chạy với
+  quyền của bạn, trừ khi `verify_sandbox: strict` từ chối chạy. Ngay cả khi bị giới hạn chúng vẫn
+  đọc được file của bạn, và ở chế độ `auto` vẫn có mạng.
+- File bị git-ignore được so bằng kích thước và mtime, không phải nội dung; khi có reviewer, file
+  ignore bị thay đổi được liệt kê cho reviewer thay vì bị từ chối.
 - Codex và Claude vẫn ghi file session của riêng chúng (`~/.codex/sessions`, `~/.claude.json`).
 - Các file trong `.ai/` ngoài `config.json` bị git-ignore và Codex ghi được; hãy coi chúng là bản
   sao tiện dụng, không phải đầu vào đáng tin cậy.

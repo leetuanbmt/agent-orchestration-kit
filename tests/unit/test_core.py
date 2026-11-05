@@ -499,3 +499,17 @@ def test_input_hardening(tmp_path: Path) -> None:
             validate_pattern(broad, root, PROTECTED)
     assert validate_pattern("src/**", root, PROTECTED) == "src/**"
     assert validate_pattern("**/*.py", root, PROTECTED) == "**/*.py"
+
+
+# @pt.id KIT-UNIT-055-no-bridge-in-agent
+# @pt.item An agent cannot use the bridge's Python API
+# @pt.condition AGENT_BRIDGE_AGENT=1 in the environment, as every agent process and its children have
+# @pt.expected constructing a Bridge (the way to call human_approve or reassign_account) raises RuntimeError
+# @pt.target bridge.service.Bridge.__init__
+# @pt.method unit
+# @pt.legacy audit SEC-08: only the CLI and the MCP server refused; the Python API was open
+def test_bridge_refuses_inside_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bridge.service import Bridge
+    monkeypatch.setenv("AGENT_BRIDGE_AGENT", "1")
+    with pytest.raises(RuntimeError, match="refuses to run inside an agent"):
+        Bridge(tmp_path)

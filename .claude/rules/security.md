@@ -21,7 +21,12 @@
   `OPENCODE_CONFIG_CONTENT` and project config disabled; agy runs `--mode plan --sandbox` and
   keeps browser tools the CLI cannot disable. Probes wrote no files with either; neither has an
   OS sandbox.
-- Every agent process gets `AGENT_BRIDGE_AGENT=1`; the bridge refuses to start under it.
+- Every agent process gets `AGENT_BRIDGE_AGENT=1`; the CLI, the MCP server and the `Bridge`
+  Python API refuse to start under it. Everything still runs as one user: human-only steps rely on
+  the agents being confined, not on an OS boundary inside the bridge.
+- Verification commands run under Landlock where available (`workflow.verify_sandbox` in
+  `.ai/orchestrator.yaml`, `auto` by default): writes only to the worktree, a private TMPDIR and
+  `verify_writable`; the worktree is diffed again after them. Never weaken this setting yourself.
 - The bridge starts processes with argv lists only, scrubs credential-shaped env vars, kills the
   whole process group on timeout or cancel, and redacts secrets from stored output.
 - Path rules are checked twice: at task creation (traversal, absolute paths, symlink escape,
