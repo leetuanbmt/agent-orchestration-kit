@@ -143,12 +143,12 @@ def test_conflicts(pair, monkeypatch):
 
 
 # @pt.id KIT-ACCT-203-reader
-# @pt.item Reader and writer may share a worktree
-# @pt.condition Distinct accounts execute slow read-only and workspace-write tasks
-# @pt.expected Both reach REVIEW with overlapping execution intervals
+# @pt.item Reader and writer may not share a worktree
+# @pt.condition A slow read-only task runs; a workspace-write task in the same worktree is started meanwhile
+# @pt.expected The second start is refused with ConflictError naming the running task and stays READY; the first reaches REVIEW; only one agent ran
 # @pt.target Store.transition, Bridge.create_task
 # @pt.method integration
-# @pt.legacy none (new kit)
+# @pt.legacy before audit REL-07 both ran and the reader inherited the writer's changes as its own violations
 def test_reader_writer(pair, fake_codex, monkeypatch):
     a, _ = pair
     monkeypatch.setenv("FAKE_CODEX_SCENARIO", "slow")
@@ -157,11 +157,15 @@ def test_reader_writer(pair, fake_codex, monkeypatch):
     assert a.store.get(y)["spec"]["sandbox"] == "workspace-write"
 
     async def scenario():
-        return await asyncio.gather(a.execute_task(x, wait=True), a.execute_task(y, wait=True))
+        await a.execute_task(x)  # in the background
+        with pytest.raises(ConflictError, match=f"task {x} is already running in this worktree"):
+            await a.execute_task(y, wait=True)
+        if x in a._runs:
+            await a._runs[x]
+        return a.store.get(x)["state"], a.store.get(y)["state"]
 
-    assert all(r["state"] == "REVIEW" for r in run(scenario()))
-    left, right = calls(fake_codex)
-    assert max(left["t_start"], right["t_start"]) < min(left["t_end"], right["t_end"])
+    assert run(scenario()) == ("REVIEW", "READY")
+    assert len(calls(fake_codex)) == 1
 
 
 # @pt.id KIT-ACCT-204-cancel

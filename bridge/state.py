@@ -258,7 +258,7 @@ class Store:
                 pass
         # Databases from older versions (and every new one: SCHEMA predates these columns).
         self._add_columns(self.db, "tasks", {c: "TEXT" for c in (
-            "account", "agent", "workflow_id", "codex_started")})
+            "account", "agent", "workflow_id", "codex_started", "runner_started")})
         self._add_columns(self.db, "workflows", {"runner_pid": "INTEGER", "runner_started": "TEXT"})
         self._add_columns(self.db, "attempts", {"review": "TEXT"})
         self.shared = None
@@ -669,13 +669,12 @@ class Store:
                 if sum((b["account"] or "default") == account for b in active) >= account_limit:
                     raise ConflictError(f"account {account} is already running "
                                         f"{account_limit} task(s)")
-                for busy in active:
-                    if ((json.loads(row["spec"]).get("sandbox") or "workspace-write")
-                            == "workspace-write" and
-                            (json.loads(busy["spec"]).get("sandbox") or "workspace-write")
-                            == "workspace-write"):
-                        # ponytail: parallel writers need separate worktrees.
-                        raise ConflictError(f"task {busy['id']} is already writing in this worktree")
+                if active:
+                    # One task per worktree: a read-only run beside a writer would inherit the
+                    # writer's changes as its own scope violations. Parallel work needs
+                    # separate worktrees.
+                    raise ConflictError(f"task {active[0]['id']} is already running in this "
+                                        "worktree; run parallel work in another git worktree")
             sets = {"state": dst, "updated_at": time.time(), **fields}
             c.execute(
                 f"UPDATE tasks SET {', '.join(f'{k}=?' for k in sets)} WHERE id=?",

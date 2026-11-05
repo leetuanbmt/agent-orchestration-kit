@@ -72,7 +72,7 @@ def test_concurrency_limit_across_bridges(sandbox: Sandbox) -> None:
     wait_running(sandbox, first)
     second_here = sandbox.create("Second writer here", agent="codex2")
     res = sandbox.cli("execute", second_here)
-    assert res.code == 1 and "already writing in this worktree" in res.err, res.err
+    assert res.code == 1 and "already running in this worktree" in res.err, res.err
     pinned = sandbox.ok("create", str(sandbox.spec("Also on cx1", agent="codex1")), cwd=tree)
     res = sandbox.cli("execute", pinned["task_id"], cwd=tree)
     assert res.code == 1 and "busy" in res.err, res.err

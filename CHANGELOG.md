@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   meaningful progress events on stderr.
 
 ### Changed
+- A read-only task can no longer run beside another task in the same worktree; parallel work needs separate git worktrees, as the README already says (audit REL-07).
 
 - README and README.vi restructured and checked against the code; the full configuration and
   CLI/MCP reference moved to `docs/configuration.md` and `docs/cli-reference.md`.
@@ -70,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- Recovery details: a task's runner is recognised by pid and start time, so a reused pid no longer keeps a dead run's task RUNNING; a bridge error on a busy database still takes the task out of RUNNING (the rescue is retried with backoff); a worktree runs one active task at a time, read-only ones included (audit REL-04, REL-05, REL-07).
 - A verification command whose runner died (crash, `kill -9`, closed terminal) is killed on the next bridge start: the running check's pid and start time are recorded like the agent's, so `recover` finds it (audit REL-02, recovery half).
 - Processes opening a project (or the machine-wide ledger) for the first time at the same moment no longer crash with `duplicate column name` or `database is locked`: missing columns are added inside one `BEGIN IMMEDIATE` transaction, and switching a new file to WAL is retried (QA-BUG-007).
 - A failing git command while the bridge reads the worktree (snapshot or diff) pauses the task with `EVIDENCE_ERROR` and gives the attempt back, instead of yielding empty evidence that passed every gate (audit REL-01).
