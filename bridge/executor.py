@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import functools
 import json
+import math
 import os
 import re
 import shutil
@@ -560,7 +561,8 @@ class OpenCodeAdapter(ReadOnlyAdapter):
         elif t == "step_finish":
             res.usage = {k: part.get(k) for k in ("tokens", "cost") if k in part}
             cost = part.get("cost")
-            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            if (isinstance(cost, (int, float)) and not isinstance(cost, bool)
+                    and math.isfinite(cost) and cost >= 0):
                 res.cost_usd = (res.cost_usd or 0.0) + float(cost)  # cost is per step
         elif t == "tool_use" and part.get("tool") == "bash":
             res.commands.append(str((part.get("state") or {}).get("input", ""))[:300])

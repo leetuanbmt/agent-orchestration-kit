@@ -287,3 +287,18 @@ def test_local_ledger(tmp_path):
     s.settle_usage(uid, 0.4, "actual")
     assert s.usage_spend("name:work", starts)["day"]["spent"] == 0.4
     assert not (tmp_path / "accounts.db").exists()
+
+
+# @pt.id KIT-USAGE-012
+# @pt.item OpenCode adapter ignores malformed step costs
+# @pt.condition step_finish costs 0.25, -5, NaN, inf, True, then 0.5
+# @pt.expected only the finite non-negative costs are summed: cost_usd == 0.75
+# @pt.target bridge.executor.OpenCodeAdapter.handle
+# @pt.method unit
+# @pt.legacy none
+def test_opencode_cost_rejects_malformed(tmp_path):
+    ad = OpenCodeAdapter(BridgeConfig(), tmp_path)
+    res, ctx = RunResult(outcome="ok"), _ctx()
+    for cost in (0.25, -5, float("nan"), float("inf"), True, 0.5):
+        ad.handle({"type": "step_finish", "part": {"cost": cost}}, res, ctx)
+    assert res.cost_usd == 0.75
