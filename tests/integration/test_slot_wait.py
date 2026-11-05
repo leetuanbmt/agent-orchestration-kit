@@ -1,8 +1,15 @@
 """A workflow waits, with backoff, for an account slot another bridge process holds."""
 
 import asyncio
+import contextlib
+import json
+import os
+import signal
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 
 from bridge.accounts import AccountLock
 from bridge.models import State
@@ -149,3 +156,90 @@ def test_slot_wait_cancel(make_orch, fake_codex, fake_claude, monkeypatch):
     assert wf["state"] != "RUNNING"
     assert b.store.get(tid)["state"] == State.CANCELLED
     assert "waiting_for_slot" not in (wf["detail"] or {})
+
+
+def _cli_workflow_runner(repo: Path, fake_codex: Path, orch_text: str,
+                         wid: str) -> subprocess.Popen:
+    """`python -m bridge run-workflow <wid>` in its own process group, sharing the repo, HOME and
+    the lock dir the test's bridge (and its held AccountLock) uses."""
+    ai = repo / ".ai"
+    ai.mkdir(exist_ok=True)
+    (ai / "orchestrator.yaml").write_text(
+        orch_text.replace("{home}", str(fake_codex.parent / "homes")))
+    path = ai / "config.json"
+    config = json.loads(path.read_text()) if path.exists() else {}
+    config.update(lock_dir=str(fake_codex / "locks"), retry_backoff_s=0)
+    path.write_text(json.dumps(config))
+    env = {**os.environ, "BRIDGE_PROJECT_ROOT": str(repo)}
+    return subprocess.Popen([sys.executable, "-m", "bridge", "run-workflow", wid], env=env,
+                            cwd=Path(__file__).parents[2], stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def _wait_for(check, timeout: float = 30) -> bool:  # noqa: ANN001
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if check():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _kill(proc: subprocess.Popen) -> None:
+    """SIGKILL the runner's whole process group (it has its own session) and reap it."""
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    if proc.poll() is None:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+    proc.wait(timeout=10)
+
+
+# @pt.id KIT-FLOW-SLOT-WAIT-6
+# @pt.item A workflow killed while waiting for a slot is recovered
+# @pt.condition A CLI run-workflow process waits for a busy account slot and is SIGKILLed
+# @pt.expected recover() parks the workflow WAITING with an interrupted error and no
+#              waiting_for_slot; the task stays READY with 0 attempts; a second run_workflow
+#              ends DONE with exactly one attempt
+# @pt.target Bridge.recover, Bridge._drive
+# @pt.method integration
+# @pt.legacy a busy slot ended the workflow WAITING at once
+def test_slot_wait_crash_recovery(make_orch, fake_codex, fake_claude, repo, monkeypatch):
+    orch_text = CONFIG_A + "routing: {slot_wait_s: 600}\n"
+    b, wid, held = _setup(make_orch, fake_codex, monkeypatch, 600)
+    runner = None
+    try:
+        runner = _cli_workflow_runner(repo, fake_codex, orch_text, wid)
+
+        def waiting() -> bool:
+            wf = b.store.workflow(wid)
+            return (wf["runner_pid"] == runner.pid
+                    and "waiting_for_slot" in (wf["detail"] or {}))
+
+        assert _wait_for(waiting), b.store.workflow(wid)
+        slots = b.store.workflow(wid)["detail"]["waiting_for_slot"]
+        tid = b.store.workflow_tasks(wid)[0]["id"]
+        assert [s["task_id"] for s in slots] == [tid]
+        _kill(runner)
+        tasks = b.store.workflow_tasks(wid)
+        assert all(t["state"] != State.RUNNING for t in tasks)
+        row = b.store.get(tid)
+        assert row["state"] == State.READY and row["attempts"] == 0
+        assert b.store.attempts(tid) == []
+
+        assert b.recover() == [wid]
+        wf = b.store.workflow(wid)
+        detail = wf["detail"] or {}
+        assert wf["state"] == "WAITING"
+        assert "interrupted" in detail.get("error", "")
+        assert "waiting_for_slot" not in detail
+
+        held.release()
+        wf = run(b.run_workflow(wid, wait=True))
+        task = wf["tasks"][0]
+        assert wf["state"] == "DONE" and task["state"] == State.DONE
+        assert len(b.store.attempts(task["task_id"])) == 1
+    finally:
+        if runner is not None:
+            _kill(runner)
+        held.release()
