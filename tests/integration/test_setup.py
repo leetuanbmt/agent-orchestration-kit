@@ -339,8 +339,9 @@ def test_config_init(repo, tmp_path):
     listing = subprocess.run([exe, 'config-init'], cwd=repo, capture_output=True, text=True,
                              env=env)
     assert listing.returncode == 0, listing.stderr
-    assert {line.split()[0] for line in listing.stdout.splitlines()[:5]} == {
-        p.stem for p in (KIT / 'examples').glob('*.yaml')}
+    examples = {p.stem for p in (KIT / 'examples').glob('*.yaml')}
+    assert {line.split()[0]
+            for line in listing.stdout.splitlines()[:len(examples)]} == examples
     piped = subprocess.run([exe, 'config-init', 'single-agent'], cwd=repo, capture_output=True,
                            text=True, env=env, stdin=subprocess.DEVNULL)
     assert piped.returncode == 2 and 'refused' in piped.stderr
