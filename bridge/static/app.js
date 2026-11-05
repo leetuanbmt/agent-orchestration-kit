@@ -11,10 +11,10 @@ const I18N = {
     log: 'Log', messagesOnly: 'Messages only', logTail: 'Showing the last 256 KB', noLog: 'No log for this attempt',
     awaitingReview: 'Awaiting review', nextStep: 'Next step', approve: 'Approve', result: 'View result', resume: 'Resume',
     groupWorktree: 'Group by worktree', stale: 'stale',
-    views: 'Views', open: 'Open', needsYou: 'Needs you', waiting: 'Waiting', status: 'Status', task: 'Task', location: 'Location',
+    views: 'Views', open: 'Open', needsAction: 'Needs action', displaySettings: 'Display settings', waiting: 'Waiting', status: 'Status', task: 'Task', location: 'Location',
     search: 'Search', searchPlaceholder: 'Task ID or objective', worktree: 'Worktree', branch: 'Branch', main: 'main',
     allProjects: 'All projects', allWorktrees: 'All worktrees', clear: 'Clear filters', noMatches: 'No task matches these filters',
-    viewTasks: 'View tasks', projectCounts: 'Needs you {needs} · Open {open} · Done {done}',
+    viewTasks: 'View tasks', projectCounts: 'Needs action {needs} · Open {open} · Done {done}',
     showWorktrees: 'Show {n} worktrees without open tasks', hideWorktrees: 'Hide {n} worktrees without open tasks',
     tokenRequired: "Open the link printed by agent-bridge web.",
     brand: 'agent-bridge', vi: 'VI', en: 'EN', all: 'All', projects: 'Projects', language: 'Language',
@@ -58,10 +58,10 @@ const I18N = {
     log: 'Nhật ký', messagesOnly: 'Chỉ tin nhắn agent', logTail: 'Đang hiển thị 256 KB cuối', noLog: 'Không có nhật ký cho lần chạy này',
     awaitingReview: 'Chờ duyệt', nextStep: 'Việc tiếp theo', approve: 'Phê duyệt', result: 'Xem kết quả', resume: 'Tiếp tục',
     groupWorktree: 'Gom theo worktree', stale: 'cũ',
-    views: 'Chế độ xem', open: 'Đang mở', needsYou: 'Cần bạn', waiting: 'Đang chờ', status: 'Trạng thái', task: 'Tác vụ', location: 'Vị trí',
+    views: 'Chế độ xem', open: 'Đang mở', needsAction: 'Cần xử lý', displaySettings: 'Cài đặt hiển thị', waiting: 'Đang chờ', status: 'Trạng thái', task: 'Tác vụ', location: 'Vị trí',
     search: 'Tìm kiếm', searchPlaceholder: 'Mã tác vụ hoặc mục tiêu', worktree: 'Worktree', branch: 'Nhánh', main: 'chính',
     allProjects: 'Tất cả dự án', allWorktrees: 'Tất cả worktree', clear: 'Xóa bộ lọc', noMatches: 'Không có tác vụ khớp với bộ lọc này',
-    viewTasks: 'Xem tác vụ', projectCounts: 'Cần bạn {needs} · Đang mở {open} · Xong {done}',
+    viewTasks: 'Xem tác vụ', projectCounts: 'Cần xử lý {needs} · Đang mở {open} · Xong {done}',
     showWorktrees: 'Hiện {n} worktree không có tác vụ mở', hideWorktrees: 'Ẩn {n} worktree không có tác vụ mở',
     tokenRequired: "Mở đường dẫn do agent-bridge web in ra.",
     brand: 'agent-bridge', vi: 'VI', en: 'EN', all: 'Tất cả', projects: 'Dự án', language: 'Ngôn ngữ',
@@ -107,7 +107,10 @@ const GROUPS = ['open', 'needsYou', 'awaitingReview', 'running', 'waiting', 'don
 const VIEWS = ['tasks', 'board', 'projects'];
 const NEEDS_KINDS = ['needs', 'failed', 'blocked', 'paused'];
 // Board lanes, left to right, with the heading key of each.
-const LANES = [['needsYou', 'needsYou'], ['awaitingReview', 'inReview'], ['running', 'running'], ['waiting', 'queued']];
+const LANES = [['needsYou', 'needsAction'], ['awaitingReview', 'inReview'], ['running', 'running'], ['waiting', 'queued']];
+// The needsYou group keeps its key and hash value; its label is "Needs action", so it does not read
+// like the "Waiting on you" queue, which also counts reviews.
+const groupLabel = group => tr(group === 'needsYou' ? 'needsAction' : group);
 // One glyph per state family, so a status reads without color.
 const GLYPHS = {needs: '!', review_wait: '◐', running: '▶', queued: '○', done: '✓', failed: '✕', blocked: '✕', paused: '‖', cancelled: '–'};
 const SUMMARY = [['needsYou', 'needs'], ['awaitingReview', 'review_wait'], ['running', 'running'], ['done24h', 'done']];
@@ -332,7 +335,7 @@ function renderMonitor(scoped, tasks) {
   patch($('summary'), SUMMARY, ([key]) => key, ([key]) => [counts[key]], (node, [key, family]) => {
     attr(node, 'class', `counter counter-${family}`);
     const glyph = el('span', GLYPHS[family], 'counter-glyph'); attr(glyph, 'aria-hidden', 'true');
-    const parts = [glyph, el('span', counts[key], 'counter-value'), el('span', tr(key), 'counter-label')];
+    const parts = [glyph, el('span', counts[key], 'counter-value'), el('span', groupLabel(key), 'counter-label')];
     if (key === 'done24h') { const box = el('div', undefined, 'counter-static'); box.append(...parts); node.append(box); return; }
     const action = button(undefined, () => setState({view: 'tasks', s: key})); action.append(...parts); node.append(action);
   });
@@ -382,7 +385,8 @@ function renderOverview() {
   text($('live'), tr(tokenRequired ? 'tokenRequired' : disconnected ? 'offline' : overview ? 'live' : 'loading'));
   attr($('live'), 'class', disconnected ? 'live offline' : 'live'); $('content').classList.toggle('disconnected', disconnected);
   text($('footer'), tr('viewOnly')); attr($('languages'), 'aria-label', tr('language')); attr($('views'), 'aria-label', tr('views'));
-  text($('theme-label'), tr('theme'));
+  text($('theme-label'), tr('theme')); text($('language-label'), tr('language'));
+  text($('settings-label'), tr('displaySettings'));
   selectOptions($('theme'), [['system', tr('themeSystem')], ['light', tr('themeLight')], ['dark', tr('themeDark')]], theme);
   attr($('filters'), 'aria-label', tr('filters'));
   const banner = $('offline-banner');
@@ -400,7 +404,10 @@ function renderOverview() {
   });
   $('tasks-view').hidden = state.view !== 'tasks'; $('projects-view').hidden = state.view !== 'projects';
   $('board-view').hidden = state.view !== 'board'; $('monitor').hidden = state.view === 'projects';
-  $('group-worktree').hidden = state.view !== 'tasks';
+  // Project and worktree filters only when there is something to choose (or the address already chose).
+  const pickProject = groups.length > 1 || !!state.p || !!state.w;
+  $('project').closest('label').hidden = !pickProject; $('worktree').closest('label').hidden = !pickProject;
+  $('group-worktree').hidden = state.view !== 'tasks' || !(state.g === '1' || groups.some(g => g.members.length > 1));
   text($('search-label'), tr('search')); text($('project-label'), tr('project')); text($('worktree-label'), tr('worktree'));
   attr($('search'), 'placeholder', tr('searchPlaceholder'));
   text($('group-worktree'), tr('groupWorktree')); attr($('group-worktree'), 'aria-pressed', state.g === '1');
@@ -417,11 +424,17 @@ function renderOverview() {
   renderMonitor(scoped, tasks);
   if (state.view === 'board') renderBoard(filtered);
   patch($('statuses'), GROUPS, x => x, x => [state.s, filtered.filter(t => matches(t, x)).length], (node, group) => {
-    const chip = button(`${tr(group)} (${filtered.filter(t => matches(t, group)).length})`, () => setState({s: group}));
+    const chip = button(`${groupLabel(group)} (${filtered.filter(t => matches(t, group)).length})`, () => setState({s: group}));
     attr(chip, 'aria-pressed', state.s === group); node.replaceChildren(chip);
   });
   const shown = filtered.filter(t => matches(t, state.s)).sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
-  text($('task-count'), overview ? tr(shown.length === 1 ? 'taskCountOne' : 'taskCount', {n: shown.length}) : ''); headers($('columns'), ['status', 'task', 'location', 'agent', 'updated', 'nextStep']);
+  text($('task-count'), overview ? tr(shown.length === 1 ? 'taskCountOne' : 'taskCount', {n: shown.length}) : '');
+  // Columns that would repeat one value on every row are left out; header and cells share this list.
+  const checkouts = new Set(shown.map(t => t.pid));
+  const agents = new Set(shown.map(t => t.agent ?? t.account).filter(name => name != null && name !== ''));
+  const columns = ['status', 'task', ...(checkouts.size > 1 || state.g === '1' ? ['location'] : []),
+    ...(agents.size > 1 ? ['agent'] : []), 'updated', 'nextStep'];
+  headers($('columns'), columns);
   let rows = shown;
   if (state.g === '1') {
     const worktrees = new Map();
@@ -431,30 +444,37 @@ function renderOverview() {
     }
     rows = Array.from(worktrees, ([pid, tasks]) => [{pid, groupHeader: true, count: tasks.length}, ...tasks]).flat();
   }
-  patch($('task-rows'), rows, t => t.groupHeader ? `group:${t.pid}` : `${t.pid}:${t.task_id}`, t => [t, overview?.projects, state.p, state.g, relative(t.updated_at), Date.now() / 1000 - t.updated_at > 7 * 86400], (row, task) => {
+  patch($('task-rows'), rows, t => t.groupHeader ? `group:${t.pid}` : `${t.pid}:${t.task_id}`, t => [t, overview?.projects, state.p, state.g, columns, relative(t.updated_at), Date.now() / 1000 - t.updated_at > 7 * 86400], (row, task) => {
     if (task.groupHeader) {
       const location = taskLocation(task, true), cell = el('th', `${location.label} · ${location.branch} (${task.count})`);
-      attr(cell, 'colspan', '6'); attr(cell, 'scope', 'rowgroup'); attr(row, 'class', 'worktree-header'); row.append(cell); return;
+      attr(cell, 'colspan', columns.length); attr(cell, 'scope', 'rowgroup'); attr(row, 'class', 'worktree-header'); row.append(cell); return;
     }
     activate(row, () => openItem(task.pid, task.task_id));
-    const status = el('td'); status.append(statusBadge(task));
+    const status = el('td', undefined, 'cell-status'); status.append(statusBadge(task));
     const name = el('td', undefined, 'task-cell'), line = el('div', undefined, 'task-line');
     const objective = el('span', (task.objective || '').split('\n')[0], 'objective');
     attr(objective, 'title', task.objective || ''); line.append(el('code', task.task_id), objective); name.append(line);
-    const location = taskLocation(task), place = el('td', location.label); attr(place, 'title', location.branch);
     const next = el('td', undefined, 'next-step');
+    // No command: the cell stays empty (the phone layout then drops it).
     if (task.command) {
       const copy = button('⧉', event => { event.stopPropagation(); copyCommand(task.command, event.currentTarget); }, 'copy-icon');
       attr(copy, 'aria-label', tr('copy')); attr(copy, 'title', task.command);
       next.append(el('span', tr(task.command.split(' ')[1])), copy);
-    } else next.append(el('span', tr('dash'), 'muted'));
+    }
     const updated = timeCell(task.updated_at), age = Date.now() / 1000 - task.updated_at;
+    attr(updated, 'class', 'cell-updated');
     if (matches(task, 'open') && task.updated_at != null && age > 7 * 86400) {
       const stale = el('span', tr('stale'), 'muted stale'); attr(stale, 'title', tr('staleTitle', {n: Math.floor(age / 86400)})); updated.append(' ', stale);
     }
-    const cells = [status, name, place, el('td', task.agent ?? task.account ?? tr('dash')), updated, next];
-    // The phone layout shows these labels next to each value (CSS attr(data-label)).
-    ['status', 'task', 'location', 'agent', 'updated', 'nextStep'].forEach((key, i) => attr(cells[i], 'data-label', tr(key)));
+    const make = {
+      status: () => status, task: () => name, updated: () => updated, nextStep: () => next,
+      location: () => {
+        const location = taskLocation(task), place = el('td', location.label, 'cell-location');
+        attr(place, 'title', location.branch); return place;
+      },
+      agent: () => el('td', task.agent ?? task.account ?? tr('dash'), 'cell-agent')
+    };
+    const cells = columns.map(key => { const cell = make[key](); attr(cell, 'data-label', tr(key)); return cell; });
     row.replaceChildren(...cells);
   });
   // Before the first answer there is nothing to judge: show placeholders, never "no matches".
@@ -473,7 +493,7 @@ function renderOverview() {
     if (project.root_missing) card.append(el('p', tr('rootMissing'), 'muted'));
     if (project.error) card.append(el('p', tr('unreadable'), 'muted'));
     const scroll = el('div', undefined, 'table-scroll'), table = el('table'), thead = el('thead'), columns = el('tr');
-    headers(columns, ['worktree', 'branch', 'needsYou', 'open', 'done', 'updated']); thead.append(columns);
+    headers(columns, ['worktree', 'branch', 'needsAction', 'open', 'done', 'updated']); thead.append(columns);
     const body = el('tbody');
     for (const [i, member] of group.members.entries()) {
       const counts = totals([member]);
@@ -709,7 +729,7 @@ function renderDetail() {
   text($('close'), tr('closeSymbol')); attr($('close'), 'aria-label', tr('close'));
   if (drawer.hidden) { stopLog(); if (!wasHidden && returnFocus?.isConnected) returnFocus.focus(); return; }
   if (attemptLog && attemptLog.task !== state.t) stopLog();
-  if (wasHidden) $('close').focus();
+  if (wasHidden) { closeSettings(false); $('close').focus(); }
   text($('drawer-title'), taskData?.objective || state.t.split(':').pop());
   const body = $('drawer-body');
   const signature = JSON.stringify([state.lang, taskData, detailError]);
@@ -813,6 +833,20 @@ $('theme').onchange = event => {
   applyTheme();
 };
 $('close').addEventListener('click', closeDrawer);
+// The display-settings menu: Escape closes it and returns focus to its summary; a click outside closes it.
+function closeSettings(refocus) {
+  const menu = $('settings');
+  if (!menu.open) return;
+  menu.open = false;
+  if (refocus) menu.querySelector('summary').focus();
+}
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || !$('settings').open || !$('drawer').hidden) return;
+  event.preventDefault(); closeSettings(true);
+});
+document.addEventListener('click', event => {
+  if (event.target instanceof Node && !$('settings').contains(event.target)) closeSettings(false);
+});
 // [ and ] step through the attention queue, unless the reader is typing or the drawer is open.
 document.addEventListener('keydown', event => {
   if (!['[', ']'].includes(event.key) || event.ctrlKey || event.metaKey || event.altKey || !$('drawer').hidden) return;

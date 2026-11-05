@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title></title>
   <link rel="stylesheet" href="/static/app.css">
@@ -11,10 +11,15 @@
 <body>
   <header class="topbar" id="topbar">
     <strong id="brand"></strong>
-    <nav id="views" class="pills" aria-label="Views"></nav>
-    <span id="live" class="pill live" role="status"></span>
-    <div id="languages" class="pills"></div>
-    <label class="theme-control"><span id="theme-label" class="sr-only"></span><select id="theme"></select></label>
+    <nav id="views" class="segmented" aria-label="Views"></nav>
+    <span id="live" class="live" role="status"></span>
+    <details id="settings" class="settings">
+      <summary><span aria-hidden="true">⚙</span><span id="settings-label" class="sr-only"></span></summary>
+      <div class="settings-panel">
+        <div class="settings-row"><span id="language-label"></span><div id="languages" class="lang-group" role="group"></div></div>
+        <label class="theme-control"><span id="theme-label"></span><select id="theme"></select></label>
+      </div>
+    </details>
   </header>
   <p id="offline-banner" class="banner" role="status" hidden></p>
   <div id="announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
@@ -35,7 +40,7 @@
       </div>
     </div>
     <section id="tasks-view">
-      <div id="statuses" class="pills"></div>
+      <div id="statuses" class="tabs"></div>
       <p id="task-count"></p>
       <div id="tasks-loading" class="skeleton">
         <span id="loading-text" class="sr-only"></span>

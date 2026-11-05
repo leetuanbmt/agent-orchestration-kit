@@ -111,6 +111,8 @@ const scenarios = {
   // Switching language, kept after a reload.
   async language(page) {
     await open(page);
+    // Language lives in the display-settings menu.
+    await page.locator('#settings summary').click();
     await page.locator('#languages button', { hasText: 'VI' }).click();
     await page.waitForFunction(() => document.documentElement.lang === 'vi');
     const chips = await page.locator('#statuses').innerText();
@@ -188,6 +190,8 @@ const scenarios = {
     check('system light and dark give different backgrounds', light !== dark, `${light} / ${dark}`);
     await page.emulateMedia({ colorScheme: 'light' });
     check('theme control is labelled', await page.getByLabel('Theme').count() === 1);
+    // The theme select lives in the display-settings menu.
+    await page.locator('#settings summary').click();
     await page.selectOption('#theme', 'dark');
     const chosen = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
     check('choosing Dark sets data-theme', chosen === 'dark', chosen);
@@ -244,7 +248,7 @@ const scenarios = {
     check('focus returns to the task row', await page.evaluate(() => !!document.activeElement?.closest('#task-rows')));
   },
 
-  // On a phone each task is a card: every field, including the next step, is on screen.
+  // On a phone each task is a compact block: every field, including the next step, is on screen.
   async mobile_cards(page) {
     await page.setViewportSize({ width: 375, height: 740 });
     await open(page, '#view=tasks&s=all');
@@ -257,11 +261,16 @@ const scenarios = {
     const box = await next.boundingBox();
     check('next step of the REVIEW task is inside the viewport',
           box && box.x >= 0 && box.x + box.width <= 375 && box.y >= 0 && box.y + box.height <= 740, JSON.stringify(box));
+    const columns = await page.locator('#columns th').count();
     const cells = await row.locator('td').evaluateAll(tds => tds.map(td => {
       const r = td.getBoundingClientRect(); return { left: r.left, right: r.right, label: td.dataset.label };
     }));
     check('every field of the card fits the screen width',
-          cells.length === 6 && cells.every(c => c.left >= 0 && c.right <= 375 && c.label), JSON.stringify(cells));
+          columns >= 4 && cells.length === columns && cells.every(c => c.left >= 0 && c.right <= 375 && c.label),
+          JSON.stringify({ columns, cells }));
+    const labels = await row.evaluate(r => [...r.querySelectorAll('td')].map(td => getComputedStyle(td, '::before').content));
+    check('no repeated field labels on phone rows', labels.every(c => c === 'none' || c === 'normal' || c === '""'),
+          JSON.stringify(labels));
     const chips = await page.evaluate(() => {
       const box = document.getElementById('statuses');
       return { tops: new Set([...box.children].map(c => c.getBoundingClientRect().top)).size, overflow: getComputedStyle(box).overflowX };
@@ -322,7 +331,7 @@ const scenarios = {
           await page.getByRole('button', { name: 'Board', exact: true }).getAttribute('aria-pressed').catch(() => '') === 'true');
     check('Projects tab still counts one project', await page.getByRole('button', { name: 'Projects (1)' }).count() === 1);
     const headings = await page.locator('#lanes .lane h2').allInnerTexts();
-    const expected = [/^Needs you \(\d+\)$/, /^In review \(\d+\)$/, /^Running \(\d+\)$/, /^Queued \(\d+\)$/];
+    const expected = [/^Needs action \(\d+\)$/, /^In review \(\d+\)$/, /^Running \(\d+\)$/, /^Queued \(\d+\)$/];
     check('four lane headings in order', headings.length === 4 && expected.every((re, i) => re.test(headings[i])),
           JSON.stringify(headings));
     const card = page.locator('#lane-awaitingReview .card', { hasText: cfg.tasks.review });
@@ -378,6 +387,101 @@ const scenarios = {
     await page.waitForFunction(() => /1 task needs you/.test(document.getElementById('announcer').textContent),
                                null, { timeout: 8000 })
       .then(() => check('a new Needs-you item is announced', true), e => check('a new Needs-you item is announced', false, e));
+  },
+
+  // The shell: display-settings menu, phone header and bottom bar, columns and filters that carry information.
+  async shell(page) {
+    await open(page, '#view=tasks&s=all');
+    const summary = page.locator('#settings summary');
+    const name = () => summary.evaluate(s => [...s.childNodes]
+      .filter(n => !(n.nodeType === 1 && n.getAttribute('aria-hidden') === 'true'))
+      .map(n => n.textContent).join('').trim());
+    check('settings summary is named in English', await name() === 'Display settings', await name());
+    check('settings menu starts closed', await page.evaluate(() => !document.getElementById('settings').open));
+    await summary.click();
+    check('clicking the summary opens the menu', await page.evaluate(() => document.getElementById('settings').open));
+    check('the menu holds the languages and the theme',
+          await page.locator('#settings #languages').isVisible() && await page.locator('#settings #theme').isVisible());
+    await page.locator('#theme').focus();
+    await page.keyboard.press('Escape');
+    const escaped = await page.evaluate(() => {
+      const menu = document.getElementById('settings');
+      return { open: menu.open, focus: document.activeElement === menu.querySelector('summary') };
+    });
+    check('Escape closes the menu', escaped.open === false, JSON.stringify(escaped));
+    check('Escape returns focus to the summary', escaped.focus, JSON.stringify(escaped));
+    await summary.click();
+    await page.locator('#task-count').click();
+    check('a click outside closes the menu', await page.evaluate(() => !document.getElementById('settings').open));
+    await summary.click();
+    await page.locator('#languages button', { hasText: 'VI' }).click();
+    await page.waitForFunction(() => document.documentElement.lang === 'vi');
+    check('settings summary is named in Vietnamese', await name() === 'Cài đặt hiển thị', await name());
+    check('the needsYou tab reads Cần xử lý',
+          await page.locator('#statuses button', { hasText: /^Cần xử lý \(/ }).count() === 1);
+    await page.locator('#languages button', { hasText: 'EN' }).click();
+    await page.waitForFunction(() => document.documentElement.lang === 'en');
+    await page.keyboard.press('Escape');
+
+    // One project and one agent: no Location or Agent column; header and cells match.
+    const heads = await page.locator('#columns th').allInnerTexts();
+    check('no Location or Agent header with one project and one agent',
+          !heads.some(h => /^(Location|Agent)$/.test(h.trim())) && heads.length === 4, JSON.stringify(heads));
+    const counts = await rows(page).evaluateAll(trs => trs.map(tr => tr.querySelectorAll('td').length));
+    check('every row has one cell per header', counts.length > 0 && counts.every(n => n === heads.length),
+          JSON.stringify(counts));
+    const nexts = await page.locator('#task-rows td.next-step').evaluateAll(tds =>
+      tds.map(td => ({ button: !!td.querySelector('button'), text: td.textContent })));
+    check('a Next step cell without a command is empty',
+          nexts.some(c => !c.button) && nexts.every(c => c.button || c.text === ''), JSON.stringify(nexts));
+    check('project and worktree filters hidden with one project',
+          !(await page.locator('#project').isVisible()) && !(await page.locator('#worktree').isVisible()));
+    check('Group by worktree hidden without extra checkouts', !(await page.locator('#group-worktree').isVisible()));
+    check('search stays visible', await page.locator('#search').isVisible());
+    check('the needsYou tab reads Needs action',
+          await page.locator('#statuses button', { hasText: /^Needs action \(/ }).count() === 1);
+    check('the needsYou tile reads Needs action',
+          /Needs action/.test(await page.locator('#summary [data-key="needsYou"]').innerText().catch(() => '')));
+    const hash = decodeURIComponent(new URL(page.url()).hash);
+    await page.locator('#statuses button', { hasText: /^Needs action \(/ }).click();
+    check('the needsYou hash value is unchanged', decodeURIComponent(new URL(page.url()).hash).includes('s=needsYou'), hash);
+    await page.locator('#statuses button', { hasText: /^All \(/ }).click();
+
+    // Phone: a one-row header and the views as a fixed bottom bar.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(300);
+    const phone = await page.evaluate(() => {
+      const header = document.getElementById('topbar').getBoundingClientRect();
+      const views = document.getElementById('views'), box = views.getBoundingClientRect();
+      return { header: header.height, position: getComputedStyle(views).position, bottom: box.bottom, top: box.top,
+               height: window.innerHeight,
+               items: [...views.querySelectorAll('button')].map(b => b.getBoundingClientRect().height) };
+    });
+    check('phone header is at most 56 px tall', phone.header <= 56, JSON.stringify(phone));
+    check('views bar is fixed at the bottom', phone.position === 'fixed' && Math.abs(phone.bottom - phone.height) <= 1,
+          JSON.stringify(phone));
+    check('bottom bar items are at least 56 px tall', phone.items.length === 3 && phone.items.every(h => h >= 56),
+          JSON.stringify(phone));
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.waitForTimeout(200);
+    const reach = await page.evaluate(() => {
+      const views = document.getElementById('views').getBoundingClientRect().top;
+      const footer = document.getElementById('footer').getBoundingClientRect().bottom;
+      const all = document.querySelectorAll('#task-rows tr'), last = all[all.length - 1].getBoundingClientRect().bottom;
+      return { views, footer, last };
+    });
+    check('footer and last row stay above the bottom bar', reach.footer <= reach.views + 1 && reach.last <= reach.views + 1,
+          JSON.stringify(reach));
+    await page.screenshot({ path: cfg.shots + '/shell.png' });
+
+    // The status tabs scroll inside their own row, never the page.
+    await page.setViewportSize({ width: 375, height: 740 });
+    await page.waitForTimeout(300);
+    const tabs = await page.evaluate(() => ({
+      page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      overflow: getComputedStyle(document.getElementById('statuses')).overflowX }));
+    check('status tabs cause no horizontal page scroll at 375 px', tabs.page <= 1 && tabs.overflow === 'auto',
+          JSON.stringify(tabs));
   },
 
   // Time to a usable table with every task.
