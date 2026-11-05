@@ -42,6 +42,65 @@ Capability = Literal["read", "write"]
 _NAME = r"^[a-z0-9][a-z0-9_-]{0,31}$"
 
 
+class UsdBudget(BaseModel):
+    """Spend caps per UTC calendar period (day, ISO week from Monday, month)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    day: float | None = Field(None, gt=0)
+    week: float | None = Field(None, gt=0)
+    month: float | None = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def _any(self) -> UsdBudget:
+        if self.day is None and self.week is None and self.month is None:
+            raise ValueError("budget_usd needs at least one of day, week, month")
+        return self
+
+    def periods(self) -> dict[str, float]:
+        return {p: v for p in ("day", "week", "month")
+                if (v := getattr(self, p)) is not None}
+
+
+class TokenPricing(BaseModel):
+    """USD per million tokens, supplied by the user; the kit ships no price table."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    input_per_mtok: float = Field(ge=0)
+    output_per_mtok: float = Field(ge=0)
+    cached_input_per_mtok: float | None = Field(None, ge=0)
+
+
+class AccountLimits(BaseModel):
+    """Per-account usage limits; an account without them behaves as before."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    # Percent of a provider window used at which the account stops taking work.
+    five_hour_pct: float | None = Field(None, gt=0, le=100)
+    weekly_pct: float | None = Field(None, gt=0, le=100)
+    any_window_pct: float | None = Field(None, gt=0, le=100)
+    budget_usd: UsdBudget | None = None
+    # Reserved before each run on a budgeted account; a run starts only if it fits.
+    reserve_usd: float = Field(0.0, ge=0)
+    pricing: TokenPricing | None = None
+    # Lifts a QUOTA mark after this long when no reset time is readable.
+    cooldown_s: int | None = Field(None, ge=60, le=604800)
+
+    @model_validator(mode="after")
+    def _reserve(self) -> AccountLimits:
+        if self.reserve_usd > 0:
+            if self.budget_usd is None:
+                raise ValueError("reserve_usd needs budget_usd")
+            smallest = min(self.budget_usd.periods().values())
+            if self.reserve_usd > smallest:
+                raise ValueError(f"reserve_usd {self.reserve_usd} exceeds the smallest "
+                                 f"budget {smallest}")
+        return self
+
+
 class AccountProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -49,6 +108,7 @@ class AccountProfile(BaseModel):
     # Isolated auth home (CODEX_HOME / CLAUDE_CONFIG_DIR). None = the inherited global login.
     home: str | None = None
     max_concurrency: int = Field(1, ge=1, le=8)
+    limits: AccountLimits | None = None
 
     @model_validator(mode="after")
     def _known_provider(self) -> AccountProfile:
@@ -143,6 +203,10 @@ class QuotaFallback(BaseModel):
     enabled: bool = False
     min_remaining_pct: float = Field(10.0, ge=0, le=100)
     agents: list[str] | None = None  # candidates in order; None = the role's agents
+    # Caps automatic moves per task, so two exhausted accounts cannot bounce a task forever.
+    max_switches: int = Field(3, ge=1, le=20)
+    # Refuse to move a task that already has an agent session (its context would be lost).
+    keep_sessions: bool = False
 
 
 class RoutingConfig(BaseModel):
