@@ -130,13 +130,12 @@ PR into `main` is open, its whole diff has been re-reviewed and every problem fo
   the `account_cooldown_elapsed` event); listings use the non-writing view.
 - [x] B2 `AccountGate` and `TaskRunner` behind the `Bridge` facade — same branch. `_account_quota`
   stays on `Bridge` (tests replace it there and expect the gate to see it).
-- [ ] B3 Project registry module, no import cycles around `storage` — not done, needs a decision:
-  `test_statuses` (`tests/unit/test_storage_migrate.py`) and `test_prune_with_remember`
-  (`tests/unit/test_registry_lock.py`) patch `accounts.known_projects` / `progress.discover_roots`
-  and rely on `storage.plan` and `storage.prune` calling them; both fail once storage reads a
-  registry module instead. Removing the cycle means changing those tests.
+- [x] B3 Project registry module, no import cycles around `storage` — same branch. `storage` now
+  imports only `install`, `osutil`, `registry` and `models`; `find_root` moved to `registry` too
+  (re-exported from `config`). With the user's approval, `test_statuses` and
+  `test_prune_with_remember` now patch `registry` instead of `accounts`/`progress`.
 - [ ] B4 Optional: split `Store` into task, account and usage parts — skipped: the PR diff is
-  already about 1,300 changed lines, over the 600-line limit.
+  already about 1,550 changed lines, over the 600-line limit.
 
 ## Mode and branch
 
