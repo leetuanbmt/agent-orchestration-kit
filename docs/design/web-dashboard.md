@@ -37,27 +37,36 @@ Measured with the seeded sandbox used for the README screenshots (one project, e
 `DESIGN.md` and renderer source) was read for patterns, not copied. Taken as principles: truthful
 state before polish; one status slot with a glyph, so color is never the only signal; borders as
 structure rather than decoration; color only when it means something; sentence case; compact but
-44 px touch targets; detail in an inspector instead of new pages. Not taken: its sidebar shell
-(this dashboard usually shows one or two projects), its tokens, names and components, and any
-action buttons (this dashboard is view-only).
+44 px touch targets; detail in an inspector instead of new pages. A sidebar with the project list
+was added later, on evidence rather than from the reference: real use showed about 40 projects on
+one machine, so the page needed a project scope that a select could not offer. Not taken: its
+tokens, names and components, and any action buttons (this dashboard is view-only).
 
 ## Information architecture
 
 | View | Answers | Contents |
 |---|---|---|
-| Overview (default) | Questions 1 to 3 | Summary tiles, "Waiting on you" queue with copyable commands, In progress cards with time used, account summary with the quota-fallback line, projects |
+| Home (default) | Questions 1 to 3 | Summary tiles, "Waiting on you" queue with copyable commands, In progress cards with time used, account summary with the quota-fallback line, projects |
 | Tasks | Question 4 | Search, status tabs, the task table (phone: compact rows) |
 | Board | Question 4 by stage | Lanes: Needs action, In review, Running, Queued, plus Finished |
 | Accounts | Question 3 in detail | Fallback policy per project, one card per account (state, quota windows, slots, agents), recent automatic switches |
+| Settings | - | Language, theme, the CLI name and the keyboard shortcuts |
+
+The sidebar holds the product name, these views and the project list: All projects, then each
+project with the number of tasks that need a person, a filter box once there are more than eight,
+and "Show all". Choosing a project scopes every view and the page title. Below 1024 px the sidebar
+is off-canvas, opened from the menu button.
 
 The task drawer opens from every view (`t=` in the URL) and holds status, the next step, the
 lifecycle, checks, changed files, reviews and the live log. Old links keep working: `view=projects`
-opens the Overview at the projects section.
+opens Home at the projects section.
 
 Progressive disclosure: project and worktree filters appear only with more than one project,
 "Group by worktree" only when a project has worktrees, Location and Agent columns only when they
 differ between rows, the technical record of a task only when expanded in the drawer, and language
-and theme behind the settings button.
+and theme in the Settings view. From 1000 px the task table has a fixed layout: objective, location
+and agent ellipsize (full value in the title), status and next step wrap; below 1280 px the
+objective takes two lines and Next step shows only the copy button.
 
 ## Tokens
 
@@ -88,7 +97,7 @@ audit measures it again on the rendered page.
 Type: system UI font; 12 / 13 / 14 (body) / 16 (section titles) / 20 px (stat values); weight 500
 for controls, 600 for headings and selected items; tabular figures for counts and times. Spacing:
 4, 8, 12, 16, 24, 32 px. Radius: 6 px for controls, 10 px for panels and cards. Shadows only on the
-drawer and the settings menu. Motion: color transitions under 150 ms, none with
+drawer and the phone sidebar. Motion: color transitions under 150 ms, none with
 `prefers-reduced-motion`.
 
 ## Components
@@ -98,7 +107,7 @@ drawer and the settings menu. Motion: color transitions under 150 ms, none with
   glyph is `aria-hidden`; the label carries the meaning.
 - **Quiet button**: `--surface-2` fill, no border, 32 px (44 px on touch screens). Pressed state:
   surface fill, strong border, weight 600.
-- **Segmented control** for the views; a fixed bottom bar on phones.
+- **Sidebar navigation** for the views and the project scope; an off-canvas sheet with a menu button below 1024 px.
 - **Tabs** for status filters: text with a 2 px accent underline on the selected one.
 - **Panel**: surface, 1 px border, 10 px radius. No card inside a card.
 - **Command**: monospace on `--surface-2` with a copy button; copying falls back to selecting the text.
@@ -113,7 +122,7 @@ drawer and the settings menu. Motion: color transitions under 150 ms, none with
 - Every control has an accessible name in English and Vietnamese; icon-only controls use
   `aria-label`.
 - Visible focus: a 2 px accent outline on every focusable element.
-- Keyboard: `[` and `]` step through the queue, Escape closes the drawer and the settings menu and
+- Keyboard: `[` and `]` step through the queue, Escape closes the drawer and the phone sidebar and
   returns focus.
 - Touch: 44 px targets on coarse pointers; no horizontal page scroll at 320 px.
 - Live updates: one polite announcement when the number of tasks needing action changes.

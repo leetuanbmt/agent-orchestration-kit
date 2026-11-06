@@ -558,8 +558,8 @@ mật sinh cho mỗi lần chạy, mọi request API đều cần token này; đ
 
 <img alt="Trang tổng quan của dashboard web: task đang chờ bạn kèm lệnh để sao chép, việc đang chạy với thời gian đã dùng, và năng lực của các tài khoản cùng chính sách chuyển dự phòng khi hết quota" src="docs/images/web-overview-light.png" width="900">
 
-Dashboard bao quát mọi dự án agent-bridge biết trên máy này cùng các git worktree của chúng, chia
-thành bốn view:
+Dashboard bao quát mọi dự án agent-bridge biết trên máy này cùng các git worktree của chúng. Thanh
+bên liệt kê các view và các dự án; chọn một dự án sẽ thu phạm vi mọi view về dự án đó. Các view:
 
 - **Tổng quan.** Những gì đang chờ bạn, theo thứ tự ưu tiên của bridge, mỗi mục có lệnh để sao
   chép (phím `[` và `]` mở mục trước hoặc sau); các task đang chạy với thời gian đã dùng so với
@@ -577,14 +577,14 @@ thành bốn view:
   trong URL nên mở lại được bằng link.
 
 Dashboard làm mới mỗi 3 giây; khi không kết nối được bridge, nó báo rõ và giữ dữ liệu cuối cùng
-trên màn hình. Theme sáng, tối hoặc theo hệ thống và tiếng Anh hoặc tiếng Việt nằm trong menu cài
-đặt; trên điện thoại các view chuyển xuống thanh dưới cùng và mỗi task là một dòng gọn. Trạng thái
+trên màn hình. Theme sáng, tối hoặc theo hệ thống và tiếng Anh hoặc tiếng Việt nằm trong view Cài
+đặt; trên điện thoại thanh bên mở từ nút menu và mỗi task là một dòng gọn. Trạng thái
 luôn có ký hiệu và nhãn, không chỉ dựa vào màu. Quy tắc thiết kế và các bước kiểm tra accessibility
 nằm trong [docs/design/web-dashboard.md](docs/design/web-dashboard.md) (chỉ có bản tiếng Anh).
 
 <img alt="View Tài khoản với theme tối: chuyển dự phòng đang bật, cửa sổ quota của từng tài khoản và một lần chuyển tự động" src="docs/images/web-accounts-dark.png" width="900">
 
-<img alt="Ngăn chi tiết task với thanh vòng đời, việc tiếp theo và tóm tắt dễ đọc" src="docs/images/web-drawer-light.png" width="640"> <img alt="Trang tổng quan trên điện thoại với thanh điều hướng ở dưới cùng" src="docs/images/web-mobile-light.png" width="240">
+<img alt="Ngăn chi tiết task với thanh vòng đời, việc tiếp theo và tóm tắt dễ đọc" src="docs/images/web-drawer-light.png" width="640"> <img alt="Trang tổng quan trên điện thoại với nút menu" src="docs/images/web-mobile-light.png" width="240">
 
 Dashboard web chỉ đọc: nó mở từng `bridge.db` bằng SQLite `mode=ro`, chỉ đọc trạng thái và quota
 của tài khoản từ database đó và cấu hình dự án (không bao giờ gọi thử CLI hay đọc thư mục home
