@@ -7,7 +7,8 @@ if (launchParams.has("code")) {
 
 const I18N = {
   en: {
-    actions: 'Actions', readDiff: 'Read the diff first:', reviewDecision: 'Review decision',
+    actions: 'Actions', readDiff: 'Read the diff with the Next step command before deciding.', reviewDecision: 'Review decision',
+    actionsEnabled: 'Actions enabled · start with --read-only to turn them off',
     actionRework: 'Rework', actionBlock: 'Block', submitReview: 'Submit review', actionRun: 'Run',
     actionFeedback: 'Feedback (optional)', cancelTask: 'Cancel task', cancelReason: 'Reason (required)',
     confirmCancel: 'Confirm cancel', actionNotes: 'Notes (required)', actionSuccess: 'Request accepted.',
@@ -94,7 +95,8 @@ const I18N = {
     accountsHint: 'Accounts are added and logged in by a person in a terminal:'
   },
   vi: {
-    actions: 'Thao tác', readDiff: 'Đọc bản diff trước:', reviewDecision: 'Quyết định duyệt',
+    actions: 'Thao tác', readDiff: 'Đọc bản diff bằng lệnh ở mục Việc tiếp theo trước khi quyết định.', reviewDecision: 'Quyết định duyệt',
+    actionsEnabled: 'Đã bật thao tác · chạy với --read-only để tắt',
     actionRework: 'Làm lại', actionBlock: 'Chặn', submitReview: 'Gửi đánh giá', actionRun: 'Chạy',
     actionFeedback: 'Phản hồi (không bắt buộc)', cancelTask: 'Hủy tác vụ', cancelReason: 'Lý do (bắt buộc)',
     confirmCancel: 'Xác nhận hủy', actionNotes: 'Ghi chú (bắt buộc)', actionSuccess: 'Đã nhận yêu cầu.',
@@ -685,7 +687,7 @@ function renderOverview() {
   document.documentElement.lang = state.lang; text($('brand-text'), tr('brand'));
   text($('live'), tr(tokenRequired ? 'tokenRequired' : disconnected ? 'offline' : overview ? 'live' : 'loading'));
   attr($('live'), 'class', disconnected ? 'live offline' : 'live'); $('content').classList.toggle('disconnected', disconnected);
-  text($('footer'), tr('viewOnly')); attr($('languages'), 'aria-label', tr('language')); attr($('nav'), 'aria-label', tr('mainNav'));
+  text($('footer'), tr(overview?.actions ? 'actionsEnabled' : 'viewOnly')); attr($('languages'), 'aria-label', tr('language')); attr($('nav'), 'aria-label', tr('mainNav'));
   text($('theme-label'), tr('theme'));
   selectOptions($('theme'), [['system', tr('themeSystem')], ['light', tr('themeLight')], ['dark', tr('themeDark')]], theme);
   renderSettings();
@@ -1128,21 +1130,16 @@ function taskActions(task) {
   }
   if (task.state === 'REVIEW') {
     controls.append(el('p', tr('readDiff')));
-    const command = 'agent-bridge result ' + task.task_id;
-    const field = el('textarea', command, 'command'); field.readOnly = true; field.rows = 2;
-    attr(field, 'aria-label', tr('command'));
-    const copy = button(tr('copy'), () => copyCommand(command, copy, field)); controls.append(field, copy);
     form('review', 'submitReview', node => {
       const radios = el('fieldset'); radios.append(el('legend', tr('reviewDecision')));
       for (const [value, label] of [['approve', 'approve'], ['rework', 'actionRework'], ['block', 'actionBlock']]) {
         const caption = el('label'), input = el('input');
         input.type = 'radio'; input.name = 'decision'; input.value = value; input.required = true;
-        if (value === 'approve') input.checked = true;
         caption.append(input, el('span', tr(label))); radios.append(caption);
       }
       node.append(radios);
       const notes = area(node, 'notes', 'actionNotes', true, 4000);
-      return () => ({decision: node.querySelector('input:checked').value, notes: notes.value});
+      return () => ({decision: node.querySelector('input:checked')?.value || '', notes: notes.value});
     });
   }
   if (task.state === 'READY') form('execute', 'actionRun', () => () => ({}));

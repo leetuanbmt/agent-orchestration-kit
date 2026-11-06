@@ -36,6 +36,9 @@ async function open(page, hash = '') {
 const scenarios = {
   async actions(page) {
     await open(page, '#view=tasks&s=all');
+    const footer = await page.locator('#footer').textContent();
+    check('footer reflects actions availability', footer === (cfg.readOnly
+      ? 'View only' : 'Actions enabled · start with --read-only to turn them off'), footer);
     const target = cfg.readOnly ? cfg.tasks.xss : cfg.tasks.review;
     await rows(page).filter({hasText: target}).click();
     await page.locator('#drawer-body .technical').waitFor();
@@ -45,6 +48,12 @@ const scenarios = {
       return;
     }
     await actions.getByLabel('Notes (required)', {exact: true}).fill('Reviewed the diff and checks.');
+    await actions.getByRole('button', {name: 'Submit review', exact: true}).click();
+    const undecided = await page.evaluate(async ({pid, tid}) =>
+      (await (await fetch('/api/projects/' + pid + '/tasks/' + tid)).json()).state,
+      {pid: cfg.pid, tid: cfg.tasks.review});
+    check('review without a decision stays REVIEW', undecided === 'REVIEW', undecided);
+    await actions.getByLabel('Approve', {exact: true}).check();
     await actions.getByRole('button', {name: 'Submit review', exact: true}).click();
     await page.waitForFunction(() => document.querySelector('#drawer-body').textContent.includes('Request accepted.'));
     const reviewed = await page.evaluate(async ({pid, tid}) =>
