@@ -58,7 +58,7 @@ and "Show all". Choosing a project scopes every view and the page title. Below 1
 is off-canvas, opened from the menu button.
 
 The task drawer opens from every view (`t=` in the URL) and holds status, the next step, the
-lifecycle, checks, changed files (grouped by directory above eight, cache folders closed), reviews and the live log. With more than one project in view, every task id carries its project name, because ids restart at T0001 in each project; Accounts then shows one fallback summary listing every project. Old links keep working: `view=projects`
+lifecycle, the planner workflow it belongs to (its steps and progress), checks, changed files (grouped by directory above eight, cache folders closed), reviews and the live log. With more than one project in view, every task id carries its project name, because ids restart at T0001 in each project; Accounts then shows one fallback summary listing every project. Old links keep working: `view=projects`
 opens Home at the projects section.
 
 Progressive disclosure: project and worktree filters appear only with more than one project,
@@ -131,11 +131,18 @@ drawer and the phone sidebar. Motion: color transitions under 150 ms, none with
 
 - `tests/qa/test_e2e_web.py` with `tests/qa/web/dashboard.cjs` (Playwright, `QA_E2E=1`): loading,
   token handling, XSS, live updates, language, theme, search, offline, phone layout, drawer, queue,
-  board, live region, the shell, the overview and the accounts view with a real quota failover.
-  Of the rules above it enforces no horizontal scroll at 375 px, focus returning on Escape, the
-  meter labels and the status symbols; contrast, focus rings and touch target sizes are not
-  checked by the suite.
-- For this redesign a one-off Playwright audit (not in the repository) was run on a seeded
-  project: contrast from computed styles, accessible names, duplicate ids, focus rings on a Tab
-  walk, touch target sizes and overflow at 320 and 390 px, in both themes. Repeat it by hand after
-  changing colors or layout.
+  board, live region, the shell, the overview, the accounts view with a real quota failover,
+  several projects sharing task ids, a planner workflow and the table fit. Of the rules above it
+  enforces no horizontal scroll at 375 px, focus returning on Escape, the meter labels, the status
+  symbols, 24 px targets in the sidebar and the drawer, the drawer's dialog element and the log
+  role; contrast and focus rings are not checked by the suite.
+- `test_web_visual` compares 13 screenshots (each view in both themes, the drawer, phone Home)
+  with baselines in `tests/qa/web/visual/<platform>/`, on a fixed clock with timestamps and paths
+  normalised. Baselines exist for macOS only; other platforms skip it. After an intended visual
+  change, update them with `QA_E2E=1 QA_VISUAL_UPDATE=1 uv run --frozen pytest -q
+  tests/qa/test_e2e_web.py::test_web_visual` and review the new images before committing.
+- For this redesign, audits outside the repository were run on real data (37 projects) as well
+  as on a seeded project: axe-core 4.10 (WCAG 2.0, 2.1 and 2.2 A and AA plus best practice) found
+  no violation on any view in either theme at 1440 and 390 px after the fixes; a computed-style
+  pass checked contrast, accessible names, duplicate ids, focus rings on a Tab walk, target sizes
+  and overflow. Repeat them by hand after changing colors or layout.
