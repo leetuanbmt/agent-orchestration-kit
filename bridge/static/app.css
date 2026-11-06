@@ -286,6 +286,11 @@ tbody tr:focus-visible { outline-offset: -2px; background: var(--surface-2); }
 .close { position: absolute; right: var(--sp-4); top: var(--sp-4); width: 32px; padding: 0; font-size: 20px; }
 .drawer-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
 .drawer-head code { color: var(--text-muted); }
+.workflow-id { color: var(--text-muted); font-size: var(--fs-xs); flex-shrink: 0; }
+.workflow-steps { list-style: none; padding: 0; display: grid; gap: var(--sp-2); }
+.workflow-step { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); width: 100%; text-align: left; }
+.workflow-step span { overflow-wrap: anywhere; min-width: 0; }
+.workflow-step[aria-current] { border-left: 2px solid var(--text-muted); }
 .chip { display: inline-block; background: var(--surface-2); border-radius: var(--r-sm); padding: 2px var(--sp-2); font-size: var(--fs-xs); font-weight: 500; }
 .stepper { list-style: none; display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); padding: 0; margin: var(--sp-4) 0 0; font-size: var(--fs-xs); color: var(--text-muted); }
 .step { display: inline-flex; align-items: center; gap: 6px; }
