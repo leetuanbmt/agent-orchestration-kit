@@ -63,24 +63,35 @@ class Dashboard:
     url: str
     base: str
     port: int
-    token: str
+    launch_code: str
     pid: str
     tasks: dict[str, str]
 
-    def request(self, method: str, path: str, token: str | None = "", host: str | None = None
+    cookie: str | None = None
+
+    def request(self, method: str, path: str, cookie: str | None = "", host: str | None = None
                 ) -> tuple[int, dict[str, str], bytes]:
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         headers = {"Host": host or f"127.0.0.1:{self.port}"}
-        if token is not None:
-            headers["X-Bridge-Token"] = self.token if token == "" else token
+        if cookie == "":
+            if self.cookie is None:
+                status, exchange_headers, _ = self.request("GET", "/?code=" + self.launch_code, cookie=None)
+                assert status == 303
+                self.cookie = exchange_headers["set-cookie"].split(";")[0]
+            cookie = self.cookie
+        if cookie is not None:
+            headers["Cookie"] = cookie
         conn.request(method, path, headers=headers)
         res = conn.getresponse()
-        return res.status, {k.lower(): v for k, v in res.getheaders()}, res.read()
+        try:
+            return res.status, {k.lower(): v for k, v in res.getheaders()}, res.read()
+        finally:
+            conn.close()
 
     def browser(self, scenario: str, **extra: Any) -> dict[str, Any]:
         shots = self.box.base / "shots"
         shots.mkdir(exist_ok=True)
-        config = {"url": self.url, "base": self.base, "scenario": scenario, "root": str(self.box.root),
+        config = {"url": self.url, "base": self.base, "cookie": self.cookie, "scenario": scenario, "root": str(self.box.root),
                   "cli": str(BIN / "agent-bridge"), "env": self.box.env, "shots": str(shots),
                   "tasks": self.tasks, "pid": self.pid, "total": len(self.tasks),
                   "serverPid": self.proc.pid, "newSpec": str(self.box.spec("Created while watching")),
@@ -115,8 +126,8 @@ def dashboard(sandbox: Sandbox) -> Iterator[Dashboard]:
     xss = sandbox.create(XSS)
     vietnamese = sandbox.create("Sửa lỗi hiển thị tiếng Việt")
     proc, url = start_web(sandbox)
-    base, _, token = url.partition("/?token=")
-    yield Dashboard(sandbox, proc, url, base, int(base.rsplit(":", 1)[1]), token,
+    base, _, launch_code = url.partition("/?code=")
+    yield Dashboard(sandbox, proc, url, base, int(base.rsplit(":", 1)[1]), launch_code,
                     project_id(str(sandbox.root)),
                     {"review": review, "done": done, "cancelled": cancelled, "xss": xss,
                      "vi": vietnamese})
@@ -124,16 +135,16 @@ def dashboard(sandbox: Sandbox) -> Iterator[Dashboard]:
 
 # @pt.id QA-E2E-070-web-http-guards
 # @pt.item The dashboard's HTTP guards
-# @pt.condition requests without a token, with a wrong token, with a foreign Host header, with POST/DELETE, and with traversal or malformed ids
-# @pt.expected 401, 401, 421, 405, 404; the real token gets 200 JSON; security headers on every response; the token is long and random
+# @pt.condition requests without a session cookie, with a forged cookie, with a foreign Host header, with POST/DELETE, and with traversal or malformed ids
+# @pt.expected 401, 401, 421, 405, 404; the issued session cookie gets 200 JSON; security headers on every response; the launch code is long and random
 # @pt.target bridge.webui.make_server
 # @pt.method e2e
 # @pt.legacy none
 def test_web_http_guards(dashboard: Dashboard) -> None:
     status, headers, body = dashboard.request("GET", "/api/overview")
     assert status == 200 and json.loads(body)["projects"]
-    assert dashboard.request("GET", "/api/overview", token=None)[0] == 401
-    assert dashboard.request("GET", "/api/overview", token="guess")[0] == 401
+    assert dashboard.request("GET", "/api/overview", cookie=None)[0] == 401
+    assert dashboard.request("GET", "/api/overview", cookie="bridge_session=guess")[0] == 401
     assert dashboard.request("GET", "/api/overview", host="evil.example:80")[0] == 421
     assert dashboard.request("GET", "/", host=f"attacker.test:{dashboard.port}")[0] == 421
     for method in ("POST", "DELETE", "PUT"):
@@ -148,7 +159,7 @@ def test_web_http_guards(dashboard: Dashboard) -> None:
                           ("x-content-type-options", "nosniff"), ("cache-control", "no-store"),
                           ("referrer-policy", "no-referrer")):
         assert value in headers.get(header, ""), (header, headers)
-    assert len(dashboard.token) >= 40
+    assert len(dashboard.launch_code) >= 40
 
 
 # @pt.id QA-E2E-071-web-port-busy
@@ -232,8 +243,8 @@ def test_web_performance(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch) -> N
                                            "acceptance_criteria": ["a"]}))["task_id"]
            for i in range(300)]
     proc, url = start_web(sandbox)
-    base, _, token = url.partition("/?token=")
-    board = Dashboard(sandbox, proc, url, base, int(base.rsplit(":", 1)[1]), token,
+    base, _, launch_code = url.partition("/?code=")
+    board = Dashboard(sandbox, proc, url, base, int(base.rsplit(":", 1)[1]), launch_code,
                       project_id(str(sandbox.root)), {i: i for i in ids})
     started = time.monotonic()
     status, _, body = board.request("GET", "/api/overview")
@@ -265,8 +276,8 @@ def test_web_capacity(sandbox: Sandbox) -> None:
     out = sandbox.ok("execute", second, env={"FAKE_CLAUDE_UTIL": "0.4", "FAKE_CLAUDE_WRITE": WRITE})
     assert out["agent"] == "claude2", out
     proc, url = start_web(sandbox)
-    base, _, token = url.partition("/?token=")
-    board = Dashboard(sandbox, proc, url, base, int(base.rsplit(":", 1)[1]), token,
+    base, _, launch_code = url.partition("/?code=")
+    board = Dashboard(sandbox, proc, url, base, int(base.rsplit(":", 1)[1]), launch_code,
                       project_id(str(sandbox.root)), {"failover": failover, "second": second})
     status, _, body = board.request("GET", "/api/overview")
     data = json.loads(body)
@@ -307,8 +318,8 @@ def test_web_many_projects(sandbox: Sandbox) -> None:
             if i == 0:
                 assert tid == "T0001"
     proc, url = start_web(sandbox)
-    base, _, token = url.partition("/?token=")
-    board = Dashboard(sandbox, proc, url, base, int(base.rsplit(":", 1)[1]), token,
+    base, _, launch_code = url.partition("/?code=")
+    board = Dashboard(sandbox, proc, url, base, int(base.rsplit(":", 1)[1]), launch_code,
                       project_id(str(sandbox.root)), {"review": "T0001"})
     for root in roots:
         status, _, body = board.request("GET", f"/api/projects/{project_id(str(root))}/tasks/T0001")
@@ -344,8 +355,8 @@ def test_web_workflow(sandbox: Sandbox) -> None:
     assert [t["state"] for t in waiting["tasks"]] == ["REVIEW", "BACKLOG"], waiting
     first, second = (t["task_id"] for t in waiting["tasks"])
     proc, url = start_web(sandbox)
-    base, _, token = url.partition("/?token=")
-    board = Dashboard(sandbox, proc, url, base, int(base.rsplit(":", 1)[1]), token,
+    base, _, launch_code = url.partition("/?code=")
+    board = Dashboard(sandbox, proc, url, base, int(base.rsplit(":", 1)[1]), launch_code,
                       project_id(str(sandbox.root)), {"first": first, "second": second})
     result = board.browser("workflow")
     assert result["ok"] and not result.get("error"), json.dumps(result, indent=1)[:5000]

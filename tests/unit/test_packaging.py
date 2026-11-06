@@ -70,18 +70,18 @@ def test_dashboard_has_no_external_urls():
         assert "https://" not in source
 
 
-# @pt.id T0039-launch-token
+# @pt.id T0039-launch-code
 # @pt.item Launch URL carries a fresh secret
 # @pt.condition Fake server and browser without binding sockets
-# @pt.expected Printed and opened URL contains server token of at least 32 URL-safe characters
+# @pt.expected Printed and opened URL contains server launch code of at least 32 URL-safe characters
 # @pt.target bridge.webui.serve
 # @pt.method unit
 # @pt.legacy none
-def test_web_launch_token(monkeypatch, capsys):
+def test_web_launch_code(monkeypatch, capsys):
     import re
     from bridge import webui
 
-    tokens, opened = [], []
+    launch_codes, opened = [], []
     class Server:
         server_address = ("127.0.0.1", 1234)
         closed = False
@@ -90,9 +90,9 @@ def test_web_launch_token(monkeypatch, capsys):
         def server_close(self):
             self.closed = True
     servers = []
-    def make_server(port, roots=None, token=None):
+    def make_server(port, roots=None, launch_code=None):
         assert port == 0
-        tokens.append(token)
+        launch_codes.append(launch_code)
         server = Server()
         servers.append(server)
         return server
@@ -101,26 +101,27 @@ def test_web_launch_token(monkeypatch, capsys):
     for _ in range(2):
         webui.serve(0, open_browser=True)
         lines = capsys.readouterr().out.splitlines()
-        assert re.fullmatch(r"[A-Za-z0-9_-]{32,}", tokens[-1])
-        assert lines[0] == f"agent-bridge web: http://127.0.0.1:1234/?token={tokens[-1]}"
+        assert re.fullmatch(r"[A-Za-z0-9_-]{32,}", launch_codes[-1])
+        assert lines[0] == f"agent-bridge web: http://127.0.0.1:1234/?code={launch_codes[-1]}"
         assert opened[-1] == lines[0].removeprefix("agent-bridge web: ")
-        assert "key" in lines[1] and "do not share" in lines[1]
+        assert "works once" in lines[1] and "do not share" in lines[1]
         assert servers[-1].closed
-    assert tokens[0] != tokens[1]
+    assert launch_codes[0] != launch_codes[1]
 
 
-# @pt.id T0039-browser-token
-# @pt.item Browser token storage and API header
+# @pt.id T0039-browser-session
+# @pt.item Browser session authentication
 # @pt.condition Dashboard JavaScript source
-# @pt.expected Session storage, query removal, authentication header and translated 401 message
+# @pt.expected No browser credential storage or token header; query removed and translated session guidance
 # @pt.target bridge/static/app.js
 # @pt.method unit
 # @pt.legacy none
-def test_dashboard_token_handling():
+def test_dashboard_launch_code_handling():
     source = (ROOT / "bridge/static/app.js").read_text()
-    for expected in ("location.search", "sessionStorage.setItem", "sessionStorage.getItem",
-                     "agent-bridge-token", "history.replaceState", "location.pathname + location.hash",
-                     "X-Bridge-Token", "response.status === 401",
-                     "Open the link printed by agent-bridge web.",
-                     "Mở đường dẫn do agent-bridge web in ra."):
+    for forbidden in ("sessionStorage", "agent-bridge-token", "document.cookie", "X-Bridge-Token"):
+        assert forbidden not in source
+    for expected in ("location.search", 'launchParams.has("code")', "history.replaceState",
+                     "location.pathname + location.hash", "credentials: 'same-origin'",
+                     "response.status === 401", "restart it if the link was used",
+                     "khởi động lại nếu đường dẫn đã được dùng"):
         assert expected in source

@@ -284,14 +284,17 @@ const scenarios = {
     check('drawer has no mobile page overflow', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   },
 
-  // Opening the printed link: the token leaves the address bar, data loads, filters count.
+  // Opening the printed link: the launch code leaves the address bar, data loads, filters count.
   async load(page) {
     await open(page);
     const url = new URL(page.url());
-    check('token removed from the address bar', !url.search.includes('token'), page.url());
+    check('launch code removed from the address bar', !url.search.includes('code'), page.url());
     const stored = await page.evaluate(() => [sessionStorage.getItem('agent-bridge-token'),
                                               localStorage.getItem('agent-bridge-token')]);
-    check('token kept for this tab only (sessionStorage)', stored[0] && !stored[1], stored);
+    check('no auth credential in browser storage', !stored[0] && !stored[1], stored);
+    const cookies = await page.context().cookies();
+    const session = cookies.find(cookie => cookie.name === 'bridge_session');
+    check('session cookie is HttpOnly and Strict', session?.httpOnly && session?.sameSite === 'Strict');
     // The first screen is the overview; its projects section lists the one project.
     check('the overview lists one project card', await page.locator('#overview-view').isVisible() &&
           await page.locator('#project-cards .project-card').count() === 1,
@@ -342,7 +345,7 @@ const scenarios = {
     check('close leaves no selection in the address', !decodeURIComponent(new URL(page.url()).hash).includes(':T0'));
   },
 
-  // A tab opened without the printed link has no token.
+  // A tab opened without the printed link has no session.
   async no_token(page) {
     await page.goto(cfg.base + '/');
     await page.waitForFunction(() => /Open the link|Mở đường dẫn/.test(document.getElementById('live').textContent),
@@ -656,7 +659,7 @@ const scenarios = {
     check('the queue badge starts with an aria-hidden glyph',
           await item.locator('.badge > .glyph[aria-hidden="true"]').count() === 1);
     const order = await page.evaluate(async () => {
-      const response = await fetch('/api/overview', { headers: { 'X-Bridge-Token': sessionStorage.getItem('agent-bridge-token') } });
+      const response = await fetch('/api/overview', { credentials: 'same-origin' });
       return (await response.json()).attention.map(a => `${a.pid}:${a.task_id}`);
     });
     const shown = await page.locator('#attention-list > [data-key]').evaluateAll(nodes => nodes.map(n => n.dataset.key));
@@ -1120,6 +1123,12 @@ const scenarios = {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, locale: 'en-US',
     ...(cfg.scenario === 'visual' ? { timezoneId: 'UTC' } : {}) });
+  if (cfg.cookie && cfg.scenario !== 'no_token') {
+    await page.context().addCookies([{
+      name: 'bridge_session', value: cfg.cookie.split('=')[1], url: cfg.base,
+      httpOnly: true, sameSite: 'Strict',
+    }]);
+  }
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
   try {

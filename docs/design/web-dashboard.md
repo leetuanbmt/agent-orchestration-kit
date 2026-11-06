@@ -5,6 +5,18 @@ why it looks the way it does: the audit that started the redesign, the informati
 the design tokens and components, and the accessibility rules it follows. Change
 the dashboard against this page, and change this page when a rule changes.
 
+## Dashboard access
+
+The printed `agent-bridge web` URL contains a one-time launch code (`/?code=...`).
+It expires ten minutes after server start. The first valid GET consumes it and redirects
+to `/`, setting an HttpOnly, SameSite=Strict `bridge_session` cookie with Path=/.
+This is a session cookie without Expires or Max-Age; Secure is omitted for loopback HTTP.
+The session id lives only in server memory and the cookie, never in page JavaScript or
+browser storage. API requests require this cookie; token headers grant no access.
+The page removes any remaining code query from its address. Invalid, expired or reused
+links show the sign-in guidance: open the printed link again, restarting the server if
+it has already been used. Restarting also invalidates the session.
+
 ## Who it is for
 
 One engineer running several coding agents across a few projects and accounts. They glance at the
@@ -130,7 +142,7 @@ drawer and the phone sidebar. Motion: color transitions under 150 ms, none with
 ## How it is checked
 
 - `tests/qa/test_e2e_web.py` with `tests/qa/web/dashboard.cjs` (Playwright, `QA_E2E=1`): loading,
-  token handling, XSS, live updates, language, theme, search, offline, phone layout, drawer, queue,
+  session authentication, XSS, live updates, language, theme, search, offline, phone layout, drawer, queue,
   board, live region, the shell, the overview, the accounts view with a real quota failover,
   several projects sharing task ids, a planner workflow and the table fit. Of the rules above it
   enforces no horizontal scroll at 375 px, focus returning on Escape, the meter labels, the status

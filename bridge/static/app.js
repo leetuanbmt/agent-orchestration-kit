@@ -1,8 +1,7 @@
 'use strict';
 
 const launchParams = new URLSearchParams(location.search);
-if (launchParams.has("token")) {
-  sessionStorage.setItem("agent-bridge-token", launchParams.get("token"));
+if (launchParams.has("code")) {
   history.replaceState(history.state, "", location.pathname + location.hash);
 }
 
@@ -18,7 +17,7 @@ const I18N = {
     allProjects: 'All projects', allWorktrees: 'All worktrees', clear: 'Clear filters', noMatches: 'No task matches these filters',
     viewTasks: 'View tasks', projectCounts: 'Needs action {needs} · Open {open} · Done {done}',
     showWorktrees: 'Show {n} worktrees without open tasks', hideWorktrees: 'Hide {n} worktrees without open tasks',
-    tokenRequired: "Open the link printed by agent-bridge web.",
+    tokenRequired: "Open the link printed by agent-bridge web again (restart it if the link was used).",
     brand: 'Agent Orchestration Kit', vi: 'VI', en: 'EN', all: 'All', projects: 'Projects', language: 'Language',
     home: 'Home', settings: 'Settings', menu: 'Menu', mainNav: 'Main', appearance: 'Appearance', about: 'About',
     filterProjects: 'Filter projects', filterProjectsPlaceholder: 'Filter projects', needYouCount: '{n} need you',
@@ -99,7 +98,7 @@ const I18N = {
     allProjects: 'Tất cả dự án', allWorktrees: 'Tất cả worktree', clear: 'Xóa bộ lọc', noMatches: 'Không có tác vụ khớp với bộ lọc này',
     viewTasks: 'Xem tác vụ', projectCounts: 'Cần xử lý {needs} · Đang mở {open} · Xong {done}',
     showWorktrees: 'Hiện {n} worktree không có tác vụ mở', hideWorktrees: 'Ẩn {n} worktree không có tác vụ mở',
-    tokenRequired: "Mở đường dẫn do agent-bridge web in ra.",
+    tokenRequired: "Mở lại đường dẫn do agent-bridge web in ra (khởi động lại nếu đường dẫn đã được dùng).",
     brand: 'Agent Orchestration Kit', vi: 'VI', en: 'EN', all: 'Tất cả', projects: 'Dự án', language: 'Ngôn ngữ',
     home: 'Tổng quan', settings: 'Cài đặt', menu: 'Menu', mainNav: 'Chính', appearance: 'Giao diện hiển thị', about: 'Giới thiệu',
     filterProjects: 'Lọc dự án', filterProjectsPlaceholder: 'Lọc dự án', needYouCount: '{n} cần bạn',
@@ -995,7 +994,7 @@ function renderLog(body, task, selected = null) {
   if (latest && !log.busy && !log.timer) fetchLog(log);
 }
 async function getJSON(url) {
-  const response = await fetch(url, {headers: {"X-Bridge-Token": sessionStorage.getItem("agent-bridge-token") || ""}, cache: 'no-store'});
+  const response = await fetch(url, {credentials: 'same-origin', cache: 'no-store'});
   tokenRequired = response.status === 401;
   if (tokenRequired) overview = null;
   if (!response.ok) { const error = new Error(); error.status = response.status; throw error; }

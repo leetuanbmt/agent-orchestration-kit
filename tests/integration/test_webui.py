@@ -13,7 +13,7 @@ from bridge.state import Store
 # @pt.id T0048-log-route
 # @pt.item Read-only authenticated attempt logs
 # @pt.condition Known attempt and malformed queries
-# @pt.expected Entries or 404, token enforced, database unchanged
+# @pt.expected Entries or 404, session enforced, database unchanged
 # @pt.target bridge.webui.make_server
 # @pt.method integration
 # @pt.legacy none
@@ -34,12 +34,13 @@ def test_log_route(server, repo):
         assert request(server, base + query)[0] == 404
     assert request(server, base.replace('T0001', 'bad') + '?n=1')[0] == 404
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before
-    protected = webui.make_server(0, roots=[str(repo)], token='t')
+    protected = webui.make_server(0, roots=[str(repo)], launch_code='t')
     thread = threading.Thread(target=protected.serve_forever, daemon=True)
     thread.start()
     try:
         assert request(protected, base + '?n=1')[0] == 401
-        assert request(protected, base + '?n=1', token='t')[0] == 200
+        cookie = request(protected, '/?code=t')[1]['Set-Cookie'].split(';')[0]
+        assert request(protected, base + '?n=1', cookie=cookie)[0] == 200
     finally:
         protected.shutdown()
         protected.server_close()
@@ -64,10 +65,12 @@ def server(repo):
         thread.join()
 
 
-def request(server, path="/api/overview", method="GET", host=True, token=None):
+def request(server, path="/api/overview", method="GET", host=True, cookie=None, token=None):
     conn = HTTPConnection(*server.server_address, timeout=5)
     try:
         conn.putrequest(method, path, skip_host=True)
+        if cookie is not None:
+            conn.putheader("Cookie", cookie)
         if token is not None:
             conn.putheader("X-Bridge-Token", token)
         if host is not None:
@@ -226,25 +229,37 @@ def test_port_in_use(server, capsys):
     assert capsys.readouterr().err == f"error: port {port} is in use; try --port 0\n"
 
 
-# @pt.id T0039-token
+# @pt.id T0039-session
 # @pt.item Per-launch API authentication
-# @pt.condition Server configured with a token
-# @pt.expected API routes require token; static routes remain public; Host checked first
+# @pt.condition Server configured with a one-time launch code
+# @pt.expected API routes require a session; static routes remain public; Host checked first
 # @pt.target bridge.webui.make_server
 # @pt.method integration
 # @pt.legacy none
-def test_api_token(server, repo, monkeypatch):
-    protected = webui.make_server(0, roots=[str(repo)], token="t")
+def test_api_session(server, repo, monkeypatch):
+    protected = webui.make_server(0, roots=[str(repo)], launch_code="t")
     thread = threading.Thread(target=protected.serve_forever, daemon=True)
     thread.start()
     try:
+        assert request(protected, "/?code=t", host="evil.test")[0] == 421
+        assert "Set-Cookie" not in request(protected, "/?code=wrong")[1]
+        assert "Set-Cookie" not in request(protected, "/?code=t", method="HEAD")[1]
+        status, headers, body = request(protected, "/?code=t")
+        assert status == 303 and headers["Location"] == "/" and body == b""
+        assert "HttpOnly" in headers["Set-Cookie"]
+        assert "SameSite=Strict" in headers["Set-Cookie"]
+        assert "Path=/" in headers["Set-Cookie"]
+        assert "Max-Age" not in headers["Set-Cookie"] and "Expires" not in headers["Set-Cookie"]
+        cookie = headers["Set-Cookie"].split(";")[0]
+        assert "Set-Cookie" not in request(protected, "/?code=t")[1]
+        assert request(protected, token="t")[0] == 401
         pid = progress.project_id(str(repo))
         for path in ("/api/overview", f"/api/projects/{pid}/tasks/T0001",
                      f"/api/projects/{pid}/requests/T0001", "/api/unknown"):
-            for token in (None, "wrong"):
-                assert request(protected, path, token=token)[::2] == (
-                    401, b'{"error": "token required"}')
-            assert request(protected, path, token="t")[0] == (404 if path == "/api/unknown" else 200)
+            for cookie_value in (None, "bridge_session=wrong"):
+                assert request(protected, path, cookie=cookie_value)[::2] == (
+                    401, b'{"error": "session required"}')
+            assert request(protected, path, cookie=cookie)[0] == (404 if path == "/api/unknown" else 200)
         for path in ("/", "/static/app.css", "/static/app.js"):
             assert request(protected, path)[0] == 200
         assert request(protected, host="evil.test")[0] == 421
@@ -252,6 +267,23 @@ def test_api_token(server, repo, monkeypatch):
         def forbidden(roots):
             pytest.fail("unauthenticated request accessed dashboard data")
         monkeypatch.setattr(progress, "snapshot", forbidden)
+        assert request(protected)[0] == 401
+    finally:
+        protected.shutdown()
+        protected.server_close()
+        thread.join()
+
+
+def test_launch_code_expires(repo, monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(webui.time, "monotonic", lambda: now[0])
+    protected = webui.make_server(0, roots=[str(repo)], launch_code="expired")
+    thread = threading.Thread(target=protected.serve_forever, daemon=True)
+    thread.start()
+    try:
+        now[0] += 600
+        status, headers, _ = request(protected, "/?code=expired")
+        assert status == 200 and "Set-Cookie" not in headers
         assert request(protected)[0] == 401
     finally:
         protected.shutdown()

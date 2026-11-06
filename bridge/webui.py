@@ -2,12 +2,16 @@
 
 import errno
 import hmac
+from http.cookies import SimpleCookie, CookieError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import re
 import secrets
 import sys
+import threading
+import time
+from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
 from . import progress
@@ -16,7 +20,11 @@ STATIC = Path(__file__).parent / "static"
 
 
 def make_server(port: int = 8765, roots: list[str] | None = None,
-                token: str | None = None) -> ThreadingHTTPServer:
+                launch_code: str | None = None) -> ThreadingHTTPServer:
+    started = time.monotonic()
+    code_used = False
+    sessions: set[str] = set()
+    auth_lock = threading.Lock()
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
             return None
@@ -41,21 +49,46 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
                 self.wfile.write(body)
 
         def handle_request(self):
+            nonlocal code_used
             port = self.server.server_address[1]
             hosts = self.headers.get_all("Host", [])
             if len(hosts) != 1 or hosts[0] not in (f"127.0.0.1:{port}", f"localhost:{port}"):
                 self.respond(421, {"error": "bad host"})
                 return
             path = self.path.split("?", 1)[0]
-            if token is not None and path.startswith("/api/"):
-                supplied = self.headers.get_all("X-Bridge-Token", [])
-                if len(supplied) != 1 or not hmac.compare_digest(
-                        supplied[0].encode("utf-8"), token.encode("utf-8")):
-                    self.respond(401, {"error": "token required"})
+            if launch_code is not None and path.startswith("/api/"):
+                cookie = SimpleCookie()
+                try:
+                    cookie.load("; ".join(self.headers.get_all("Cookie", [])))
+                    supplied = cookie["bridge_session"].value if "bridge_session" in cookie else ""
+                except CookieError:
+                    supplied = ""
+                with auth_lock:
+                    authenticated = any(hmac.compare_digest(
+                        supplied.encode("utf-8"), session.encode("utf-8")) for session in sessions)
+                if not authenticated:
+                    self.respond(401, {"error": "session required"})
                     return
             if self.command not in ("GET", "HEAD"):
                 self.respond(405, {"error": "method not allowed"}, allow=True)
                 return
+            if self.command == "GET" and path == "/" and launch_code is not None:
+                codes = parse_qs(urlsplit(self.path).query).get("code", [])
+                with auth_lock:
+                    if (len(codes) == 1 and not code_used
+                            and time.monotonic() - started < 600
+                            and hmac.compare_digest(codes[0].encode("utf-8"),
+                                                    launch_code.encode("utf-8"))):
+                        code_used = True
+                        session = secrets.token_urlsafe(32)
+                        sessions.add(session)
+                        self.send_response(303)
+                        self.send_header("Location", "/")
+                        self.send_header("Set-Cookie",
+                                         f"bridge_session={session}; HttpOnly; SameSite=Strict; Path=/")
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return
             if path == "/" or path in ("/static/app.css", "/static/app.js"):
                 name, mime = {
                     "/": ("index.html", "text/html; charset=utf-8"),
@@ -112,18 +145,18 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
 
 
 def serve(port: int = 8765, open_browser: bool = False) -> None:
-    token = secrets.token_urlsafe(32)
+    launch_code = secrets.token_urlsafe(32)
     try:
-        server = make_server(port, token=token)
+        server = make_server(port, launch_code=launch_code)
     except OSError as error:
         if error.errno != errno.EADDRINUSE:
             raise
         print(f"error: port {port} is in use; try --port 0", file=sys.stderr)
         raise SystemExit(1) from None
     try:
-        url = f"http://127.0.0.1:{server.server_address[1]}/?token={token}"
+        url = f"http://127.0.0.1:{server.server_address[1]}/?code={launch_code}"
         print(f"agent-bridge web: {url}", flush=True)
-        print("This link is the key to the dashboard; do not share it.", flush=True)
+        print("This link works once; do not share it.", flush=True)
         if open_browser:
             webbrowser.open(url)
         server.serve_forever()
