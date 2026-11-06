@@ -81,7 +81,7 @@ def test_web_launch_token(monkeypatch, capsys):
     import re
     from bridge import webui
 
-    tokens, opened = [], []
+    tokens, opened, modes = [], [], []
     class Server:
         server_address = ("127.0.0.1", 1234)
         closed = False
@@ -90,9 +90,10 @@ def test_web_launch_token(monkeypatch, capsys):
         def server_close(self):
             self.closed = True
     servers = []
-    def make_server(port, roots=None, token=None):
+    def make_server(port, roots=None, token=None, read_only=True):
         assert port == 0
         tokens.append(token)
+        modes.append(read_only)
         server = Server()
         servers.append(server)
         return server
@@ -106,6 +107,7 @@ def test_web_launch_token(monkeypatch, capsys):
         assert opened[-1] == lines[0].removeprefix("agent-bridge web: ")
         assert "key" in lines[1] and "do not share" in lines[1]
         assert servers[-1].closed
+        assert modes[-1] is False
     assert tokens[0] != tokens[1]
 
 

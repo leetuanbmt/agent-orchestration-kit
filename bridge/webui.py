@@ -10,13 +10,17 @@ import secrets
 import sys
 import webbrowser
 
-from . import progress
+from . import progress, webactions
 
 STATIC = Path(__file__).parent / "static"
+MAX_BODY = 16384
+ACTION_PATH = re.compile(r"/api/projects/([0-9a-f]{12})/tasks/(T[0-9]{4,})/actions")
 
 
 def make_server(port: int = 8765, roots: list[str] | None = None,
-                token: str | None = None) -> ThreadingHTTPServer:
+                token: str | None = None, read_only: bool = True) -> ThreadingHTTPServer:
+    actions_enabled = not read_only and token is not None
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
             return None
@@ -40,6 +44,42 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
             if self.command != "HEAD":
                 self.wfile.write(body)
 
+        def handle_action(self, pid, tid):
+            port = self.server.server_address[1]
+            ctype = self.headers.get("Content-Type", "")
+            if ctype.split(";", 1)[0].strip().lower() != "application/json":
+                self.respond(415, {"error": "content type must be application/json"})
+                return
+            origins = self.headers.get_all("Origin", [])
+            if origins and (len(origins) != 1 or origins[0] not in (
+                    f"http://127.0.0.1:{port}", f"http://localhost:{port}")):
+                self.respond(403, {"error": "bad origin"})
+                return
+            sites = self.headers.get_all("Sec-Fetch-Site", [])
+            if sites and (len(sites) != 1 or sites[0] not in ("same-origin", "none")):
+                self.respond(403, {"error": "cross-site request"})
+                return
+            length = self.headers.get("Content-Length")
+            if length is None:
+                self.respond(411, {"error": "length required"})
+                return
+            if not length.isdigit() or int(length) > MAX_BODY:
+                self.respond(413, {"error": "body too large"})
+                return
+            raw = self.rfile.read(int(length))
+            try:
+                body = json.loads(raw.decode("utf-8"))
+            except ValueError:
+                body = None
+            if not isinstance(body, dict):
+                self.respond(400, {"error": "body must be a JSON object"})
+                return
+            try:
+                status, result = webactions.run_action(roots, pid, tid, body)
+            except Exception:
+                status, result = 500, {"error": "internal"}
+            self.respond(status, result)
+
         def handle_request(self):
             port = self.server.server_address[1]
             hosts = self.headers.get_all("Host", [])
@@ -54,6 +94,10 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
                     self.respond(401, {"error": "token required"})
                     return
             if self.command not in ("GET", "HEAD"):
+                action = ACTION_PATH.fullmatch(path) if self.command == "POST" else None
+                if action and actions_enabled:
+                    self.handle_action(*action.groups())
+                    return
                 self.respond(405, {"error": "method not allowed"}, allow=True)
                 return
             if path == "/" or path in ("/static/app.css", "/static/app.js"):
@@ -72,7 +116,7 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
                 return
             try:
                 if path == "/api/overview":
-                    self.respond(200, progress.snapshot(roots))
+                    self.respond(200, {**progress.snapshot(roots), "actions": actions_enabled})
                     return
                 log_match = re.fullmatch(r"/api/projects/([0-9a-f]{12})/tasks/(T[0-9]{4,})/log", path)
                 if log_match:
@@ -111,10 +155,10 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 
 
-def serve(port: int = 8765, open_browser: bool = False) -> None:
+def serve(port: int = 8765, open_browser: bool = False, read_only: bool = False) -> None:
     token = secrets.token_urlsafe(32)
     try:
-        server = make_server(port, token=token)
+        server = make_server(port, token=token, read_only=read_only)
     except OSError as error:
         if error.errno != errno.EADDRINUSE:
             raise
