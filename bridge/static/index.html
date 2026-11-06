@@ -43,7 +43,7 @@
             <section id="attention" class="attention" aria-labelledby="attention-title" hidden>
               <h2 id="attention-title"></h2>
               <p id="attention-hint" class="muted attention-hint"></p>
-              <div id="attention-list" role="list"></div>
+              <div id="attention-list" role="list"></div><button id="attention-toggle" type="button" hidden></button>
             </section>
           </div>
           <section id="inflight-section" class="home-section" aria-labelledby="inflight-title" hidden>
@@ -60,7 +60,7 @@
           </section>
           <section id="projects-view" class="home-section" aria-labelledby="projects-title" hidden>
             <h2 id="projects-title" class="section-title"></h2>
-            <div id="project-cards"></div><p id="projects-empty"></p>
+            <div id="project-cards"></div><button id="projects-toggle" type="button" hidden></button><p id="projects-empty"></p>
           </section>
         </section>
         <div id="task-tools" hidden>
@@ -107,8 +107,8 @@
             <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
           </div>
           <div id="accounts-body" hidden>
-            <div id="fallback-panels" class="fallback-panels"></div>
             <div id="account-cards" class="account-grid" role="list"></div>
+            <div id="fallback-panels" class="fallback-panels"></div>
             <div id="accounts-empty" class="empty" hidden><p id="accounts-empty-text"></p><div id="accounts-empty-command"></div></div>
             <section id="switches-section" class="panel" aria-labelledby="switches-title">
               <h2 id="switches-title" class="section-title"></h2>

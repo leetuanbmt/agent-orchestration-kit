@@ -19,6 +19,50 @@ async function open(page, hash = '') {
 }
 
 const scenarios = {
+  async projects(page) {
+    await open(page);
+    const queue = page.locator('#attention-list > [data-key]');
+    check('Home queue starts with six items', await queue.count() === 6);
+    await page.locator('#attention-toggle').click();
+    check('queue toggle reveals all nine items', await queue.count() === 9);
+    const names = await queue.locator('.project-tag').allTextContents();
+    check('every queue item has a project tag', names.length === 9);
+    const firstNames = await queue.evaluateAll(nodes => nodes.filter(n => n.querySelector('code').textContent === 'T0001')
+      .map(n => n.querySelector('.project-tag')?.textContent));
+    check('three T0001 tasks name distinct projects', firstNames.length === 3 && new Set(firstNames).size === 3);
+    await queue.filter({hasText: 'T0001'}).first().locator('.attention-open').click();
+    check('drawer head names its project', await page.locator('.drawer-head .project-tag').count() === 1);
+    await page.waitForSelector('.file-groups details');
+    const groups = page.locator('.file-groups details');
+    check('changed files are grouped', await groups.count() >= 2);
+    const cache = groups.filter({has: page.locator('summary', {hasText: '.cache/'})});
+    check('cache group starts closed', await cache.count() === 1 && !(await cache.evaluate(n => n.open)));
+    await page.keyboard.press('Escape');
+    await page.goto(cfg.base + '/#view=board');
+    await page.waitForSelector('.card .project-tag');
+    check('board card names its project', await page.locator('.card .project-tag').count() > 0);
+    await page.goto(cfg.base + '/#view=accounts');
+    await page.waitForSelector('#fallback-panels .fallback-panel');
+    check('Accounts has one fallback panel', await page.locator('#fallback-panels .fallback-panel').count() === 1);
+    const projects = await page.locator('#fallback-panels .fallback-facts > li > span:first-child').allTextContents();
+    check('fallback lists all three projects', projects.length === 3 && new Set(projects).size === 3 && names.every(n => projects.includes(n)));
+    check('account cards precede fallback', await page.evaluate(() =>
+      !!(document.getElementById('account-cards').compareDocumentPosition(document.getElementById('fallback-panels')) & Node.DOCUMENT_POSITION_FOLLOWING)));
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({width, height: 900});
+      for (const view of ['overview', 'board', 'accounts']) {
+        await page.goto(cfg.base + '/#view=' + view);
+        await page.waitForFunction(() => /Live/.test(document.getElementById('live').textContent));
+        check(view + ' has no horizontal overflow at ' + width, await page.evaluate(() =>
+          document.documentElement.scrollWidth <= innerWidth));
+      }
+    }
+    await page.goto(cfg.base + '/#view=overview');
+    await page.waitForSelector('#attention-list .attention-open');
+    await page.locator('#attention-list .attention-open').first().click();
+    check('drawer has no mobile page overflow', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  },
+
   // Opening the printed link: the token leaves the address bar, data loads, filters count.
   async load(page) {
     await open(page);
