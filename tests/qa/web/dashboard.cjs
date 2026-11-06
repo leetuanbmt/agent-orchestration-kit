@@ -72,13 +72,17 @@ const scenarios = {
     const firstNames = await queue.evaluateAll(nodes => nodes.filter(n => n.querySelector('code').textContent === 'T0001')
       .map(n => n.querySelector('.project-tag')?.textContent));
     check('three T0001 tasks name distinct projects', firstNames.length === 3 && new Set(firstNames).size === 3);
-    await queue.filter({hasText: 'T0001'}).first().locator('.attention-open').click();
-    check('drawer head names its project', await page.locator('.drawer-head .project-tag').count() === 1);
+    const opened = queue.filter({hasText: 'T0001'}).first();
+    const projectName = await opened.locator('.project-tag').textContent();
+    await opened.locator('.attention-open').click();
     await page.waitForSelector('.file-groups details');
+    const drawerProject = await page.locator('.drawer-head .project-tag').textContent();
+    check('drawer head names its project', drawerProject === projectName && drawerProject !== 'unknown');
     const groups = page.locator('.file-groups details');
     check('changed files are grouped', await groups.count() >= 2);
     const cache = groups.filter({has: page.locator('summary', {hasText: '.cache/'})});
     check('cache group starts closed', await cache.count() === 1 && !(await cache.evaluate(n => n.open)));
+    check('single-file group uses singular label', await cache.locator('summary').textContent() === '.cache/ · 1 file');
     await page.keyboard.press('Escape');
     await page.goto(cfg.base + '/#view=board');
     await page.waitForSelector('.card .project-tag');
