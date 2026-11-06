@@ -8,6 +8,7 @@ if (launchParams.has("token")) {
 
 const I18N = {
   en: {
+    showQueue: 'Show all ({n})', homeProjects: 'Show all projects ({n})', showLess: 'Show fewer', fileGroup: '{dir}/ · {n} files',
     log: 'Log', messagesOnly: 'Messages only', logTail: 'Showing the last 256 KB', noLog: 'No log for this attempt',
     awaitingReview: 'Awaiting review', nextStep: 'Next step', approve: 'Approve', result: 'View result', resume: 'Resume',
     groupWorktree: 'Group by worktree', stale: 'stale',
@@ -81,12 +82,13 @@ const I18N = {
     sinceTime: 'since {time}', window5h: '5-hour window', windowWeek: 'Weekly window',
     windowMinutes: '{n}-minute window', windowUsage: 'Usage window', meterLabel: '{label}: {n}% used',
     reportedAt: 'Reported {time}', recentSwitches: 'Recent automatic switches',
-    switchMoved: '{task} moved from {from} to {to}',
+    switchMoved: '{task} moved from {from} to {to}', switchRoute: 'moved from {from} to {to}',
     reason_quota: 'out of quota', reason_limit: 'usage limit', reason_below_threshold: 'low quota', reason_other: 'other',
     noSwitches: 'No automatic switches in the last 7 days.',
     accountsHint: 'Accounts are added and logged in by a person in a terminal:'
   },
   vi: {
+    showQueue: 'Xem tất cả ({n})', homeProjects: 'Xem tất cả dự án ({n})', showLess: 'Thu gọn', fileGroup: '{dir}/ · {n} tệp',
     log: 'Nhật ký', messagesOnly: 'Chỉ tin nhắn agent', logTail: 'Đang hiển thị 256 KB cuối', noLog: 'Không có nhật ký cho lần chạy này',
     awaitingReview: 'Chờ duyệt', nextStep: 'Việc tiếp theo', approve: 'Phê duyệt', result: 'Xem kết quả', resume: 'Tiếp tục',
     groupWorktree: 'Gom theo worktree', stale: 'cũ',
@@ -160,7 +162,7 @@ const I18N = {
     sinceTime: 'từ {time}', window5h: 'Cửa sổ 5 giờ', windowWeek: 'Cửa sổ hằng tuần',
     windowMinutes: 'Cửa sổ {n} phút', windowUsage: 'Cửa sổ sử dụng', meterLabel: '{label}: đã dùng {n}%',
     reportedAt: 'Báo cáo {time}', recentSwitches: 'Chuyển tự động gần đây',
-    switchMoved: '{task} đã chuyển từ {from} sang {to}',
+    switchMoved: '{task} đã chuyển từ {from} sang {to}', switchRoute: 'đã chuyển từ {from} sang {to}',
     reason_quota: 'hết quota', reason_limit: 'giới hạn sử dụng', reason_below_threshold: 'quota thấp', reason_other: 'khác',
     noSwitches: 'Không có lần chuyển tự động nào trong 7 ngày qua.',
     accountsHint: 'Tài khoản do một người thêm và đăng nhập trong terminal:'
@@ -187,6 +189,7 @@ const groupLabel = group => tr(group === 'needsYou' ? 'needsAction' : group);
 // One glyph per state family, so a status reads without color.
 const GLYPHS = {needs: '!', review_wait: '◐', running: '▶', queued: '○', done: '✓', failed: '✕', blocked: '✕', paused: '‖', cancelled: '–'};
 const SUMMARY = [['needsYou', 'needs'], ['awaitingReview', 'review_wait'], ['running', 'running'], ['done24h', 'done']];
+let queueExpanded = false, homeProjectsExpanded = false;
 let attentionShown = [], lastOpened = '', lastNeeds = null;
 const expanded = new Set();
 let language = navigator.language.toLowerCase().startsWith('vi') ? 'vi' : 'en';
@@ -355,10 +358,24 @@ function runningInfo(task) {
   const elapsed = Math.max(0, Math.floor(Date.now() / 1000 - run.started_at));
   return {elapsed, timeout: run.timeout_s || 0, quota: run.quota_left == null ? null : Math.round(run.quota_left)};
 }
+function projectName(pid) {
+  return projectGroups().find(g => g.members.some(m => m.pid === pid))?.project.name || tr('unknown');
+}
+function projectTag(node, pid, drawer = false) {
+  if (projectGroups().length > 1 && (drawer || !state.p && !state.w))
+    node.append(el('span', projectName(pid), 'project-tag'));
+}
+function homeToggle(id, count, limit, expanded, key, toggle) {
+  const node = $(id);
+  node.hidden = count <= limit;
+  text(node, tr(expanded ? 'showLess' : key, {n: count}));
+  attr(node, 'aria-expanded', expanded);
+  node.onclick = toggle;
+}
 function renderCard(node, task) {
   attr(node, 'role', 'listitem');
   const card = button(undefined, () => openItem(task.pid, task.task_id), 'card');
-  const top = el('span', undefined, 'card-top'); top.append(statusBadge(task), el('code', task.task_id));
+  const top = el('span', undefined, 'card-top'); top.append(statusBadge(task), el('code', task.task_id)); projectTag(top, task.pid);
   const objective = el('span', task.objective || '', 'card-objective'); attr(objective, 'title', task.objective || '');
   const meta = el('span', `${task.agent ?? task.account ?? tr('dash')} · ${relative(task.updated_at)}`, 'card-meta muted');
   if (task.updated_at != null) attr(meta, 'title', new Date(task.updated_at * 1000).toLocaleString(state.lang));
@@ -377,7 +394,7 @@ function renderCard(node, task) {
   }
   node.append(card);
 }
-function cardSignature(task) { return [task, relative(task.updated_at), matches(task, 'running') ? runningInfo(task) : null]; }
+function cardSignature(task) { return [task, state.p, state.w, projectName(task.pid), projectGroups().length, relative(task.updated_at), matches(task, 'running') ? runningInfo(task) : null]; }
 function pauseReason(failure) {
   const prefix = (failure || '').split(':')[0];
   return ['QUOTA', 'AUTH', 'NETWORK', 'INTERRUPTED', 'MISSING_BINARY'].includes(prefix) ? prefix : 'OTHER';
@@ -395,7 +412,8 @@ function renderMonitor(scoped, tasks) {
   runningByKey = new Map((overview?.running || []).map(r => [`${r.pid}:${r.task_id}`, r]));
   // The server already ranked the list; keep its order exactly.
   const attention = (overview?.attention || []).filter(a => scoped(a.pid));
-  attentionShown = attention;
+  attentionShown = queueExpanded ? attention : attention.slice(0, 6);
+  homeToggle('attention-toggle', attention.length, 6, queueExpanded, 'showQueue', () => { queueExpanded = !queueExpanded; renderOverview(); });
   const now = Date.now() / 1000, everywhere = !state.p && !state.w;
   const counts = {
     needsYou: attention.filter(a => NEEDS_KINDS.includes(a.kind)).length,
@@ -414,12 +432,12 @@ function renderMonitor(scoped, tasks) {
   });
   $('attention').hidden = !attention.length;
   text($('attention-title'), tr('queueTitle', {n: attention.length})); text($('attention-hint'), tr('queueHint'));
-  patch($('attention-list'), attention, a => `${a.pid}:${a.task_id}`, a => [a, relative(a.since)], (node, item) => {
+  patch($('attention-list'), attentionShown, a => `${a.pid}:${a.task_id}`, a => [a, relative(a.since), state.p, state.w, projectName(a.pid), projectGroups().length], (node, item) => {
     attr(node, 'role', 'listitem'); attr(node, 'class', 'attention-item');
     node.onclick = () => openItem(item.pid, item.task_id);
     const open = el('button', undefined, 'attention-open'); open.type = 'button';
     const head = el('span', undefined, 'attention-head');
-    head.append(badge(item.kind, tr(item.kind)), el('code', item.task_id));
+    head.append(badge(item.kind, tr(item.kind)), el('code', item.task_id)); projectTag(head, item.pid);
     if (item.reason) head.append(el('span', tr(item.reason), 'muted'));
     const since = el('span', relative(item.since), 'muted');
     if (item.since != null) attr(since, 'title', new Date(item.since * 1000).toLocaleString(state.lang));
@@ -513,7 +531,7 @@ function renderHome(scoped, tasks) {
   const running = tasks.filter(t => scoped(t.pid) && matches(t, 'running')).sort(boardOrder);
   patch($('inflight'), running, t => `${t.pid}:${t.task_id}`, cardSignature, renderCard);
   text($('inflight-empty'), tr('nothingRunning')); $('inflight-empty').hidden = !loaded || running.length > 0;
-  const waiting = attentionShown.length;
+  const waiting = (overview?.attention || []).filter(a => scoped(a.pid)).length;
   $('queue-link').hidden = !waiting || !['tasks', 'board'].includes(state.view);
   text($('queue-link-text'), tr('waitingLine', {n: waiting})); text($('queue-link-open'), tr('openOverview'));
 }
@@ -591,35 +609,60 @@ function renderAccounts(groups) {
   $('accounts-loading').hidden = loaded || disconnected || tokenRequired; text($('accounts-loading-text'), tr('loading'));
   $('accounts-body').hidden = !loaded;
   if (!loaded || state.view !== 'accounts') return;
+  groups = groups.filter(g => g.members.some(m => (!state.p || g.project.pid === state.p) && (!state.w || m.pid === state.w)));
   const multi = groups.length > 1;
-  patch($('fallback-panels'), groups, g => g.project.pid, g => [g.project.name, g.project.fallback, multi], (node, group) => {
-    const policy = group.project.fallback;
-    attr(node, 'class', 'panel fallback-panel');
-    const head = el('div', undefined, 'panel-head');
-    head.append(el('h2', multi ? `${tr('fallbackTitle')} · ${group.project.name}` : tr('fallbackTitle'), 'section-title'));
-    if (policy) head.append(badge(policy.enabled ? 'done' : 'paused', tr(policy.enabled ? 'on' : 'off')));
-    node.append(head);
-    if (!policy) { node.append(el('p', tr('unreadable'), 'muted')); return; }
-    const pct = Math.round(Number(policy.min_remaining_pct) || 0);
-    const candidates = policy.agents == null ? tr('fallbackRoleOrder') : policy.agents.length ? policy.agents.join(' → ') : tr('none');
-    const facts = el('ul', undefined, 'fallback-facts');
-    facts.append(el('li', pct > 0 ? tr('fallbackThreshold', {n: pct}) : tr('fallbackAtZero')),
-      el('li', tr('fallbackCandidates', {list: candidates})));
-    node.append(el('p', tr(policy.enabled ? 'fallbackOnLine' : 'fallbackOffLine')), facts, el('p', tr('fallbackPolicy'), 'muted'));
-  });
+  if (multi) {
+    patch($('fallback-panels'), [groups], () => 'shared', item => item, (node, items) => {
+      attr(node, 'class', 'panel fallback-panel');
+      node.append(el('h2', tr('fallbackTitle'), 'section-title'), el('p', fallbackLine(items)));
+      const list = el('ul', undefined, 'fallback-facts');
+      for (const group of items) {
+        const row = el('li'), policy = group.project.fallback;
+        row.append(el('span', group.project.name));
+        if (policy) {
+          row.append(badge(policy.enabled ? 'done' : 'paused', tr(policy.enabled ? 'on' : 'off')));
+          const pct = Math.round(Number(policy.min_remaining_pct) || 0);
+          const candidates = policy.agents == null ? tr('fallbackRoleOrder') : policy.agents.length ? policy.agents.join(' → ') : tr('none');
+          row.append(el('p', `${pct > 0 ? tr('fallbackThreshold', {n: pct}) : tr('fallbackAtZero')} · ${tr('fallbackCandidates', {list: candidates})}`, 'muted'));
+        } else row.append(el('p', tr('unreadable'), 'muted'));
+        list.append(row);
+      }
+      node.append(list, el('p', tr('fallbackPolicy'), 'muted'));
+    });
+  } else {
+    patch($('fallback-panels'), groups, g => g.project.pid, g => [g.project.name, g.project.fallback, multi], (node, group) => {
+      const policy = group.project.fallback;
+      attr(node, 'class', 'panel fallback-panel');
+      const head = el('div', undefined, 'panel-head');
+      head.append(el('h2', multi ? `${tr('fallbackTitle')} · ${group.project.name}` : tr('fallbackTitle'), 'section-title'));
+      if (policy) head.append(badge(policy.enabled ? 'done' : 'paused', tr(policy.enabled ? 'on' : 'off')));
+      node.append(head);
+      if (!policy) { node.append(el('p', tr('unreadable'), 'muted')); return; }
+      const pct = Math.round(Number(policy.min_remaining_pct) || 0);
+      const candidates = policy.agents == null ? tr('fallbackRoleOrder') : policy.agents.length ? policy.agents.join(' → ') : tr('none');
+      const facts = el('ul', undefined, 'fallback-facts');
+      facts.append(el('li', pct > 0 ? tr('fallbackThreshold', {n: pct}) : tr('fallbackAtZero')),
+        el('li', tr('fallbackCandidates', {list: candidates})));
+      node.append(el('p', tr(policy.enabled ? 'fallbackOnLine' : 'fallbackOffLine')), facts, el('p', tr('fallbackPolicy'), 'muted'));
+    });
+  }
   patch($('account-cards'), accounts, a => a.name, a => [a, Math.floor(Date.now() / 1000)], renderAccountCard);
   $('account-cards').hidden = !accounts.length; $('accounts-empty').hidden = accounts.length > 0;
   text($('accounts-empty-text'), tr('noAccounts'));
   commandLine($('accounts-empty-command'), 'agent-bridge config-init orchestrator');
   text($('switches-title'), tr('recentSwitches'));
-  patch($('switches'), switches, s => `${s.pid}:${s.task_id}:${s.ts}`, s => [s, relative(s.ts)], (node, item) => {
+  patch($('switches'), switches, s => `${s.pid}:${s.task_id}:${s.ts}`, s => [s, relative(s.ts), state.p, state.w, projectName(s.pid), projectGroups().length], (node, item) => {
     attr(node, 'role', 'listitem'); attr(node, 'class', 'switch-item');
     const who = (agent, account) => agent == null ? tr('unknown') : account ? `${agent} (${account})` : agent;
     const open = button(undefined, () => openItem(item.pid, item.task_id), 'switch-open');
     const when = el('span', relative(item.ts), 'muted');
     if (item.ts != null) attr(when, 'title', new Date(item.ts * 1000).toLocaleString(state.lang));
-    open.append(el('span', tr('switchMoved', {task: item.task_id, from: who(item.from, item.from_account), to: who(item.to, item.to_account)}), 'switch-text'),
-      el('span', tr(`reason_${item.reason}`), 'chip'), when);
+    const values = {task: item.task_id, from: who(item.from, item.from_account), to: who(item.to, item.to_account)};
+    if (projectGroups().length > 1 && !state.p && !state.w) {
+      open.append(el('code', item.task_id)); projectTag(open, item.pid);
+      open.append(el('span', tr('switchRoute', values), 'switch-text'));
+    } else open.append(el('span', tr('switchMoved', values), 'switch-text'));
+    open.append(el('span', tr(`reason_${item.reason}`), 'chip'), when);
     node.append(open);
   });
   text($('switches-empty'), tr('noSwitches')); $('switches-empty').hidden = switches.length > 0;
@@ -814,6 +857,8 @@ function closeSidebar(refocus) {
 function renderProjects(groups, tasks) {
   text($('projects-title'), tr('projects')); $('projects-view').hidden = !overview;
   groups = sortedGroups(groups);
+  homeToggle('projects-toggle', groups.length, 8, homeProjectsExpanded, 'homeProjects', () => { homeProjectsExpanded = !homeProjectsExpanded; renderOverview(); });
+  if (!homeProjectsExpanded) groups = groups.slice(0, 8);
   patch($('project-cards'), groups, g => g.project.pid, g => [g, tasks, expanded.has(g.project.pid), Math.floor(Date.now() / 1000)], (card, group) => {
     attr(card, 'class', 'project-card'); const project = group.project, count = totals(group.members);
     const head = el('div', undefined, 'card-header'), title = el('div', undefined, 'card-title');
@@ -986,7 +1031,7 @@ function records(parent, key, records, fields) {
 }
 function drawerHead(task) {
   const head = el('div', undefined, 'drawer-head');
-  head.append(el('code', task.task_id), statusBadge(task));
+  head.append(el('code', task.task_id)); projectTag(head, task.pid, true); head.append(statusBadge(task));
   if (task.risk_level) head.append(el('span', tr('risk', {level: tr(task.risk_level)}), 'chip'));
   const who = [task.agent, task.account].filter(Boolean).join(' · ');
   if (who) head.append(el('span', who, 'muted'));
@@ -1023,6 +1068,24 @@ function codeList(items) {
   const list = el('ul', undefined, 'plain-list');
   for (const item of items) { const li = el('li'); li.append(el('code', item)); list.append(li); }
   return list;
+}
+function changedFiles(items) {
+  if (items.length <= 8) return codeList(items);
+  const groups = new Map(), quiet = new Set(['.cache', '.codex-tmp', 'node_modules', '__pycache__', '.pytest_cache', '.venv', 'dist', 'build', '.next']);
+  for (const path of items) {
+    const segment = path.includes('/') ? path.split('/')[0] : '.';
+    if (!groups.has(segment)) groups.set(segment, []);
+    groups.get(segment).push(path);
+  }
+  const collapsed = ([name, paths]) => quiet.has(name) || paths.length > 20;
+  const box = el('div', undefined, 'file-groups');
+  for (const [name, paths] of [...groups].sort((a, b) => Number(collapsed(a)) - Number(collapsed(b)))) {
+    const group = el('details');
+    group.open = !collapsed([name, paths]);
+    group.append(el('summary', tr('fileGroup', {dir: name, n: paths.length})), codeList(paths));
+    box.append(group);
+  }
+  return box;
 }
 // The agent's final text: readable fields when it is a JSON object, the raw text kept folded below.
 function finalSummary(raw) {
@@ -1108,7 +1171,7 @@ function renderDetail() {
   const scope = section('scope_violations', violations.length ? 'alert' : '');
   scope.append(violations.length ? codeList(violations) : el('p', tr('none'), 'muted'));
   const files = section('files');
-  files.append(task.files?.length ? codeList(task.files) : el('p', tr('none'), 'muted'));
+  files.append(task.files?.length ? changedFiles(task.files) : el('p', tr('none'), 'muted'));
   const summary = section('final');
   summary.append(...finalSummary(task.final));
   const reviews = section('reviews');

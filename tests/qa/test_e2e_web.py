@@ -253,3 +253,44 @@ def test_web_capacity(sandbox: Sandbox) -> None:
     failed = [c for c in result["checks"] if not c["ok"]]
     assert result["ok"] and not result.get("error"), json.dumps(
         {"error": result.get("error"), "failed": failed}, indent=1)[:3000]
+
+
+# @pt.id QA-E2E-096-web-many-projects
+# @pt.item Project identity and bounded Home lists
+# @pt.condition three projects with T0001 in REVIEW, nine attention tasks, and grouped changed files including cache paths
+# @pt.expected project tags disambiguate tasks; queue expands from six; Accounts has one shared fallback panel after cards; cache files start collapsed; no overflow or JS errors
+# @pt.target bridge/static/app.js, bridge/static/index.html, bridge/static/app.css
+# @pt.method e2e (Playwright)
+# @pt.legacy none
+@needs_browser
+def test_web_many_projects(sandbox: Sandbox) -> None:
+    from tests.qa.conftest import make_project
+
+    roots = [sandbox.root]
+    for name in ("project-two", "project-three"):
+        root = make_project(sandbox.base / name)
+        assert sandbox.cli("init", cwd=root).code == 0
+        (root / ".ai" / "config.json").write_text(json.dumps({
+            "retry_backoff_s": 0, "lock_dir": str(sandbox.base / "locks")}))
+        roots.append(root)
+    paths = ["src/app.py", *[f"src/file{i}.py" for i in range(8)], ".cache/result.txt"]
+    for root in roots:
+        for i in range(3):
+            tid = sandbox.ok("create", str(sandbox.spec(
+                f"Review work {i}", allowed_paths=["src/**", ".cache/**"])), cwd=root)["task_id"]
+            out = sandbox.ok("execute", tid, cwd=root,
+                             env={"FAKE_CODEX_WRITE": ";".join(f"{path}=x = 2\n" for path in paths)})
+            assert out["state"] == "REVIEW", out
+            if i == 0:
+                assert tid == "T0001"
+    proc, url = start_web(sandbox)
+    base, _, token = url.partition("/?token=")
+    board = Dashboard(sandbox, proc, url, base, int(base.rsplit(":", 1)[1]), token,
+                      project_id(str(sandbox.root)), {"review": "T0001"})
+    for root in roots:
+        status, _, body = board.request("GET", f"/api/projects/{project_id(str(root))}/tasks/T0001")
+        task = json.loads(body)
+        assert status == 200 and task["state"] == "REVIEW", task
+        assert set(task["files"]) == set(paths), task["files"]
+    result = board.browser("projects")
+    assert result["ok"] and not result.get("error"), json.dumps(result, indent=1)[:5000]

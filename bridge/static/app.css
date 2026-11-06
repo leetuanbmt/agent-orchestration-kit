@@ -431,3 +431,9 @@ dt { color: var(--text-muted); } dd { margin: 0; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+.project-tag { color: var(--text-muted); font-size: var(--fs-xs); overflow-wrap: anywhere; min-width: 0; }
+.file-groups details { margin-block: var(--sp-2); }
+.file-groups summary { cursor: pointer; overflow-wrap: anywhere; }
+.fallback-facts .badge { margin-inline-start: var(--sp-2); }
+#attention-toggle, #projects-toggle { margin-block: var(--sp-3); }
