@@ -172,12 +172,12 @@ def test_web_log(dashboard: Dashboard) -> None:
 
 SCENARIOS = ["load", "drawer", "no_token", "xss", "live", "language", "search", "offline", "mobile",
              "loading", "theme", "drawer_layout", "mobile_cards", "attention", "board", "live_region", "shell",
-             "overview", "sidebar", "table_fit"]
+             "overview", "sidebar", "table_fit", "target_size"]
 
 
 # @pt.id QA-E2E-073-web-browser
 # @pt.item The dashboard in a real browser
-# @pt.condition one scenario each: load, drawer, no_token, xss, live, language, search, mobile, offline, loading, theme, drawer_layout, mobile_cards, attention, board, live_region, shell, overview, sidebar, table_fit (see tests/qa/web/dashboard.cjs)
+# @pt.condition one scenario each: load, drawer, no_token, xss, live, language, search, mobile, offline, loading, theme, drawer_layout, mobile_cards, attention, board, live_region, shell, overview, sidebar, table_fit, target_size (see tests/qa/web/dashboard.cjs)
 # @pt.expected every check of the scenario passes and the page raises no JavaScript error
 # @pt.target bridge/static/app.js, bridge.webui
 # @pt.method e2e (Playwright)

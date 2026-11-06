@@ -61,6 +61,7 @@ h1, h2, h3, h4 { font-weight: 600; }
 .project-filter input { width: 100%; height: 32px; }
 .project-none { margin: 0; padding: 0 var(--sp-3); }
 .project-more { align-self: start; margin: 0 var(--sp-3); }
+:where(.project-more), summary { min-height: 24px; align-content: center; }
 #scrim { position: fixed; inset: 0; z-index: 3; background: var(--shadow); }
 #menu-button { display: none; flex: 0 0 auto; width: 44px; height: 44px; padding: 0; margin-left: calc(-1 * var(--sp-2)); }
 .menu-icon { display: block; width: 18px; height: 2px; background: currentColor; box-shadow: 0 -6px 0 currentColor, 0 6px 0 currentColor; }

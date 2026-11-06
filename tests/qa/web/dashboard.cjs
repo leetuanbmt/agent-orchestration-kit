@@ -13,12 +13,54 @@ function cli(...args) {
   return JSON.parse(execFileSync(cfg.cli, args, { cwd: cfg.root, env: cfg.env, encoding: 'utf8' }));
 }
 const rows = page => page.locator('#task-rows tr:not(.worktree-header)');
+async function undersizedControls(root) {
+  return root.locator('button, a[href], select, summary, [role="button"]').evaluateAll(nodes =>
+    nodes.filter(node => {
+      if (!node.checkVisibility() || node.closest('[hidden]')) return false;
+      if (node.matches('input') && node.closest('label')) return false;
+      if (node.matches('a') && node.closest('p, li, dd') &&
+          node.parentElement.textContent.trim() !== node.textContent.trim()) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.height < 24 || rect.width < 24;
+    }).map(node => {
+      const rect = node.getBoundingClientRect();
+      return { tag: node.tagName, id: node.id, text: node.textContent.trim(), width: rect.width, height: rect.height };
+    }));
+}
 async function open(page, hash = '') {
   await page.goto(cfg.url + hash);
   await page.waitForFunction(() => /Live|Trực tiếp/.test(document.getElementById('live').textContent));
 }
 
 const scenarios = {
+  async target_size(page) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.route('**/api/overview', async route => {
+      const response = await route.fetch();
+      const body = await response.json();
+      const project = body.projects[0];
+      for (let i = 0; i < 9; i++) {
+        body.projects.push({ ...project, pid: `target-size-${i}`, name: `Target size ${i}` });
+      }
+      await route.fulfill({ response, json: body });
+    });
+    for (const theme of ['light', 'dark']) {
+      await open(page, '#view=settings');
+      await page.selectOption('#theme', theme);
+      await open(page, '#view=tasks&s=all');
+      await page.locator('#project-more').waitFor({ state: 'visible' });
+      const sidebar = await undersizedControls(page.locator('#sidebar'));
+      check(`sidebar controls meet 24 px in ${theme}`, sidebar.length === 0, JSON.stringify(sidebar));
+      await page.locator('#task-rows tr', { hasText: cfg.tasks.review }).click();
+      await page.waitForFunction(() => !document.getElementById('drawer').hidden &&
+        /Verification checks/.test(document.getElementById('drawer-body').innerText));
+      await page.locator('#drawer details').evaluateAll(nodes => nodes.forEach(node => { node.open = true; }));
+      check(`drawer summaries are present in ${theme}`, await page.locator('#drawer summary:visible').count() > 0);
+      const drawer = await undersizedControls(page.locator('#drawer'));
+      check(`drawer controls meet 24 px in ${theme}`, drawer.length === 0, JSON.stringify(drawer));
+      await page.keyboard.press('Escape');
+    }
+  },
   async projects(page) {
     await open(page);
     const queue = page.locator('#attention-list > [data-key]');
