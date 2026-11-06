@@ -2,7 +2,7 @@
 
 `agent-bridge web` is a read-only, localhost view of every project's bridge state. This page records
 why it looks the way it does: the audit that started the redesign, the information architecture,
-the design tokens and components, and the accessibility rules the browser tests enforce. Change
+the design tokens and components, and the accessibility rules it follows. Change
 the dashboard against this page, and change this page when a rule changes.
 
 ## Who it is for
@@ -123,6 +123,10 @@ drawer and the settings menu. Motion: color transitions under 150 ms, none with
 - `tests/qa/test_e2e_web.py` with `tests/qa/web/dashboard.cjs` (Playwright, `QA_E2E=1`): loading,
   token handling, XSS, live updates, language, theme, search, offline, phone layout, drawer, queue,
   board, live region, the shell, the overview and the accounts view with a real quota failover.
-- A Playwright audit run on the seeded screenshot project measures contrast from computed styles,
-  accessible names, duplicate ids, focus rings on a Tab walk, touch target sizes and overflow at
-  320 and 390 px in both themes.
+  Of the rules above it enforces no horizontal scroll at 375 px, focus returning on Escape, the
+  meter labels and the status symbols; contrast, focus rings and touch target sizes are not
+  checked by the suite.
+- For this redesign a one-off Playwright audit (not in the repository) was run on a seeded
+  project: contrast from computed styles, accessible names, duplicate ids, focus rings on a Tab
+  walk, touch target sizes and overflow at 320 and 390 px, in both themes. Repeat it by hand after
+  changing colors or layout.
