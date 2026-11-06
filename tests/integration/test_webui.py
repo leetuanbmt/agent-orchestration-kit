@@ -65,7 +65,7 @@ def server(repo):
         thread.join()
 
 
-def request(server, path="/api/overview", method="GET", host=True, cookie=None, token=None):
+def request(server, path="/api/overview", method="GET", host=True, cookie=None, token=None, headers=None):
     conn = HTTPConnection(*server.server_address, timeout=5)
     try:
         conn.putrequest(method, path, skip_host=True)
@@ -75,6 +75,8 @@ def request(server, path="/api/overview", method="GET", host=True, cookie=None, 
             conn.putheader("X-Bridge-Token", token)
         if host is not None:
             conn.putheader("Host", f"127.0.0.1:{server.server_address[1]}" if host is True else host)
+        for key, value in (headers or {}).items():
+            conn.putheader(key, value)
         conn.endheaders()
         response = conn.getresponse()
         return response.status, dict(response.getheaders()), response.read()
@@ -96,7 +98,7 @@ def test_overview_shape(server, repo, monkeypatch):
     assert headers["Content-Type"] == "application/json; charset=utf-8"
     overview = json.loads(body)
     assert set(overview) == {"generated_at", "projects", "attention", "running", "activity", "requests", "tasks",
-                             "accounts", "switches"}
+                             "accounts", "switches", "actions"}
     assert isinstance(overview["accounts"], list) and isinstance(overview["switches"], list)
     pid = progress.project_id(str(repo))
     for kind in ("tasks", "requests"):
@@ -285,6 +287,32 @@ def test_launch_code_expires(repo, monkeypatch):
         status, headers, _ = request(protected, "/?code=expired")
         assert status == 200 and "Set-Cookie" not in headers
         assert request(protected)[0] == 401
+    finally:
+        protected.shutdown()
+        protected.server_close()
+        thread.join()
+
+
+def test_session_idle_and_origin(repo, monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(webui.time, "monotonic", lambda: now[0])
+    protected = webui.make_server(0, roots=[str(repo)], launch_code="t")
+    thread = threading.Thread(target=protected.serve_forever, daemon=True)
+    thread.start()
+    try:
+        cookie = request(protected, "/?code=t")[1]["Set-Cookie"].split(";")[0]
+        other = f"http://127.0.0.1:{protected.server_address[1] + 1}"
+        for headers in ({"Origin": other}, {"Sec-Fetch-Site": "same-site"},
+                        {"Origin": other, "Sec-Fetch-Site": "same-site"},
+                        {"Sec-Fetch-Site": "cross-site"}):
+            assert request(protected, cookie=cookie, headers=headers)[::2] == (
+                403, b'{"error": "cross-site request"}')
+        now[0] += 43199
+        assert request(protected, cookie=cookie)[0] == 200
+        now[0] += 43199
+        assert request(protected, cookie=cookie)[0] == 200
+        now[0] += 43200
+        assert request(protected, cookie=cookie)[0] == 401
     finally:
         protected.shutdown()
         protected.server_close()

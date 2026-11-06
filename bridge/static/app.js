@@ -7,6 +7,12 @@ if (launchParams.has("code")) {
 
 const I18N = {
   en: {
+    actions: 'Actions', readDiff: 'Read the diff first:', reviewDecision: 'Review decision',
+    actionRework: 'Rework', actionBlock: 'Block', submitReview: 'Submit review', actionRun: 'Run',
+    actionFeedback: 'Feedback (optional)', cancelTask: 'Cancel task', cancelReason: 'Reason (required)',
+    confirmCancel: 'Confirm cancel', actionNotes: 'Notes (required)', actionSuccess: 'Request accepted.',
+    actionError: 'Request failed.',
+
     workflow: 'Workflow', workflowTitle: '{id} · {objective}', workflowProgress: '{done} of {total} steps done',
     showQueue: 'Show all ({n})', homeProjects: 'Show all projects ({n})', showLess: 'Show fewer', fileGroup: '{dir}/ · {n} files', fileGroupOne: '{dir}/ · {n} file',
     log: 'Log', messagesOnly: 'Messages only', logTail: 'Showing the last 256 KB', noLog: 'No log for this attempt',
@@ -88,6 +94,12 @@ const I18N = {
     accountsHint: 'Accounts are added and logged in by a person in a terminal:'
   },
   vi: {
+    actions: 'Thao tác', readDiff: 'Đọc bản diff trước:', reviewDecision: 'Quyết định duyệt',
+    actionRework: 'Làm lại', actionBlock: 'Chặn', submitReview: 'Gửi đánh giá', actionRun: 'Chạy',
+    actionFeedback: 'Phản hồi (không bắt buộc)', cancelTask: 'Hủy tác vụ', cancelReason: 'Lý do (bắt buộc)',
+    confirmCancel: 'Xác nhận hủy', actionNotes: 'Ghi chú (bắt buộc)', actionSuccess: 'Đã nhận yêu cầu.',
+    actionError: 'Yêu cầu thất bại.',
+
     workflow: 'Quy trình', workflowTitle: '{id} · {objective}', workflowProgress: '{done} trên {total} bước đã xong',
     showQueue: 'Xem tất cả ({n})', homeProjects: 'Xem tất cả dự án ({n})', showLess: 'Thu gọn', fileGroup: '{dir}/ · {n} tệp', fileGroupOne: '{dir}/ · {n} tệp',
     log: 'Nhật ký', messagesOnly: 'Chỉ tin nhắn agent', logTail: 'Đang hiển thị 256 KB cuối', noLog: 'Không có nhật ký cho lần chạy này',
@@ -1069,6 +1081,90 @@ function section(key, className) {
   const node = el('section', undefined, className ? `drawer-section ${className}` : 'drawer-section');
   node.append(el('h3', tr(key))); return node;
 }
+let actionNotice = null, actionBusy = false;
+function taskActions(task) {
+  const box = section('actions', 'task-actions'), key = state.t;
+  const message = el('p');
+  attr(message, 'role', actionNotice?.key === key && actionNotice.error ? 'alert' : 'status');
+  if (actionNotice?.key === key) text(message, actionNotice.message);
+  const controls = el('fieldset');
+  controls.disabled = actionBusy;
+  const legend = el('legend', tr('actions'), 'sr-only'); controls.append(legend);
+  box.append(controls, message);
+  function area(form, name, label, required, max) {
+    const field = el('textarea'); field.name = name; field.id = 'action-' + name;
+    field.required = required; field.maxLength = max; field.rows = 3;
+    const caption = el('label', tr(label)); caption.htmlFor = field.id;
+    form.append(caption, field); return field;
+  }
+  function form(action, label, fields) {
+    const node = el('form'); controls.append(node);
+    const values = fields(node);
+    const submit = el('button', tr(label)); submit.type = 'submit'; node.append(submit);
+    node.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (actionBusy || !node.reportValidity()) return;
+      const body = {action, ...values()};
+      if (Object.values(body).some(value => typeof value === 'string' && !value.trim())) {
+        node.querySelector('textarea')?.focus(); return;
+      }
+      actionBusy = true; controls.disabled = true; text(message, ''); attr(message, 'role', 'status');
+      try {
+        const response = await fetch('/api/projects/' + encodeURIComponent(key.split(':')[0]) + '/tasks/' +
+          encodeURIComponent(task.task_id) + '/actions', {method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || tr('actionError'));
+        actionNotice = {key, message: tr('actionSuccess'), error: false};
+        overview = await getJSON('/api/overview');
+        renderOverview(); await loadDetail(true);
+      } catch (error) {
+        actionNotice = {key, message: error.message || tr('actionError'), error: true};
+        attr(message, 'role', 'alert'); text(message, actionNotice.message);
+      } finally { actionBusy = false; controls.disabled = false;
+        if (state.t === key) document.querySelector('.task-actions > fieldset')?.removeAttribute('disabled');
+      }
+    });
+  }
+  if (task.state === 'REVIEW') {
+    controls.append(el('p', tr('readDiff')));
+    const command = 'agent-bridge result ' + task.task_id;
+    const field = el('textarea', command, 'command'); field.readOnly = true; field.rows = 2;
+    attr(field, 'aria-label', tr('command'));
+    const copy = button(tr('copy'), () => copyCommand(command, copy, field)); controls.append(field, copy);
+    form('review', 'submitReview', node => {
+      const radios = el('fieldset'); radios.append(el('legend', tr('reviewDecision')));
+      for (const [value, label] of [['approve', 'approve'], ['rework', 'actionRework'], ['block', 'actionBlock']]) {
+        const caption = el('label'), input = el('input');
+        input.type = 'radio'; input.name = 'decision'; input.value = value; input.required = true;
+        if (value === 'approve') input.checked = true;
+        caption.append(input, el('span', tr(label))); radios.append(caption);
+      }
+      node.append(radios);
+      const notes = area(node, 'notes', 'actionNotes', true, 4000);
+      return () => ({decision: node.querySelector('input:checked').value, notes: notes.value});
+    });
+  }
+  if (task.state === 'READY') form('execute', 'actionRun', () => () => ({}));
+  if (['REWORK', 'FAILED', 'PAUSED'].includes(task.state)) {
+    if (task.state === 'PAUSED') controls.append(el('p', tr(task.reason || pauseReason(task.failure))));
+    form('resume', 'resume', node => {
+      const feedback = area(node, 'feedback', 'actionFeedback', false, 4000);
+      return () => feedback.value.trim() ? {feedback: feedback.value} : {};
+    });
+  }
+  const reveal = button(tr('cancelTask'), () => {
+    reveal.hidden = true; cancel.hidden = false; cancel.querySelector('textarea').focus();
+  });
+  controls.append(reveal);
+  form('cancel', 'confirmCancel', node => {
+    node.hidden = true;
+    const reason = area(node, 'reason', 'cancelReason', true, 500);
+    return () => ({reason: reason.value});
+  });
+  const cancel = controls.lastElementChild;
+  return box;
+}
 function codeList(items) {
   const list = el('ul', undefined, 'plain-list');
   for (const item of items) { const li = el('li'); li.append(el('code', item)); list.append(li); }
@@ -1163,7 +1259,7 @@ function renderDetail() {
   text($('drawer-title'), taskData?.objective || state.t.split(':').pop());
   const body = $('drawer-body');
   const context = workflowContext();
-  const signature = JSON.stringify([state.lang, taskData, detailError, context]);
+  const signature = JSON.stringify([state.lang, taskData, detailError, context, overview?.actions, actionNotice]);
   if (body._signature === signature) return;
   body._signature = signature; body.replaceChildren();
   if (detailError) { stopLog(); body.append(el('p', tr(detailError)), button(tr('retry'), () => loadDetail())); return; }
@@ -1185,6 +1281,11 @@ function renderDetail() {
     const copy = button(tr('copy'), () => copyCommand(task.command, copy, field));
     callout.append(el('p', tr({approve: 'nextApprove', resume: 'nextResume'}[verb] || 'nextResult')), field, copy);
     body.append(callout);
+  }
+  if (overview?.actions && !['DONE', 'CANCELLED', 'BLOCKED'].includes(task.state)) body.append(taskActions(task));
+  else if (actionNotice?.key === state.t) {
+    const notice = el('p', actionNotice.message);
+    attr(notice, 'role', actionNotice.error ? 'alert' : 'status'); body.append(notice);
   }
   // (d) evidence: checks, scope, changes, summary, reviews.
   const checks = section('checks');

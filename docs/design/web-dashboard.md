@@ -1,6 +1,6 @@
 # Web dashboard design
 
-`agent-bridge web` is a read-only, localhost view of every project's bridge state. This page records
+`agent-bridge web` is a localhost view of every project's bridge state. This page records
 why it looks the way it does: the audit that started the redesign, the information architecture,
 the design tokens and components, and the accessibility rules it follows. Change
 the dashboard against this page, and change this page when a rule changes.
@@ -10,7 +10,7 @@ the dashboard against this page, and change this page when a rule changes.
 The printed `agent-bridge web` URL contains a one-time launch code (`/?code=...`).
 It expires ten minutes after server start. The first valid GET consumes it and redirects
 to `/`, setting an HttpOnly, SameSite=Strict `bridge_session` cookie with Path=/.
-This is a session cookie without Expires or Max-Age; Secure is omitted for loopback HTTP.
+The cookie has no Max-Age or Expires; the server expires sessions after 12 idle hours. Secure is omitted for loopback HTTP.
 The session id lives only in server memory and the cookie, never in page JavaScript or
 browser storage. API requests require this cookie; token headers grant no access.
 The page removes any remaining code query from its address. Invalid, expired or reused
@@ -27,8 +27,9 @@ dashboard between other work and need to answer, in this order:
 3. Do my accounts have quota and free slots, and will a quota pause move to another account?
 4. Where is a given task, and what happened in it?
 
-The dashboard never acts. Every next step is a command to copy into a terminal, because approvals,
-logins and account changes are human-only by design.
+Routine decisions happen on the page: review, run, resume and cancel (see Task actions). Human
+approval of high-risk tasks, reassignment, logins and account changes stay commands to copy into a
+terminal, because they are human-only by design.
 
 ## Audit (before this redesign)
 
@@ -65,7 +66,8 @@ structure rather than decoration; color only when it means something; sentence c
 44 px touch targets; detail in an inspector instead of new pages. A sidebar with the project list
 was added later, on evidence rather than from the reference: real use showed about 40 projects on
 one machine, so the page needed a project scope that a select could not offer. Not taken: its
-tokens, names and components, and any action buttons (this dashboard is view-only).
+tokens, names and components. Its action buttons were not copied either; the drawer's actions were
+added later, after the threat model below.
 
 ## Information architecture
 
@@ -175,3 +177,46 @@ drawer and the phone sidebar. Motion: color transitions under 150 ms, none with
   no violation on any view in either theme at 1440 and 390 px after the fixes; a computed-style
   pass checked contrast, accessible names, duplicate ids, focus rings on a Tab walk, target sizes
   and overflow. Repeat them by hand after changing colors or layout.
+
+## Task actions
+
+The task drawer offers review (approve, rework or block, with notes) in REVIEW,
+Run in READY, Resume in REWORK, FAILED or PAUSED (optional feedback), and a
+two-step Cancel task form with a required reason for every non-terminal task.
+Read the diff with the copyable result command before reviewing. Each action
+runs the agent-bridge CLI; execute and resume start detached. CLI failures are
+returned with redacted stderr. Human approval of high-risk tasks, reassignment
+and account commands stay in the terminal: these deliberately terminal-only
+steps are not exposed by the endpoint. Start `agent-bridge web --read-only`
+to hide all actions and reject POST with 405.
+
+POST requires the session cookie, application/json, a JSON object, and a
+Content-Length no larger than 16 KB. At least one of Origin or Sec-Fetch-Site
+must be present. Every API request rejects an Origin different from its own
+origin or a Sec-Fetch-Site other than same-origin or none. Sessions live only
+in server memory and expire after 12 idle hours; the cookie has no Max-Age or Expires.
+
+## Threat model
+
+Actions were added only after checking who can reach the endpoint. Everything runs as one user, so
+the question is whether the page gives anyone more than the CLI already does.
+
+| Actor | Can it act through the page? | Evidence |
+|---|---|---|
+| Codex executor (`workspace-write`, network off) | No: cannot reach 127.0.0.1 | `curl` to the dashboard from inside the sandbox returned no connection; the same call with network on returned 200 |
+| Claude executor with `allow_bash` | Reaches the port, but has no session: the launch code is printed only to the human's terminal and the cookie lives in that browser's memory | It can already run the CLI, which the bridge refuses under `AGENT_BRIDGE_AGENT`; without a cookie every `/api` call is 401 |
+| agy (browser tools) | No session in its own browser | Same as above |
+| Another web page in the user's browser | No | SameSite=Strict, plus Origin and Sec-Fetch-Site checks on every `/api` request; DNS rebinding gets 421 from the Host check |
+| Script injected into the dashboard | No injection point found | CSP `default-src 'self'`, no inline script or style, text set through DOM APIs; the e2e suite renders a task named `<img onerror>` |
+| Someone reading the disk or browser storage | Nothing to find | Probe with a persistent Chromium profile: the session id and launch code appear in no profile file (UTF-8 or UTF-16), `document.cookie` does not show the cookie, a reused link sets none. The old `?token=` was found in the profile's session storage |
+| A local server on another 127.0.0.1 port the user visits | Receives the cookie (cookies are not port-scoped) | Residual risk. Such a process already runs as the user and can run the CLI itself; the page offers nothing the CLI does not |
+
+Decisions:
+
+- On the page: review, run, resume and cancel. Each runs the same CLI command with an argv list,
+  is limited to the states where the CLI allows it, and a cancel or a review needs a written reason.
+- Terminal only: `agent-bridge approve` for high-risk tasks (it requires an interactive terminal,
+  which a browser request cannot prove), `reassign`, logins and every account command (they touch
+  credentials).
+- The patch is not served; the review form points to `agent-bridge result <id>`.
+- `--read-only` keeps the original view-only dashboard for anyone who prefers it.
