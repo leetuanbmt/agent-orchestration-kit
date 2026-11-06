@@ -263,7 +263,7 @@ agent plans:  bridge_plan → bridge_workflow_status(wait_s) → bridge_run_work
 **5. Follow progress** with `agent-bridge` (terminal dashboard) or `agent-bridge web`. See
 [Monitoring](#monitoring).
 
-<img alt="Web dashboard demo: the queue of tasks that need you, the task drawer opened with ], the board, the dark theme and Vietnamese" src="docs/images/web-demo.gif" width="900">
+<img alt="Web dashboard demo: the overview with the tasks waiting on you, the task drawer opened with ], the accounts view, the board, then the dark theme and Vietnamese" src="docs/images/web-demo.gif" width="900">
 
 ## Configuration
 
@@ -556,31 +556,40 @@ CLIs, a fresh `HOME`, a demo project). Regenerate them with
 8765; `--port 0` picks a free one; Ctrl+C stops it). The printed URL carries a per-launch secret
 token that every API request needs; do not share it.
 
-<img alt="Web dashboard: attention counters, the queue of tasks waiting on you, and the task table" src="docs/images/web-tasks-light.png" width="900">
+<img alt="Web dashboard overview: tasks waiting on you with the command to copy, work in progress with time used, and account capacity with the quota-fallback policy" src="docs/images/web-overview-light.png" width="900">
 
-It covers every project agent-bridge knows on this machine and their git worktrees:
+It covers every project agent-bridge knows on this machine and their git worktrees, in four
+views:
 
-- **Summary and queue.** Counters for tasks that need you, wait for review, run, and finished in
-  the last 24 hours, then the tasks waiting on you in the bridge's priority order, each with the
-  command to copy. `[` and `]` open the previous or next one.
-- **Tasks, Board and Projects.** A table filtered by search, project, worktree and status; a board
-  with Needs you, In review, Running and Queued lanes (a running card shows elapsed time against
-  its timeout) and finished work folded underneath; and counts per project and worktree.
+- **Overview.** What is waiting on you, in the bridge's priority order, each with the command to
+  copy (`[` and `]` open the previous or next one); the tasks running now with time used against
+  their timeout; every account with its state, busy slots and quota left; whether quota fallback
+  is on; and the projects.
+- **Tasks and Board.** A searchable table with status tabs (project and worktree filters appear
+  when there is more than one; columns that would repeat one value are left out), and a board with
+  Needs action, In review, Running and Queued lanes and finished work folded underneath.
+- **Accounts.** One card per account: available, out of quota or login needed, each quota window
+  as a meter with its reset time, slots in use and the agents on it; the quota-fallback policy of
+  each project and the recent automatic switches, each opening its task.
 - **Task drawer.** Status, a lifecycle stepper, the next step with its command, verification
   checks as pass or fail, scope violations, changed files, the agent's summary, reviews, attempts
   and the live attempt log; raw fields sit under *Technical details*. The selection is part of the
   URL, so a link reopens it.
-- **Readable anywhere.** Light, dark or the system theme; English or Vietnamese; on a phone each
-  task becomes a card. A state is shown by a symbol and a label, never by color alone.
-- **Live.** It refreshes every 3 s. When the bridge cannot be reached it says so and shows the
-  time of the last data it received.
 
-<img alt="Board view in the dark theme" src="docs/images/web-board-dark.png" width="900">
+It refreshes every 3 s and says when the bridge cannot be reached, keeping the last data on screen.
+Light, dark or the system theme and English or Vietnamese sit in the settings menu; on a phone the
+views move to a bottom bar and each task becomes a compact row. A state is shown by a symbol and a
+label, never by color alone. The design rules and the accessibility checks are in
+[docs/design/web-dashboard.md](docs/design/web-dashboard.md).
 
-<img alt="Task drawer with the lifecycle stepper, next step and readable final summary" src="docs/images/web-drawer-light.png" width="640"> <img alt="Phone layout with view buttons in one row" src="docs/images/web-mobile-light.png" width="240">
+<img alt="Accounts view in the dark theme: quota fallback on, quota windows per account, and an automatic switch" src="docs/images/web-accounts-dark.png" width="900">
 
-The web dashboard is read-only: it opens each `bridge.db` with SQLite `mode=ro`, starts no agent
-and performs no human action. It listens on `127.0.0.1` only and rejects other `Host` headers.
+<img alt="Task drawer with the lifecycle stepper, next step and readable final summary" src="docs/images/web-drawer-light.png" width="640"> <img alt="Phone layout of the overview with the bottom navigation bar" src="docs/images/web-mobile-light.png" width="240">
+
+The web dashboard is read-only: it opens each `bridge.db` with SQLite `mode=ro`, reads account
+state and quota only from that database and the project config (it never probes a CLI or reads an
+account home), starts no agent and performs no human action. It listens on `127.0.0.1` only and
+rejects other `Host` headers.
 
 ## Troubleshooting
 

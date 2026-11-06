@@ -264,7 +264,7 @@ agent plans:  bridge_plan → bridge_workflow_status(wait_s) → bridge_run_work
 **5. Theo dõi tiến độ** bằng `agent-bridge` (dashboard terminal) hoặc `agent-bridge web`. Xem
 [Theo dõi](#theo-dõi).
 
-<img alt="Demo dashboard web: hàng đợi task cần bạn, ngăn chi tiết mở bằng phím ], board, theme tối và tiếng Việt" src="docs/images/web-demo.gif" width="900">
+<img alt="Demo dashboard web: trang tổng quan với các task đang chờ bạn, ngăn chi tiết mở bằng phím ], view Tài khoản, board, rồi theme tối và tiếng Việt" src="docs/images/web-demo.gif" width="900">
 
 ## Cấu hình
 
@@ -556,32 +556,40 @@ giả, `HOME` mới, một project demo). Tạo lại bằng
 mặc định 8765; `--port 0` tự chọn port trống; Ctrl+C để dừng). URL được in ra chứa một token bí
 mật sinh cho mỗi lần chạy, mọi request API đều cần token này; đừng chia sẻ nó.
 
-<img alt="Web dashboard: bộ đếm việc cần chú ý, hàng đợi task đang chờ bạn và bảng task" src="docs/images/web-tasks-light.png" width="900">
+<img alt="Trang tổng quan của dashboard web: task đang chờ bạn kèm lệnh để sao chép, việc đang chạy với thời gian đã dùng, và năng lực của các tài khoản cùng chính sách chuyển dự phòng khi hết quota" src="docs/images/web-overview-light.png" width="900">
 
-Dashboard bao quát mọi dự án agent-bridge biết trên máy này cùng các git worktree của chúng:
+Dashboard bao quát mọi dự án agent-bridge biết trên máy này cùng các git worktree của chúng, chia
+thành bốn view:
 
-- **Tóm tắt và hàng đợi.** Bộ đếm task cần bạn, chờ duyệt, đang chạy và đã xong trong 24 giờ
-  qua, kèm danh sách task đang chờ bạn theo thứ tự ưu tiên của bridge, mỗi task có lệnh để sao
-  chép. Phím `[` và `]` mở task trước hoặc sau.
-- **Tasks, Board và Projects.** Bảng lọc theo từ khóa, dự án, worktree và trạng thái; board với
-  các cột Cần bạn, Đang duyệt, Đang chạy và Đang chờ (thẻ đang chạy cho biết thời gian đã chạy so
-  với timeout), việc đã xong được thu gọn bên dưới; và số liệu theo dự án, theo worktree.
+- **Tổng quan.** Những gì đang chờ bạn, theo thứ tự ưu tiên của bridge, mỗi mục có lệnh để sao
+  chép (phím `[` và `]` mở mục trước hoặc sau); các task đang chạy với thời gian đã dùng so với
+  timeout; từng tài khoản với trạng thái, số slot đang bận và quota còn lại; chuyển dự phòng khi
+  hết quota có đang bật hay không; và các dự án.
+- **Tác vụ và Bảng.** Bảng có ô tìm kiếm và tab trạng thái (bộ lọc dự án và worktree chỉ hiện khi
+  có nhiều hơn một; cột nào chỉ lặp một giá trị sẽ bị ẩn), và board với các cột Cần xử lý, Đang
+  duyệt, Đang chạy và Trong hàng đợi, việc đã xong được thu gọn bên dưới.
+- **Tài khoản.** Mỗi tài khoản một thẻ: sẵn sàng, hết quota hoặc cần đăng nhập, từng cửa sổ quota
+  là một thanh đo kèm thời điểm đặt lại, số slot đang dùng và các agent trên tài khoản đó; chính
+  sách chuyển dự phòng của từng dự án và các lần chuyển tự động gần đây, mỗi dòng mở task tương ứng.
 - **Ngăn chi tiết task.** Trạng thái, thanh tiến trình vòng đời, việc tiếp theo kèm lệnh, kết quả
   từng lệnh kiểm tra (đạt hoặc không), vi phạm phạm vi, file thay đổi, tóm tắt của agent, review,
   các lần chạy và log trực tiếp; các trường thô nằm trong *Chi tiết kỹ thuật*. Task đang chọn nằm
   trong URL nên mở lại được bằng link.
-- **Dễ đọc ở mọi nơi.** Theme sáng, tối hoặc theo hệ thống; tiếng Anh hoặc tiếng Việt; trên điện
-  thoại mỗi task là một thẻ. Trạng thái luôn có ký hiệu và nhãn, không chỉ dựa vào màu.
-- **Cập nhật trực tiếp.** Làm mới mỗi 3 giây. Khi không kết nối được bridge, dashboard báo rõ và
-  hiện thời điểm của dữ liệu cuối cùng nhận được.
 
-<img alt="Chế độ Board với theme tối" src="docs/images/web-board-dark.png" width="900">
+Dashboard làm mới mỗi 3 giây; khi không kết nối được bridge, nó báo rõ và giữ dữ liệu cuối cùng
+trên màn hình. Theme sáng, tối hoặc theo hệ thống và tiếng Anh hoặc tiếng Việt nằm trong menu cài
+đặt; trên điện thoại các view chuyển xuống thanh dưới cùng và mỗi task là một dòng gọn. Trạng thái
+luôn có ký hiệu và nhãn, không chỉ dựa vào màu. Quy tắc thiết kế và các bước kiểm tra accessibility
+nằm trong [docs/design/web-dashboard.md](docs/design/web-dashboard.md) (chỉ có bản tiếng Anh).
 
-<img alt="Ngăn chi tiết task với thanh vòng đời, việc tiếp theo và tóm tắt dễ đọc" src="docs/images/web-drawer-light.png" width="640"> <img alt="Bố cục trên điện thoại, các nút view trên một hàng" src="docs/images/web-mobile-light.png" width="240">
+<img alt="View Tài khoản với theme tối: chuyển dự phòng đang bật, cửa sổ quota của từng tài khoản và một lần chuyển tự động" src="docs/images/web-accounts-dark.png" width="900">
 
-Dashboard web chỉ đọc: nó mở từng `bridge.db` bằng SQLite `mode=ro`, không khởi chạy agent nào
-và không thực hiện thao tác nào dành cho con người. Nó chỉ lắng nghe trên `127.0.0.1` và từ chối
-các header `Host` khác.
+<img alt="Ngăn chi tiết task với thanh vòng đời, việc tiếp theo và tóm tắt dễ đọc" src="docs/images/web-drawer-light.png" width="640"> <img alt="Trang tổng quan trên điện thoại với thanh điều hướng ở dưới cùng" src="docs/images/web-mobile-light.png" width="240">
+
+Dashboard web chỉ đọc: nó mở từng `bridge.db` bằng SQLite `mode=ro`, chỉ đọc trạng thái và quota
+của tài khoản từ database đó và cấu hình dự án (không bao giờ gọi thử CLI hay đọc thư mục home
+của tài khoản), không khởi chạy agent nào và không thực hiện thao tác nào dành cho con người. Nó
+chỉ lắng nghe trên `127.0.0.1` và từ chối các header `Host` khác.
 
 ## Xử lý sự cố
 
