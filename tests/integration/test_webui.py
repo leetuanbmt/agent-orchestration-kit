@@ -93,7 +93,8 @@ def test_overview_shape(server, repo, monkeypatch):
     assert headers["Content-Type"] == "application/json; charset=utf-8"
     overview = json.loads(body)
     assert set(overview) == {"generated_at", "projects", "attention", "running", "activity", "requests", "tasks",
-                             "accounts", "switches"}
+                             "accounts", "switches", "actions"}
+    assert overview["actions"] is False
     assert isinstance(overview["accounts"], list) and isinstance(overview["switches"], list)
     assert set(overview["projects"][0]) == {
         "pid", "name", "root", "worktree_of", "root_missing", "error", "counts", "percent", "badge",
