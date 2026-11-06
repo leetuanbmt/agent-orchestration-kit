@@ -326,3 +326,25 @@ def test_web_workflow(sandbox: Sandbox) -> None:
                       project_id(str(sandbox.root)), {"first": first, "second": second})
     result = board.browser("workflow")
     assert result["ok"] and not result.get("error"), json.dumps(result, indent=1)[:5000]
+
+
+# @pt.id QA-E2E-098-web-visual
+# @pt.item Dashboard visual regression
+# @pt.condition deterministic main views and review drawer in light/dark, plus phone Home
+# @pt.expected 13 screenshots match platform baselines within 0.1 percent, or update baselines when requested
+# @pt.target bridge/static/app.js, bridge/static/app.css
+# @pt.method e2e (Playwright)
+# @pt.legacy none
+def test_web_visual(dashboard: Dashboard) -> None:
+    update = os.environ.get("QA_VISUAL_UPDATE") == "1"
+    platform = "win32" if sys.platform == "win32" else sys.platform
+    baselines = DRIVER.parent / "visual" / platform
+    if not update and not any(baselines.glob("*.png")):
+        pytest.skip(
+            "No visual baselines for " + platform + "; update with "
+            "QA_E2E=1 QA_VISUAL_UPDATE=1 uv run --frozen pytest -q "
+            "tests/qa/test_e2e_web.py::test_web_visual")
+    if not _playwright():
+        pytest.skip("node with playwright not installed")
+    result = dashboard.browser("visual", update=update)
+    assert result["ok"] and not result.get("error"), json.dumps(result, indent=1)[:5000]

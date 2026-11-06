@@ -3,6 +3,7 @@
 const { chromium } = require('playwright');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 
 const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const checks = [];
@@ -33,6 +34,124 @@ async function open(page, hash = '') {
 }
 
 const scenarios = {
+  async visual(page) {
+    const fixed = Date.UTC(2025, 0, 15, 12);
+    await page.clock.setFixedTime(fixed);
+    const baselineDir = path.join(__dirname, 'visual', process.platform);
+    if (cfg.update) fs.mkdirSync(baselineDir, { recursive: true });
+    let offset;
+    let overview;
+    function normalize(value, key = '') {
+      if (typeof value === 'number' && /(_at$|^since$|^ts$|^resets?(?:_|$))/.test(key)) {
+        return value + offset;
+      }
+      if (typeof value === 'string') {
+        return value.split(cfg.root).join('/work/project')
+          .split(path.dirname(cfg.root)).join('/work').split(cfg.pid).join('visual-project');
+      }
+      if (Array.isArray(value)) return value.map(item => normalize(item));
+      if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, normalize(v, k)]));
+      }
+      return value;
+    }
+    await page.route('**/api/overview', async route => {
+      if (!overview) {
+        const response = await route.fetch();
+        const body = await response.json();
+        offset = fixed / 1000 - body.generated_at;
+        overview = normalize(body);
+      }
+      await route.fulfill({ json: overview });
+    });
+    await page.route('**/api/projects/**', async route => {
+      // Render a stable project id while retaining the server's real id in requests.
+      const url = route.request().url().replace('visual-project', cfg.pid);
+      const response = await route.fetch({ url });
+      await route.fulfill({ response, json: normalize(await response.json()) });
+    });
+    const comparison = await page.context().browser().newPage();
+    async function shot(name) {
+      await page.waitForFunction(() => /Live/.test(document.getElementById('live').textContent));
+      await page.evaluate(() => document.fonts.ready);
+      // Seed durations still vary, even after moving all timestamps to the fixed clock.
+      const actual = await page.screenshot({ animations: 'disabled', caret: 'hide',
+        mask: [page.locator('.attempt-log-section, .cell-updated, .card-meta, .attention-head'),
+          page.locator('#project-cards td:last-child'),
+          page.locator('#drawer-body > dl').filter({ has: page.locator('dt', { hasText: 'Started' }) })] });
+      const baseline = path.join(baselineDir, name + '.png');
+      if (cfg.update) {
+        fs.writeFileSync(baseline, actual);
+        check(name, true, 'baseline updated');
+        return;
+      }
+      if (!fs.existsSync(baseline)) {
+        fs.writeFileSync(path.join(cfg.shots, name + '-actual.png'), actual);
+        check(name, false, 'Missing baseline: ' + baseline);
+        return;
+      }
+      const result = await comparison.evaluate(async ({ expected, actual }) => {
+        async function load(data) {
+          const img = new Image();
+          img.src = 'data:image/png;base64,' + data;
+          await img.decode();
+          return img;
+        }
+        const [a, b] = await Promise.all([load(expected), load(actual)]);
+        const width = Math.max(a.width, b.width), height = Math.max(a.height, b.height);
+        function canvas(img) {
+          const node = document.createElement('canvas');
+          node.width = width; node.height = height;
+          const ctx = node.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          return { node, ctx, data: ctx.getImageData(0, 0, width, height) };
+        }
+        const left = canvas(a), right = canvas(b);
+        let different = 0;
+        for (let i = 0; i < left.data.data.length; i += 4) {
+          const x = (i / 4) % width, y = Math.floor(i / 4 / width);
+          const differs = x >= a.width || x >= b.width || y >= a.height || y >= b.height ||
+            [0, 1, 2, 3].some(c => Math.abs(left.data.data[i + c] - right.data.data[i + c]) > 24);
+          if (differs) {
+            different++;
+            right.data.data.set([255, 0, 255, 255], i);
+          }
+        }
+        right.ctx.putImageData(right.data, 0, 0);
+        const percent = different / (width * height) * 100;
+        return { ok: a.width === b.width && a.height === b.height && percent <= 0.1,
+          percent, sizes: `${a.width}x${a.height} / ${b.width}x${b.height}`,
+          diff: right.node.toDataURL('image/png').split(',')[1] };
+      }, { expected: fs.readFileSync(baseline).toString('base64'), actual: actual.toString('base64') });
+      if (!result.ok) {
+        fs.writeFileSync(path.join(cfg.shots, name + '-actual.png'), actual);
+        fs.writeFileSync(path.join(cfg.shots, name + '-diff.png'), Buffer.from(result.diff, 'base64'));
+      }
+      check(name, result.ok, `${result.percent.toFixed(4)}% differing pixels; sizes ${result.sizes}`);
+    }
+    try {
+      for (const theme of ['light', 'dark']) {
+        await open(page, '#view=settings');
+        await page.selectOption('#theme', theme);
+        for (const view of ['overview', 'tasks', 'board', 'accounts', 'settings']) {
+          await open(page, `#view=${view}&s=all`);
+          await shot(`${view}-${theme}`);
+        }
+        await open(page, '#view=tasks&s=all');
+        await rows(page).filter({ hasText: cfg.tasks.review }).click();
+        await page.waitForFunction(() => !document.getElementById('drawer').hidden &&
+          /Verification checks/.test(document.getElementById('drawer-body').innerText));
+        await shot(`drawer-${theme}`);
+      }
+      await open(page, '#view=settings');
+      await page.selectOption('#theme', 'light');
+      await page.setViewportSize({ width: 390, height: 844 });
+      await open(page, '#view=overview');
+      await shot('overview-phone');
+    } finally {
+      await comparison.close();
+    }
+  },
   async workflow(page) {
     await open(page, '#view=tasks&s=all');
     const first = rows(page).filter({ hasText: cfg.tasks.first });
@@ -969,7 +1088,8 @@ const scenarios = {
 
 (async () => {
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, locale: 'en-US' });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, locale: 'en-US',
+    ...(cfg.scenario === 'visual' ? { timezoneId: 'UTC' } : {}) });
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
   try {
