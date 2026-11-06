@@ -447,8 +447,14 @@ dt { color: var(--text-muted); } dd { margin: 0; overflow-wrap: anywhere; }
 .task-actions fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .task-actions form { display: grid; gap: .5rem; margin-block: .75rem; }
 .task-actions form[hidden] { display: none; }
-.task-actions textarea { box-sizing: border-box; width: 100%; }
+.task-actions textarea { box-sizing: border-box; width: 100%; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-sm); padding: 8px 10px; resize: vertical; }
+.task-actions input[type="radio"] { height: auto; padding: 0; border: 0; accent-color: var(--accent); }
+.task-actions legend { padding: 0; }
 .task-actions form fieldset { display: flex; flex-wrap: wrap; gap: .75rem; }
-.task-actions label { display: flex; align-items: center; gap: .4rem; min-height: 24px; }
+#drawer .task-actions label { display: flex; align-items: center; gap: .4rem; margin: 0; min-height: 24px; min-width: 24px; }
 .task-actions button { min-height: 24px; min-width: 24px; }
 .task-actions [role="alert"] { color: var(--st-blocked); }
+
+@media (pointer: coarse) {
+  #drawer .task-actions label, .task-actions button, .task-actions textarea { min-height: 44px; min-width: 44px; }
+}
