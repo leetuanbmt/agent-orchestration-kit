@@ -95,9 +95,18 @@ def test_overview_shape(server, repo, monkeypatch):
     assert set(overview) == {"generated_at", "projects", "attention", "running", "activity", "requests", "tasks",
                              "accounts", "switches"}
     assert isinstance(overview["accounts"], list) and isinstance(overview["switches"], list)
+    assert set(overview["projects"][0]) == {
+        "pid", "name", "root", "worktree_of", "root_missing", "error", "counts", "percent", "badge",
+        "branch", "updated_at", "fallback", "agents", "review_by"}
+    assert all(set(task) == {
+        "pid", "reason", "risk_level", "task_id", "objective", "state", "stage", "exception", "needs_human",
+        "updated_at", "agent", "account", "workflow_id", "command"} for task in overview["tasks"])
+    assert {task["risk_level"] for task in overview["tasks"]} == {"low"}
     pid = progress.project_id(str(repo))
     for kind in ("tasks", "requests"):
         assert request(server, f"/api/projects/{pid}/{kind}/T0001")[0] == 200
+    detail = json.loads(request(server, f"/api/projects/{pid}/tasks/T0001")[2])
+    assert (detail["patch"], detail["patch_truncated"]) == ("", False)
     assert request(server, host=f"localhost:{server.server_address[1]}")[0] == 200
     def broken(roots):
         raise RuntimeError(str(repo))

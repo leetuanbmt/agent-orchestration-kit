@@ -267,7 +267,7 @@ def test_snapshot_running_and_activity(repo, store, monkeypatch):
 # @pt.id T0022-redaction
 # @pt.item Free text sanitization and detail projection
 # @pt.condition Secrets and long fields in tasks, reviews, and attempts
-# @pt.expected Redacted bounded fields with no patch or stderr
+# @pt.expected Redacted bounded fields, a redacted patch and no stderr
 # @pt.target bridge.progress.task_detail
 # @pt.method unit
 # @pt.legacy None
@@ -277,7 +277,7 @@ def test_free_text_is_redacted_and_truncated(repo, store):
     tid = add(store, "PAUSED", objective=text, failure="AUTH: " + text)
     store.start_attempt(tid, 1, "execute")
     store.db.execute("UPDATE attempts SET final=?,stderr_tail=?,changes=?,verification=?",
-                     (text, "private stderr", json.dumps({"patch": "private patch", "files": ["src/app.py"],
+                     (text, "private stderr", json.dumps({"patch": "+key = " + token + "\n", "files": ["src/app.py"],
                        "stat": "1 file", "head_changed": True}),
                       json.dumps({"checks": [{"command": "pytest", "passed": False, "error": text}],
                                   "scope_violations": ["outside scope"]})))
@@ -291,8 +291,9 @@ def test_free_text_is_redacted_and_truncated(repo, store):
     assert len(detail["reviews"][0]["notes"]) <= 501
     assert detail["files"] == ["src/app.py"] and detail["head_changed"]
     assert detail["checks"][0]["passed"] is False
-    assert "patch" not in detail and "stderr_tail" not in detail
-    assert "private patch" not in json.dumps(detail) and "private stderr" not in json.dumps(detail)
+    assert token not in detail["patch"] and "[REDACTED]" in detail["patch"]
+    assert "stderr_tail" not in detail
+    assert "private stderr" not in json.dumps(detail)
 
 
 # @pt.id T0022-unreadable
@@ -656,7 +657,7 @@ def test_snapshot_tasks_and_worktree_metadata(repo, store):
             (progress.project_id(str(tree)), middle, 200),
             (progress.project_id(str(repo)), older, 100)]
         expected = {"pid", "task_id", "objective", "state", "stage", "exception", "needs_human",
-                    "updated_at", "agent", "account", "reason", "workflow_id", "command"}
+                    "updated_at", "agent", "account", "reason", "workflow_id", "command", "risk_level"}
         assert all(set(task) == expected for task in snap["tasks"])
         assert snap["projects"][0]["branch"] == branch
         assert [p["updated_at"] for p in snap["projects"]] == [300, 200]
@@ -941,3 +942,140 @@ def test_snapshot_available_account_not_lifted(repo, store, monkeypatch):
     work = next(a for a in snap["accounts"] if a["name"] == "work")
     assert work["state"] == "available" and work["lifted"] is None
     assert all("lifted" in a and a["lifted"] is None for a in snap["accounts"])
+
+
+TEAM = """
+accounts:
+  work: {provider: openai}
+  login: {provider: anthropic}
+agents:
+  lead: {adapter: client}
+  coder: {adapter: codex-cli, account: work}
+  helper: {adapter: claude-cli, account: login, enabled: false}
+roles:
+  executor: coder
+  reviewer: {agents: [lead, helper]}
+"""
+
+
+def use_orchestrator(monkeypatch, text):
+    orch = progress.orchestrator.parse(text, "test.yaml")
+    monkeypatch.setattr(progress.config, "load_config", lambda root: SimpleNamespace(default_timeout_s=900))
+    monkeypatch.setattr(progress.orchestrator, "load", lambda root, cfg: orch)
+
+
+# @pt.id T0080-agents
+# @pt.item Configured agents and reviewer per project
+# @pt.condition Client reviewer, codex-cli executor on an openai account, disabled claude-cli agent
+# @pt.expected Agents in config order with exact keys and values; review_by is you
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_project_agents_and_client_review(repo, store, monkeypatch):
+    use_orchestrator(monkeypatch, TEAM)
+    forbid_probes(monkeypatch)
+    add(store)
+    project = progress.snapshot([str(repo)], now=time.time())["projects"][0]
+    assert project["agents"] == [
+        {"agent": "lead", "adapter": "client", "account": None, "provider": None,
+         "roles": ["reviewer"], "enabled": True, "write": False},
+        {"agent": "coder", "adapter": "codex-cli", "account": "work", "provider": "openai",
+         "roles": ["executor"], "enabled": True, "write": True},
+        {"agent": "helper", "adapter": "claude-cli", "account": "login", "provider": "anthropic",
+         "roles": ["reviewer"], "enabled": False, "write": False}]
+    assert project["review_by"] == "you"
+
+
+# @pt.id T0080-review-by
+# @pt.item Who reviews a project's work
+# @pt.condition Non-client reviewer, no review stage, broken config, missing config
+# @pt.expected agent; None; agents [] and None without raising in both unusable cases
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_review_by_variants(repo, store, monkeypatch):
+    add(store)
+    use_orchestrator(monkeypatch, ORCHESTRATOR)
+    assert progress.snapshot([str(repo)], now=time.time())["projects"][0]["review_by"] == "agent"
+    use_orchestrator(monkeypatch, TEAM + "workflow: {stages: [execute, test]}\n")
+    project = progress.snapshot([str(repo)], now=time.time())["projects"][0]
+    assert project["review_by"] is None and len(project["agents"]) == 3
+
+    def broken(root, cfg):
+        raise ValueError("orchestrator.yaml: invalid YAML")
+    monkeypatch.setattr(progress.orchestrator, "load", broken)
+    project = progress.snapshot([str(repo)], now=time.time())["projects"][0]
+    assert (project["agents"], project["review_by"]) == ([], None)
+
+    def missing(root):
+        raise FileNotFoundError("no config")
+    monkeypatch.setattr(progress.config, "load_config", missing)
+    project = progress.snapshot([str(repo)], now=time.time())["projects"][0]
+    assert (project["agents"], project["review_by"]) == ([], None)
+
+
+# @pt.id T0080-agents-unreadable
+# @pt.item Agent fields on an unreadable project
+# @pt.condition The project database cannot be read
+# @pt.expected agents [] and review_by None
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_unreadable_project_has_empty_agents(repo, store, monkeypatch):
+    use_orchestrator(monkeypatch, TEAM)
+    def unreadable(root):
+        raise sqlite3.DatabaseError("corrupt")
+    monkeypatch.setattr(progress, "_read", unreadable)
+    project = progress.snapshot([str(repo)], now=time.time())["projects"][0]
+    assert project["error"] == "unreadable"
+    assert (project["agents"], project["review_by"]) == ([], None)
+
+
+# @pt.id T0080-risk
+# @pt.item Task risk level in the overview
+# @pt.condition High-risk spec, spec without risk_level and an unreadable spec
+# @pt.expected high for the first, low for the others
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_snapshot_task_risk_level(repo, store):
+    high, plain, broken = add(store, objective="a"), add(store, objective="b"), add(store, objective="c")
+    spec = json.loads(store.db.execute("SELECT spec FROM tasks WHERE id=?", (high,)).fetchone()[0])
+    store.db.execute("UPDATE tasks SET spec=? WHERE id=?", (json.dumps({**spec, "risk_level": "high"}), high))
+    spec.pop("risk_level", None)
+    store.db.execute("UPDATE tasks SET spec=? WHERE id=?", (json.dumps(spec), plain))
+    store.db.execute("UPDATE tasks SET spec=? WHERE id=?", ("{not json", broken))
+    tasks = {t["task_id"]: t for t in progress.snapshot([str(repo)], now=time.time())["tasks"]}
+    assert (tasks[high]["risk_level"], tasks[plain]["risk_level"], tasks[broken]["risk_level"]) == (
+        "high", "low", "low")
+
+
+# @pt.id T0080-patch
+# @pt.item Attempt diff in the task detail
+# @pt.condition No attempt, a normal patch, a stored truncation flag, a patch over 200000 characters, no patch
+# @pt.expected Empty and false; the diff and false; true; capped text and true; empty and false
+# @pt.target bridge.progress.task_detail
+# @pt.method unit
+# @pt.legacy None
+def test_task_detail_patch(repo, store):
+    tid = add(store)
+    roots = [str(repo)]
+    pid = progress.project_id(str(repo))
+    detail = progress.task_detail(pid, tid, roots)
+    assert (detail["patch"], detail["patch_truncated"]) == ("", False)
+    diff = "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n"
+
+    def store_changes(n, changes):
+        store.start_attempt(tid, n, "execute")
+        store.db.execute("UPDATE attempts SET changes=? WHERE task_id=? AND n=?",
+                         (json.dumps(changes), tid, n))
+        return progress.task_detail(pid, tid, roots)
+
+    detail = store_changes(1, {"files": ["src/app.py"], "patch": diff})
+    assert (detail["patch"], detail["patch_truncated"]) == (diff, False)
+    detail = store_changes(2, {"patch": diff, "patch_truncated": True})
+    assert (detail["patch"], detail["patch_truncated"]) == (diff, True)
+    detail = store_changes(3, {"patch": "+" * 200005})
+    assert detail["patch"] == "+" * 200000 + "…" and detail["patch_truncated"] is True
+    detail = store_changes(4, {"files": []})
+    assert (detail["patch"], detail["patch_truncated"]) == ("", False)
