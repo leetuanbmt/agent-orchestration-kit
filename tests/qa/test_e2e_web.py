@@ -49,6 +49,13 @@ def _playwright() -> bool:
 needs_browser = pytest.mark.skipif(not _playwright(), reason="node with playwright not installed")
 
 
+def _axe_core() -> bool:
+    if not shutil.which("node"):
+        return False
+    probe = subprocess.run(["node", "-e", "require.resolve('axe-core')"], capture_output=True)
+    return probe.returncode == 0
+
+
 @dataclass
 class Dashboard:
     box: Sandbox
@@ -189,6 +196,22 @@ def test_web_browser(dashboard: Dashboard, scenario: str) -> None:
     failed = [c for c in result["checks"] if not c["ok"]]
     assert result["ok"] and not result.get("error"), json.dumps(
         {"error": result.get("error"), "failed": failed}, indent=1)[:3000]
+
+
+# @pt.id QA-E2E-099-web-axe
+# @pt.item Dashboard accessibility with axe-core
+# @pt.condition overview, tasks (s=all), board, accounts, settings and REVIEW drawer in both themes at desktop and phone widths
+# @pt.expected all 24 audits have no WCAG 2.0/2.1/2.2 A/AA or best-practice violations
+# @pt.target bridge/static/app.js, bridge.webui
+# @pt.method e2e (Playwright, axe-core)
+# @pt.legacy none
+@needs_browser
+@pytest.mark.skipif(not _axe_core(), reason="axe-core is not resolvable: npm install -g axe-core@4.10.3 or provide a NODE_PATH containing axe-core")
+def test_web_axe(dashboard: Dashboard) -> None:
+    result = dashboard.browser("axe")
+    failed = [c for c in result["checks"] if not c["ok"]]
+    assert result["ok"] and not result.get("error"), json.dumps(
+        {"error": result.get("error"), "failed": failed}, indent=1)
 
 
 # @pt.id QA-E2E-074-web-performance

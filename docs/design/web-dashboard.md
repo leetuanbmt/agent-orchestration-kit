@@ -135,7 +135,11 @@ drawer and the phone sidebar. Motion: color transitions under 150 ms, none with
   several projects sharing task ids, a planner workflow and the table fit. Of the rules above it
   enforces no horizontal scroll at 375 px, focus returning on Escape, the meter labels, the status
   symbols, 24 px targets in the sidebar and the drawer, the drawer's dialog element and the log
-  role; contrast and focus rings are not checked by the suite.
+  role; focus rings are not checked by the suite.
+- `test_web_axe` runs the axe scenario when `axe-core` is resolvable through Node: 24 audits
+  covering all five views and the open task drawer in both themes at desktop and phone widths.
+  Provide it with `npm install -g axe-core@4.10.3` and a `NODE_PATH` containing the global
+  packages, or a `NODE_PATH` containing an existing axe-core installation; otherwise it skips.
 - `test_web_visual` compares 13 screenshots (each view in both themes, the drawer, phone Home)
   with baselines in `tests/qa/web/visual/<platform>/`, on a fixed clock with timestamps and paths
   normalised. Baselines exist for macOS only; other platforms skip it. After an intended visual

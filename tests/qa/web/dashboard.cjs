@@ -34,6 +34,36 @@ async function open(page, hash = '') {
 }
 
 const scenarios = {
+  async axe(page) {
+    const source = fs.readFileSync(path.join(path.dirname(require.resolve('axe-core')), 'axe.min.js'), 'utf8');
+    async function audit(view, theme, width) {
+      await page.evaluate(source);
+      const result = await page.evaluate(() => axe.run(document, {
+        runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'],
+      }));
+      checks.push({
+        name: `axe ${view} ${theme} ${width}px`,
+        ok: result.violations.length === 0,
+        detail: result.violations.map(v => `${v.id} (${v.impact}): ${JSON.stringify(v.nodes[0]?.target)}`).join('\n'),
+      });
+    }
+    for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      for (const theme of ['light', 'dark']) {
+        await open(page, '#view=settings');
+        await page.selectOption('#theme', theme);
+        for (const view of ['overview', 'tasks', 'board', 'accounts', 'settings']) {
+          await open(page, `#view=${view}&s=all`);
+          await audit(view, theme, viewport.width);
+        }
+        await open(page, '#view=tasks&s=all');
+        await rows(page).filter({ hasText: cfg.tasks.review }).click();
+        await page.waitForFunction(() => !document.getElementById('drawer').hidden &&
+          /Verification checks/.test(document.getElementById('drawer-body').innerText));
+        await audit('drawer', theme, viewport.width);
+      }
+    }
+  },
   async visual(page) {
     const fixed = Date.UTC(2025, 0, 15, 12);
     await page.clock.setFixedTime(fixed);
