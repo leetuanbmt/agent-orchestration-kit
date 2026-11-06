@@ -307,6 +307,71 @@ const scenarios = {
     await page.screenshot({ path: cfg.shots + '/mobile_cards.png', fullPage: true });
   },
 
+  // Long objectives, locations and agent names never push the table out of its column.
+  async table_fit(page) {
+    const agents = ['claude-leetuanbmt-long-account-name', 'codex-another-very-long-account'];
+    await page.route('**/api/overview', async route => {
+      const response = await route.fetch();
+      const body = await response.json();
+      for (const project of body.projects || []) project.name = 'harness-vibecode-very-long-project-name-' + project.name;
+      (body.tasks || []).forEach((task, i) => {
+        task.objective = 'Long objective '.repeat(20).slice(0, 300);
+        task.agent = agents[i % 2];
+      });
+      await route.fulfill({ response, json: body });
+    });
+    for (const width of [1024, 1280, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await open(page, '#view=tasks&s=all&g=1');
+      await page.waitForFunction(() => document.querySelectorAll('#task-rows td.cell-agent').length > 0, null, { timeout: 8000 })
+        .catch(() => {});
+      const fit = await page.evaluate(() => {
+        const column = document.getElementById('main-column').getBoundingClientRect();
+        const table = document.getElementById('tasks-table').getBoundingClientRect();
+        const lasts = [...document.querySelectorAll('#task-rows tr')].map(r => r.lastElementChild?.getBoundingClientRect().right ?? 0);
+        const first = document.querySelector('#task-rows tr:not(.worktree-header)');
+        const place = first && first.querySelector('.cell-location'), agent = first && first.querySelector('.cell-agent');
+        return { overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+                 columnRight: column.right, tableRight: table.right, maxLast: Math.max(...lasts),
+                 place: place && [place.textContent, place.title], agent: agent && [agent.textContent, agent.title] };
+      });
+      const share = await page.evaluate(() => {
+        const cell = document.querySelector('#task-rows tr:not(.worktree-header) td.task-cell');
+        return cell && cell.getBoundingClientRect().width / document.getElementById('tasks-table').getBoundingClientRect().width;
+      });
+      check(`the task column is at least 33% of the table at ${width} px`, share !== null && share >= 0.33, String(share));
+      check(`no horizontal page scroll at ${width} px with long values`, fit.overflow <= 1, JSON.stringify(fit));
+      check(`the table stays inside the content column at ${width} px`, fit.tableRight <= fit.columnRight + 1, JSON.stringify(fit));
+      check(`every last cell stays inside the content column at ${width} px`, fit.maxLast <= fit.columnRight + 1, JSON.stringify(fit));
+      check(`Location title holds the full value at ${width} px`,
+            fit.place && fit.place[0].length > 0 && fit.place[1].startsWith(fit.place[0]), JSON.stringify(fit.place));
+      check(`Agent title holds the full value at ${width} px`,
+            fit.agent && agents.includes(fit.agent[0]) && fit.agent[1] === fit.agent[0], JSON.stringify(fit.agent));
+    }
+    for (const lang of ['en', 'vi']) {
+      for (const width of [1024, 1280, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        await open(page, `#view=tasks&s=all&g=1&lang=${lang}`);
+        await page.waitForFunction(() => document.querySelectorAll('#task-rows td.cell-status').length > 0, null, { timeout: 8000 })
+          .catch(() => {});
+        const clip = await page.evaluate(() => {
+          const bad = [...document.querySelectorAll('#task-rows td.cell-status, #task-rows td.next-step')]
+            .filter(td => td.scrollWidth > td.clientWidth + 1).map(td => `${td.className}:${td.scrollWidth}>${td.clientWidth}`);
+          return { bad: bad.slice(0, 5), lang: document.documentElement.lang };
+        });
+        check(`status and next step are never clipped at ${width} px in ${lang}`, clip.bad.length === 0, JSON.stringify(clip));
+        const review = await page.evaluate(id => {
+          const row = [...document.querySelectorAll('#task-rows tr')].find(r => r.textContent.includes(id));
+          const cell = row && row.querySelector('td.cell-status');
+          const badge = cell && cell.querySelector('.badge');
+          return cell && { text: cell.textContent.trim(), full: (badge || cell).textContent.trim(), fits: cell.scrollWidth <= cell.clientWidth + 1 };
+        }, cfg.tasks.review);
+        check(`the REVIEW status shows its full label at ${width} px in ${lang}`,
+              review && review.text.length > 0 && review.text === review.full && review.fits, JSON.stringify(review));
+      }
+    }
+  },
+
   // The summary strip and the ranked queue lead to what needs a person.
   async attention(page) {
     // The tiles and the queue live on the overview; a tile then opens the Tasks view.

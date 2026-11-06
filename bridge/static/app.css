@@ -345,6 +345,34 @@ dt { color: var(--text-muted); } dd { margin: 0; overflow-wrap: anywhere; }
   th { position: static; }
 }
 
+/* Wide screens: fixed layout, the task column takes what the others leave and ellipsizes. */
+@media (min-width: 1000px) {
+  .table-wrap { overflow-x: clip; }
+  #tasks-view table { table-layout: fixed; width: 100%; min-width: 0; }
+  #tasks-view td, #tasks-view th { overflow: hidden; text-overflow: ellipsis; }
+  /* Status and Next step carry primary information: they wrap, never clip. */
+  #tasks-view td.cell-status, #tasks-view td.next-step, #tasks-view td.cell-updated { overflow: visible; text-overflow: clip; white-space: normal; }
+  #tasks-view .cell-status .badge { white-space: normal; }
+  #tasks-view .col-status { width: 175px; }
+  #tasks-view .col-location { width: 13%; }
+  #tasks-view .col-agent { width: 11%; }
+  #tasks-view .col-updated { width: 90px; }
+  #tasks-view .col-nextStep { width: 150px; }
+  #tasks-view .task-cell { width: auto; min-width: 0; max-width: none; }
+  #tasks-view .objective { max-width: none; }
+}
+
+/* Narrow desktops: give the task column room; the objective wraps to two lines, Next step is just the copy button. */
+@media (min-width: 1000px) and (max-width: 1279px) {
+  #tasks-view .col-status { width: 150px; }
+  #tasks-view .col-updated { width: 80px; }
+  #tasks-view .col-location { width: 14%; }
+  #tasks-view .col-agent { width: 11%; }
+  #tasks-view .col-nextStep { width: 56px; }
+  #tasks-view .next-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  #tasks-view .objective { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; white-space: normal; overflow-wrap: anywhere; }
+}
+
 /* Below 1024 px the sidebar is off-canvas, opened from the menu button over a scrim. */
 @media (max-width: 1023px) {
   #main-column { margin-left: 0; }

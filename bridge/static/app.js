@@ -314,7 +314,7 @@ function headers(row, keys) {
   const signature = JSON.stringify([state.lang, keys]);
   if (row._signature === signature) return;
   row._signature = signature;
-  row.replaceChildren(...keys.map(key => { const cell = el('th', tr(key)); attr(cell, 'scope', 'col'); return cell; }));
+  row.replaceChildren(...keys.map(key => { const cell = el('th', tr(key), `col-${key}`); attr(cell, 'scope', 'col'); return cell; }));
 }
 function selectOptions(select, options, value) {
   const signature = JSON.stringify(options);
@@ -715,7 +715,7 @@ function renderOverview() {
     if (task.command) {
       const copy = button('⧉', event => { event.stopPropagation(); copyCommand(task.command, event.currentTarget); }, 'copy-icon');
       attr(copy, 'aria-label', tr('copy')); attr(copy, 'title', task.command);
-      next.append(el('span', tr(task.command.split(' ')[1])), copy);
+      next.append(el('span', tr(task.command.split(' ')[1]), 'next-label'), copy);
     }
     const updated = timeCell(task.updated_at), age = Date.now() / 1000 - task.updated_at;
     attr(updated, 'class', 'cell-updated');
@@ -726,9 +726,12 @@ function renderOverview() {
       status: () => status, task: () => name, updated: () => updated, nextStep: () => next,
       location: () => {
         const location = taskLocation(task), place = el('td', location.label, 'cell-location');
-        attr(place, 'title', location.branch); return place;
+        attr(place, 'title', `${location.label} · ${location.branch}`); return place;
       },
-      agent: () => el('td', task.agent ?? task.account ?? tr('dash'), 'cell-agent')
+      agent: () => {
+        const who = task.agent ?? task.account ?? tr('dash'), cell = el('td', who, 'cell-agent');
+        attr(cell, 'title', who); return cell;
+      }
     };
     const cells = columns.map(key => { const cell = make[key](); attr(cell, 'data-label', tr(key)); return cell; });
     row.replaceChildren(...cells);
