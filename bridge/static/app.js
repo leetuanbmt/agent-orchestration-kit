@@ -8,7 +8,7 @@ if (launchParams.has("token")) {
 
 const I18N = {
   en: {
-    showQueue: 'Show all ({n})', homeProjects: 'Show all projects ({n})', showLess: 'Show fewer', fileGroup: '{dir}/ · {n} files',
+    showQueue: 'Show all ({n})', homeProjects: 'Show all projects ({n})', showLess: 'Show fewer', fileGroup: '{dir}/ · {n} files', fileGroupOne: '{dir}/ · {n} file',
     log: 'Log', messagesOnly: 'Messages only', logTail: 'Showing the last 256 KB', noLog: 'No log for this attempt',
     awaitingReview: 'Awaiting review', nextStep: 'Next step', approve: 'Approve', result: 'View result', resume: 'Resume',
     groupWorktree: 'Group by worktree', stale: 'stale',
@@ -88,7 +88,7 @@ const I18N = {
     accountsHint: 'Accounts are added and logged in by a person in a terminal:'
   },
   vi: {
-    showQueue: 'Xem tất cả ({n})', homeProjects: 'Xem tất cả dự án ({n})', showLess: 'Thu gọn', fileGroup: '{dir}/ · {n} tệp',
+    showQueue: 'Xem tất cả ({n})', homeProjects: 'Xem tất cả dự án ({n})', showLess: 'Thu gọn', fileGroup: '{dir}/ · {n} tệp', fileGroupOne: '{dir}/ · {n} tệp',
     log: 'Nhật ký', messagesOnly: 'Chỉ tin nhắn agent', logTail: 'Đang hiển thị 256 KB cuối', noLog: 'Không có nhật ký cho lần chạy này',
     awaitingReview: 'Chờ duyệt', nextStep: 'Việc tiếp theo', approve: 'Phê duyệt', result: 'Xem kết quả', resume: 'Tiếp tục',
     groupWorktree: 'Gom theo worktree', stale: 'cũ',
@@ -1031,7 +1031,7 @@ function records(parent, key, records, fields) {
 }
 function drawerHead(task) {
   const head = el('div', undefined, 'drawer-head');
-  head.append(el('code', task.task_id)); projectTag(head, task.pid, true); head.append(statusBadge(task));
+  head.append(el('code', task.task_id)); projectTag(head, state.t.split(':')[0], true); head.append(statusBadge(task));
   if (task.risk_level) head.append(el('span', tr('risk', {level: tr(task.risk_level)}), 'chip'));
   const who = [task.agent, task.account].filter(Boolean).join(' · ');
   if (who) head.append(el('span', who, 'muted'));
@@ -1082,7 +1082,7 @@ function changedFiles(items) {
   for (const [name, paths] of [...groups].sort((a, b) => Number(collapsed(a)) - Number(collapsed(b)))) {
     const group = el('details');
     group.open = !collapsed([name, paths]);
-    group.append(el('summary', tr('fileGroup', {dir: name, n: paths.length})), codeList(paths));
+    group.append(el('summary', tr(paths.length === 1 ? 'fileGroupOne' : 'fileGroup', {dir: name, n: paths.length})), codeList(paths));
     box.append(group);
   }
   return box;
