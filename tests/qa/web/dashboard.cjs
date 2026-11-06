@@ -320,6 +320,12 @@ const scenarios = {
     await page.locator('#task-rows tr', { hasText: cfg.tasks.review }).click();
     await page.waitForFunction(() => !document.getElementById('drawer').hidden &&
       /Verification checks/.test(document.getElementById('drawer-body').innerText), null, { timeout: 8000 });
+    check('drawer uses a div with dialog semantics', await page.locator('#drawer').evaluate(node =>
+      node.tagName === 'DIV' && node.getAttribute('role') === 'dialog' &&
+      node.getAttribute('aria-modal') === 'true' && node.getAttribute('aria-labelledby') === 'drawer-title'));
+    check('attempt log is named, focusable and does not announce backfill',
+      await page.locator('.attempt-log').evaluate(node => node.getAttribute('role') === 'log' &&
+        node.getAttribute('aria-live') === 'off' && !!node.getAttribute('aria-label') && node.tabIndex === 0));
     const current = await page.locator('#drawer-body [aria-current="step"]').innerText().catch(() => '');
     check('stepper marks Review as the current step', /Review/.test(current), current);
     const earlier = await page.locator('#drawer-body .stepper li.done').count();

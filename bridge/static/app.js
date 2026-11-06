@@ -961,6 +961,8 @@ function renderLog(body, task, selected = null) {
       empty: el('p', undefined, 'muted'), timer: null, busy: false};
     attemptLog = log;
     log.box.tabIndex = 0;
+    log.box.setAttribute('role', 'log');
+    log.box.setAttribute('aria-live', 'off');
     log.tail.hidden = true;
     const heading = el('h3'), label = el('label');
     label.append(filter, el('span'));
