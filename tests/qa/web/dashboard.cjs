@@ -31,7 +31,7 @@ const scenarios = {
     check('the overview lists one project card', await page.locator('#overview-view').isVisible() &&
           await page.locator('#project-cards .project-card').count() === 1,
           await page.locator('#project-cards .project-card').count());
-    await page.locator('#views button', { hasText: /^Tasks \(/ }).click();
+    await page.locator('#nav [data-key="tasks"] button').click();
     await page.getByRole('button', { name: /^All \(/ }).click();
     await page.waitForFunction(n => document.querySelectorAll('#task-rows tr').length === n, cfg.total);
     check('every task listed under All', (await rows(page).count()) === cfg.total, await rows(page).count());
@@ -120,11 +120,11 @@ const scenarios = {
 
   // Switching language, kept after a reload.
   async language(page) {
-    await open(page, '#view=tasks');
-    // Language lives in the display-settings menu.
-    await page.locator('#settings summary').click();
+    await open(page, '#view=settings');
+    // Language lives in the Settings view.
     await page.locator('#languages button', { hasText: 'VI' }).click();
     await page.waitForFunction(() => document.documentElement.lang === 'vi');
+    await page.locator('#nav [data-key="tasks"] button').click();
     const chips = await page.locator('#statuses').innerText();
     check('labels switch to Vietnamese', chips.includes('Tất cả'), chips);
     await page.goto(cfg.base + '/');
@@ -205,15 +205,14 @@ const scenarios = {
   async theme(page) {
     const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     await page.emulateMedia({ colorScheme: 'light' });
-    await open(page);
+    await open(page, '#view=settings');
     const light = await background();
     await page.emulateMedia({ colorScheme: 'dark' });
     const dark = await background();
     check('system light and dark give different backgrounds', light !== dark, `${light} / ${dark}`);
     await page.emulateMedia({ colorScheme: 'light' });
     check('theme control is labelled', await page.getByLabel('Theme').count() === 1);
-    // The theme select lives in the display-settings menu.
-    await page.locator('#settings summary').click();
+    // The theme select lives in the Settings view.
     await page.selectOption('#theme', 'dark');
     const chosen = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
     check('choosing Dark sets data-theme', chosen === 'dark', chosen);
@@ -300,9 +299,9 @@ const scenarios = {
     check('status chips are one scrollable row', chips.tops === 1 && chips.overflow === 'auto', JSON.stringify(chips));
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(300);
-    const views = await page.locator('#views button').evaluateAll(buttons => buttons.map(b => b.getBoundingClientRect().y));
-    check('view buttons share one row at 390 px',
-          views.length === 4 && Math.max(...views) - Math.min(...views) <= 2, JSON.stringify(views));
+    const menu = await page.evaluate(() => ({ button: !!document.getElementById('menu-button').getClientRects().length,
+      bar: !!document.getElementById('views'), nav: document.querySelectorAll('#nav button').length }));
+    check('the menu button replaces the bottom bar at 390 px', menu.button && !menu.bar && menu.nav === 5, JSON.stringify(menu));
     const wide = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
     check('no horizontal page scroll at 390 px', wide[0] <= wide[1], JSON.stringify(wide));
     await page.screenshot({ path: cfg.shots + '/mobile_cards.png', fullPage: true });
@@ -352,12 +351,11 @@ const scenarios = {
     await page.waitForFunction(() => document.querySelectorAll('#board-view .card').length > 0, null, { timeout: 8000 })
       .catch(() => {});
     check('the board view is shown', await page.locator('#board-view').isVisible());
-    check('the Board button is pressed',
-          await page.getByRole('button', { name: 'Board', exact: true }).getAttribute('aria-pressed').catch(() => '') === 'true');
-    const tabs = (await page.locator('#views button').allInnerTexts()).map(t => t.trim());
-    check('the views are Overview, Tasks, Board and Accounts',
-          tabs.length === 4 && tabs[0] === 'Overview' && /^Tasks \(\d+ open\)$/.test(tabs[1]) && tabs[2] === 'Board' &&
-          /^Accounts( \(\d+\))?$/.test(tabs[3]), JSON.stringify(tabs));
+    check('the Board nav item is current',
+          await page.locator('#nav [data-key="board"] button').getAttribute('aria-current').catch(() => '') === 'page');
+    const tabs = (await page.locator('#nav .nav-label').allInnerTexts()).map(t => t.trim());
+    check('the views are Home, Tasks, Board, Accounts and Settings',
+          tabs.length === 5 && tabs.join('|') === 'Home|Tasks|Board|Accounts|Settings', JSON.stringify(tabs));
     check('the board does not repeat the queue', !(await page.locator('#attention').isVisible()) &&
           !(await page.locator('#summary').isVisible()));
     const waiting = (await page.locator('#queue-link').innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
@@ -425,36 +423,32 @@ const scenarios = {
   // The shell: display-settings menu, phone header and bottom bar, columns and filters that carry information.
   async shell(page) {
     await open(page, '#view=tasks&s=all');
-    const summary = page.locator('#settings summary');
-    const name = () => summary.evaluate(s => [...s.childNodes]
-      .filter(n => !(n.nodeType === 1 && n.getAttribute('aria-hidden') === 'true'))
-      .map(n => n.textContent).join('').trim());
-    check('settings summary is named in English', await name() === 'Display settings', await name());
-    check('settings menu starts closed', await page.evaluate(() => !document.getElementById('settings').open));
-    await summary.click();
-    check('clicking the summary opens the menu', await page.evaluate(() => document.getElementById('settings').open));
-    check('the menu holds the languages and the theme',
-          await page.locator('#settings #languages').isVisible() && await page.locator('#settings #theme').isVisible());
-    await page.locator('#theme').focus();
-    await page.keyboard.press('Escape');
-    const escaped = await page.evaluate(() => {
-      const menu = document.getElementById('settings');
-      return { open: menu.open, focus: document.activeElement === menu.querySelector('summary') };
+    const settingsNav = page.locator('#nav [data-key="settings"] button');
+    check('the Settings nav item is named in English', (await settingsNav.locator('.nav-label').innerText()) === 'Settings',
+          await settingsNav.innerText());
+    check('the old settings menu is gone', await page.locator('#settings').count() === 0);
+    check('the menu button is hidden on a wide screen', !(await page.locator('#menu-button').isVisible()));
+    const column = await page.evaluate(() => {
+      const box = document.getElementById('sidebar').getBoundingClientRect();
+      return { width: box.width, left: box.left, position: getComputedStyle(document.getElementById('sidebar')).position };
     });
-    check('Escape closes the menu', escaped.open === false, JSON.stringify(escaped));
-    check('Escape returns focus to the summary', escaped.focus, JSON.stringify(escaped));
-    await summary.click();
-    await page.locator('#task-count').click();
-    check('a click outside closes the menu', await page.evaluate(() => !document.getElementById('settings').open));
-    await summary.click();
+    check('the sidebar is a fixed 248 px column on a wide screen',
+          column.width === 248 && column.left === 0 && column.position === 'fixed', JSON.stringify(column));
+    await settingsNav.click();
+    check('the Settings view holds the languages and the theme',
+          await page.locator('#settings-view #languages').isVisible() && await page.locator('#settings-view #theme').isVisible());
+    check('the Settings nav item is current and the address says view=settings',
+          await settingsNav.getAttribute('aria-current') === 'page' &&
+          decodeURIComponent(new URL(page.url()).hash).includes('view=settings'));
     await page.locator('#languages button', { hasText: 'VI' }).click();
     await page.waitForFunction(() => document.documentElement.lang === 'vi');
-    check('settings summary is named in Vietnamese', await name() === 'Cài đặt hiển thị', await name());
+    check('the Settings nav item is named in Vietnamese', (await settingsNav.locator('.nav-label').innerText()) === 'Cài đặt',
+          await settingsNav.innerText());
+    await page.locator('#nav [data-key="tasks"] button').click();
     check('the needsYou tab reads Cần xử lý',
           await page.locator('#statuses button', { hasText: /^Cần xử lý \(/ }).count() === 1);
-    await page.locator('#languages button', { hasText: 'EN' }).click();
+    await open(page, '#view=tasks&s=all&lang=en');
     await page.waitForFunction(() => document.documentElement.lang === 'en');
-    await page.keyboard.press('Escape');
 
     // One project and one agent: no Location or Agent column; header and cells match.
     const heads = await page.locator('#columns th').allInnerTexts();
@@ -467,8 +461,8 @@ const scenarios = {
       tds.map(td => ({ button: !!td.querySelector('button'), text: td.textContent })));
     check('a Next step cell without a command is empty',
           nexts.some(c => !c.button) && nexts.every(c => c.button || c.text === ''), JSON.stringify(nexts));
-    check('project and worktree filters hidden with one project',
-          !(await page.locator('#project').isVisible()) && !(await page.locator('#worktree').isVisible()));
+    check('no project select and no worktree filter with one project',
+          await page.locator('#project').count() === 0 && !(await page.locator('#worktree').isVisible()));
     check('Group by worktree hidden without extra checkouts', !(await page.locator('#group-worktree').isVisible()));
     check('search stays visible', await page.locator('#search').isVisible());
     check('the needsYou tab reads Needs action',
@@ -480,31 +474,28 @@ const scenarios = {
     check('the needsYou hash value is unchanged', decodeURIComponent(new URL(page.url()).hash).includes('s=needsYou'), hash);
     await page.locator('#statuses button', { hasText: /^All \(/ }).click();
 
-    // Phone: a one-row header and the views as a fixed bottom bar.
+    // Phone: a one-row header, the sidebar off-canvas behind the menu button, no bottom bar.
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(300);
     const phone = await page.evaluate(() => {
       const header = document.getElementById('topbar').getBoundingClientRect();
-      const views = document.getElementById('views'), box = views.getBoundingClientRect();
-      return { header: header.height, position: getComputedStyle(views).position, bottom: box.bottom, top: box.top,
-               height: window.innerHeight,
-               items: [...views.querySelectorAll('button')].map(b => b.getBoundingClientRect().height) };
+      const menu = document.getElementById('menu-button').getBoundingClientRect();
+      return { header: header.height, menu: menu.height, menuWidth: menu.width, bar: !!document.getElementById('views'),
+               sidebar: document.getElementById('sidebar').getBoundingClientRect().right };
     });
     check('phone header is at most 56 px tall', phone.header <= 56, JSON.stringify(phone));
-    check('views bar is fixed at the bottom', phone.position === 'fixed' && Math.abs(phone.bottom - phone.height) <= 1,
+    check('the sidebar is off-canvas and no bottom bar remains', phone.sidebar <= 1 && !phone.bar && !(await page.locator('#sidebar').isVisible()),
           JSON.stringify(phone));
-    check('bottom bar items are at least 56 px tall', phone.items.length === 4 && phone.items.every(h => h >= 56),
-          JSON.stringify(phone));
+    check('the menu button is at least 44 px', phone.menu >= 44 && phone.menuWidth >= 44, JSON.stringify(phone));
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await page.waitForTimeout(200);
     const reach = await page.evaluate(() => {
-      const views = document.getElementById('views').getBoundingClientRect().top;
-      const footer = document.getElementById('footer').getBoundingClientRect().bottom;
+      const footer = document.getElementById('footer').getBoundingClientRect();
       const all = document.querySelectorAll('#task-rows tr'), last = all[all.length - 1].getBoundingClientRect().bottom;
-      return { views, footer, last };
+      return { footer: footer.bottom, top: footer.top, last, height: window.innerHeight };
     });
-    check('footer and last row stay above the bottom bar', reach.footer <= reach.views + 1 && reach.last <= reach.views + 1,
-          JSON.stringify(reach));
+    check('footer and last row are reachable at the end of the page',
+          reach.footer <= reach.height + 1 && reach.last <= reach.top + 1, JSON.stringify(reach));
     await page.screenshot({ path: cfg.shots + '/shell.png' });
 
     // The status tabs scroll inside their own row, never the page.
@@ -522,8 +513,8 @@ const scenarios = {
     await open(page);
     const hash = decodeURIComponent(new URL(page.url()).hash);
     check('the default view is the overview', hash.includes('view=overview') && await page.locator('#overview-view').isVisible(), hash);
-    check('the Overview button is pressed',
-          await page.locator('#views button', { hasText: /^Overview$/ }).getAttribute('aria-pressed').catch(() => '') === 'true');
+    check('the Home nav item is current',
+          await page.locator('#nav [data-key="overview"] button').getAttribute('aria-current').catch(() => '') === 'page');
     await page.waitForFunction(() => !document.getElementById('attention').hidden, null, { timeout: 8000 })
       .then(() => check('the queue is shown', true), e => check('the queue is shown', false, e));
     check('the REVIEW task is in the queue',
@@ -586,8 +577,8 @@ const scenarios = {
           await page.locator('#overview-view').isVisible(), landed);
     const place = await page.evaluate(() => [document.getElementById('projects-view').getBoundingClientRect().top, window.innerHeight]);
     check('the projects section is on screen', place[0] >= 0 && place[0] < place[1], JSON.stringify(place));
-    check('the Overview button is pressed after the old link',
-          await page.locator('#views button', { hasText: /^Overview$/ }).getAttribute('aria-pressed').catch(() => '') === 'true');
+    check('the Home nav item is current after the old link',
+          await page.locator('#nav [data-key="overview"] button').getAttribute('aria-current').catch(() => '') === 'page');
 
     // Tasks no longer repeats the queue; one line leads back to it.
     await open(page, '#view=tasks');
@@ -697,6 +688,86 @@ const scenarios = {
     await open(page, '#view=overview&lang=vi');
     const viLine = await page.textContent('#capacity-fallback');
     check('the overview fallback line is Vietnamese', /đang bật/.test(viLine) && !/Quota fallback/.test(viLine), viLine);
+  },
+
+  // The sidebar shell: brand, navigation, project scope, Settings view, "/" shortcut, off-canvas menu on a phone.
+  async sidebar(page) {
+    await open(page, '#view=overview');
+    const brand = (await page.locator('#brand').innerText()).trim();
+    check('the brand is Agent Orchestration Kit', brand === 'Agent Orchestration Kit', brand);
+    check('the document title is "<view> · Agent Orchestration Kit"',
+          await page.title() === 'Home · Agent Orchestration Kit', await page.title());
+    const labels = (await page.locator('#nav .nav-label').allInnerTexts()).map(t => t.trim());
+    const current = await page.locator('#nav [aria-current]').count();
+    check('the nav lists Home, Tasks, Board, Accounts, Settings with one current item',
+          labels.join('|') === 'Home|Tasks|Board|Accounts|Settings' && current === 1 &&
+          await page.locator('#nav [aria-current="page"]').count() === 1, `${labels} / ${current}`);
+
+    // A project in the sidebar scopes the page and the title; All projects clears it.
+    await page.locator('#nav [data-key="tasks"] button').click();
+    await page.waitForFunction(() => document.querySelectorAll('#task-rows tr').length > 0, null, { timeout: 8000 });
+    const item = page.locator(`#project-nav [data-key="p:${cfg.pid}"] button`);
+    const name = (await item.locator('.nav-label').innerText()).trim();
+    await item.click();
+    const scoped = new URLSearchParams(new URL(page.url()).hash.slice(1));
+    check('choosing a project sets p in the address and marks it current',
+          scoped.get('p') === cfg.pid && await item.getAttribute('aria-current') === 'page', page.url());
+    check('the page title names the view and the project',
+          (await page.locator('#page-title').innerText()).trim() === `Tasks · ${name}`, await page.locator('#page-title').innerText());
+    await page.getByRole('button', { name: /^All \(/ }).click();
+    check('the project scopes the task list', (await rows(page).count()) === cfg.total, await rows(page).count());
+    await page.locator('#project-nav [data-key="all"] button').click();
+    const cleared = new URLSearchParams(new URL(page.url()).hash.slice(1));
+    check('All projects clears the scope and the title',
+          cleared.get('p') === '' && (await page.locator('#page-title').innerText()).trim() === 'Tasks' &&
+          await page.locator('#project-nav [data-key="all"] button').getAttribute('aria-current') === 'page', page.url());
+
+    // Settings view: theme and language.
+    await page.locator('#nav [data-key="settings"] button').click();
+    check('the Settings view is shown', await page.locator('#settings-view').isVisible() &&
+          /agent-bridge/.test(await page.locator('#settings-view').innerText()));
+    await page.selectOption('#theme', 'dark');
+    check('the theme chosen in Settings sets data-theme',
+          await page.evaluate(() => document.documentElement.getAttribute('data-theme')) === 'dark');
+    await page.locator('#languages button', { hasText: 'VI' }).click();
+    await page.waitForFunction(() => document.documentElement.lang === 'vi');
+    const vi = (await page.locator('#nav .nav-label').allInnerTexts()).map(t => t.trim());
+    check('the nav labels turn Vietnamese', vi.join('|') === 'Tổng quan|Tác vụ|Bảng|Tài khoản|Cài đặt', vi.join('|'));
+    await page.locator('#languages button', { hasText: 'EN' }).click();
+    await page.waitForFunction(() => document.documentElement.lang === 'en');
+
+    // "/" focuses the search, from any view.
+    await page.locator('#nav [data-key="overview"] button').click();
+    await page.locator('#page-title').click();
+    await page.keyboard.press('/');
+    check('"/" focuses the search', await page.evaluate(() => document.activeElement?.id === 'search'));
+
+    // A phone: the menu button opens the sidebar; Escape and the scrim close it.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(300);
+    const menu = page.locator('#menu-button');
+    check('the menu button is named Menu and starts collapsed',
+          await menu.isVisible() && await menu.getAttribute('aria-label') === 'Menu' &&
+          await menu.getAttribute('aria-expanded') === 'false' && !(await page.locator('#sidebar').isVisible()));
+    await menu.click();
+    check('the menu button opens the sidebar over the page',
+          await menu.getAttribute('aria-expanded') === 'true' && await page.locator('#sidebar').isVisible() &&
+          await page.locator('#scrim').isVisible());
+    await page.keyboard.press('Escape');
+    check('Escape closes the sidebar and returns focus to the menu button',
+          await menu.getAttribute('aria-expanded') === 'false' && !(await page.locator('#sidebar').isVisible()) &&
+          await page.evaluate(() => document.activeElement?.id === 'menu-button'));
+    await menu.click();
+    await page.mouse.click(370, 500);
+    check('a scrim click closes the sidebar', await menu.getAttribute('aria-expanded') === 'false' &&
+          !(await page.locator('#sidebar').isVisible()));
+    await menu.click();
+    await page.locator('#nav [data-key="board"] button').click();
+    check('choosing a view closes the sidebar', await menu.getAttribute('aria-expanded') === 'false' &&
+          await page.locator('#board-view').isVisible());
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    check('no horizontal page scroll at 390 px', overflow <= 0, `overflow ${overflow}px`);
+    await page.screenshot({ path: cfg.shots + '/sidebar.png' });
   },
 
   // Time to a usable table with every task.

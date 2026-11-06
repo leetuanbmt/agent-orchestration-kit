@@ -4,116 +4,148 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
-  <title></title>
+  <title>Agent Orchestration Kit</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar" id="topbar">
-    <strong id="brand"></strong>
-    <nav id="views" class="segmented" aria-label="Views"></nav>
-    <span id="live" class="live" role="status"></span>
-    <details id="settings" class="settings">
-      <summary><span aria-hidden="true">⚙</span><span id="settings-label" class="sr-only"></span></summary>
-      <div class="settings-panel">
-        <div class="settings-row"><span id="language-label"></span><div id="languages" class="lang-group" role="group"></div></div>
-        <label class="theme-control"><span id="theme-label"></span><select id="theme"></select></label>
-      </div>
-    </details>
-  </header>
-  <p id="offline-banner" class="banner" role="status" hidden></p>
   <div id="announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
-  <main id="content">
-    <section id="overview-view" class="page-column">
-      <div id="overview-loading" class="skeleton">
-        <span id="overview-loading-text" class="sr-only"></span>
-        <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-        <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-        <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-      </div>
-      <div id="monitor">
-        <div id="summary" class="summary" hidden></div>
-        <section id="attention" class="attention" aria-labelledby="attention-title" hidden>
-          <h2 id="attention-title"></h2>
-          <p id="attention-hint" class="muted attention-hint"></p>
-          <div id="attention-list" role="list"></div>
+  <div id="app">
+    <aside id="sidebar">
+      <div id="brand"><span class="brand-mark" aria-hidden="true"></span><span id="brand-text"></span></div>
+      <nav id="nav" aria-label="Main"></nav>
+      <section class="side-section" aria-labelledby="projects-heading">
+        <h2 id="projects-heading" class="side-heading"></h2>
+        <label class="project-filter" id="project-filter-box" hidden><span id="project-filter-label" class="sr-only"></span><input id="project-filter" type="search" autocomplete="off"></label>
+        <div id="project-nav" role="group" aria-labelledby="projects-heading"></div>
+        <p id="project-none" class="muted project-none" hidden></p>
+        <button id="project-more" type="button" class="link-button project-more" hidden></button>
+      </section>
+    </aside>
+    <div id="scrim" hidden></div>
+    <div id="main-column">
+      <header class="topbar" id="topbar">
+        <button id="menu-button" type="button" aria-controls="sidebar" aria-expanded="false"><span class="menu-icon" aria-hidden="true"></span></button>
+        <h1 id="page-title"></h1>
+        <span id="live" class="live" role="status"></span>
+      </header>
+      <p id="offline-banner" class="banner" role="status" hidden></p>
+      <main id="content">
+        <section id="overview-view" class="page-column">
+          <div id="overview-loading" class="skeleton">
+            <span id="overview-loading-text" class="sr-only"></span>
+            <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          </div>
+          <div id="monitor">
+            <div id="summary" class="summary" hidden></div>
+            <section id="attention" class="attention" aria-labelledby="attention-title" hidden>
+              <h2 id="attention-title"></h2>
+              <p id="attention-hint" class="muted attention-hint"></p>
+              <div id="attention-list" role="list"></div>
+            </section>
+          </div>
+          <section id="inflight-section" class="home-section" aria-labelledby="inflight-title" hidden>
+            <h2 id="inflight-title" class="section-title"></h2>
+            <div id="inflight" class="inflight-grid" role="list"></div>
+            <p id="inflight-empty" class="section-empty" hidden></p>
+          </section>
+          <section id="capacity-section" class="home-section panel" aria-labelledby="capacity-title" hidden>
+            <h2 id="capacity-title" class="section-title"></h2>
+            <p id="capacity-fallback" class="capacity-fallback" hidden></p>
+            <div id="capacity-summary" class="capacity-rows" role="list"></div>
+            <p id="capacity-empty" class="section-empty" hidden></p>
+            <button id="capacity-all" type="button" class="capacity-all" hidden></button>
+          </section>
+          <section id="projects-view" class="home-section" aria-labelledby="projects-title" hidden>
+            <h2 id="projects-title" class="section-title"></h2>
+            <div id="project-cards"></div><p id="projects-empty"></p>
+          </section>
         </section>
-      </div>
-      <section id="inflight-section" class="home-section" aria-labelledby="inflight-title" hidden>
-        <h2 id="inflight-title" class="section-title"></h2>
-        <div id="inflight" class="inflight-grid" role="list"></div>
-        <p id="inflight-empty" class="section-empty" hidden></p>
-      </section>
-      <section id="capacity-section" class="home-section panel" aria-labelledby="capacity-title" hidden>
-        <h2 id="capacity-title" class="section-title"></h2>
-        <p id="capacity-fallback" class="capacity-fallback" hidden></p>
-        <div id="capacity-summary" class="capacity-rows" role="list"></div>
-        <p id="capacity-empty" class="section-empty" hidden></p>
-        <button id="capacity-all" type="button" class="capacity-all" hidden></button>
-      </section>
-      <section id="projects-view" class="home-section" aria-labelledby="projects-title" hidden>
-        <h2 id="projects-title" class="section-title"></h2>
-        <div id="project-cards"></div><p id="projects-empty"></p>
-      </section>
-    </section>
-    <div id="task-tools" hidden>
-      <p id="queue-link" class="queue-line" hidden><span id="queue-link-text"></span><span aria-hidden="true"> · </span><button id="queue-link-open" type="button" class="link-button"></button></p>
-      <div id="filters" class="filter-bar" role="search">
-        <label><span id="search-label"></span><input id="search" type="search"></label>
-        <label><span id="project-label"></span><select id="project"></select></label>
-        <label><span id="worktree-label"></span><select id="worktree"></select></label>
-        <button id="group-worktree" type="button" aria-pressed="false"></button>
-        <button id="clear" type="button" hidden></button>
-      </div>
+        <div id="task-tools" hidden>
+          <p id="queue-link" class="queue-line" hidden><span id="queue-link-text"></span><span aria-hidden="true"> · </span><button id="queue-link-open" type="button" class="link-button"></button></p>
+          <div id="filters" class="filter-bar" role="search">
+            <label><span id="search-label"></span><input id="search" type="search"></label>
+            <label><span id="worktree-label"></span><select id="worktree"></select></label>
+            <button id="group-worktree" type="button" aria-pressed="false"></button>
+            <button id="clear" type="button" hidden></button>
+          </div>
+        </div>
+        <section id="tasks-view" hidden>
+          <div id="statuses" class="tabs"></div>
+          <p id="task-count"></p>
+          <div id="tasks-loading" class="skeleton">
+            <span id="loading-text" class="sr-only"></span>
+            <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          </div>
+          <div id="tasks-table" class="table-wrap" hidden>
+            <table aria-labelledby="task-count">
+              <thead><tr id="columns"></tr></thead>
+              <tbody id="task-rows"></tbody>
+            </table>
+          </div>
+          <div id="tasks-empty" class="empty" hidden><p id="empty-message"></p><button id="empty-clear" type="button"></button></div>
+        </section>
+        <section id="board-view" hidden>
+          <div id="lanes" class="lanes">
+            <section class="lane" aria-labelledby="lane-needsYou-title"><h2 id="lane-needsYou-title"></h2><div id="lane-needsYou" class="lane-cards" role="list"></div><p id="lane-needsYou-empty" class="lane-empty" hidden></p></section>
+            <section class="lane" aria-labelledby="lane-awaitingReview-title"><h2 id="lane-awaitingReview-title"></h2><div id="lane-awaitingReview" class="lane-cards" role="list"></div><p id="lane-awaitingReview-empty" class="lane-empty" hidden></p></section>
+            <section class="lane" aria-labelledby="lane-running-title"><h2 id="lane-running-title"></h2><div id="lane-running" class="lane-cards" role="list"></div><p id="lane-running-empty" class="lane-empty" hidden></p></section>
+            <section class="lane" aria-labelledby="lane-waiting-title"><h2 id="lane-waiting-title"></h2><div id="lane-waiting" class="lane-cards" role="list"></div><p id="lane-waiting-empty" class="lane-empty" hidden></p></section>
+          </div>
+          <details id="finished" class="finished"><summary id="finished-summary"></summary><div id="finished-cards" class="lane-cards finished-cards" role="list"></div></details>
+        </section>
+        <section id="accounts-view" class="page-column" aria-labelledby="accounts-title" hidden>
+          <h2 id="accounts-title" class="view-title"></h2>
+          <div id="accounts-loading" class="skeleton">
+            <span id="accounts-loading-text" class="sr-only"></span>
+            <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          </div>
+          <div id="accounts-body" hidden>
+            <div id="fallback-panels" class="fallback-panels"></div>
+            <div id="account-cards" class="account-grid" role="list"></div>
+            <div id="accounts-empty" class="empty" hidden><p id="accounts-empty-text"></p><div id="accounts-empty-command"></div></div>
+            <section id="switches-section" class="panel" aria-labelledby="switches-title">
+              <h2 id="switches-title" class="section-title"></h2>
+              <div id="switches" class="switch-list" role="list"></div>
+              <p id="switches-empty" class="section-empty" hidden></p>
+            </section>
+            <div id="accounts-hint" class="accounts-hint"></div>
+          </div>
+        </section>
+        <section id="settings-view" class="page-column" aria-labelledby="settings-title" hidden>
+          <h2 id="settings-title" class="view-title"></h2>
+          <section class="panel settings-block" aria-labelledby="appearance-title">
+            <h3 id="appearance-title" class="section-title"></h3>
+            <label class="theme-control"><span id="theme-label"></span><select id="theme"></select></label>
+          </section>
+          <section class="panel settings-block" aria-labelledby="language-title">
+            <h3 id="language-title" class="section-title"></h3>
+            <div id="languages" class="lang-group" role="group"></div>
+          </section>
+          <section class="panel settings-block" aria-labelledby="about-title">
+            <h3 id="about-title" class="section-title"></h3>
+            <p id="about-name" class="about-name"></p>
+            <p id="about-cli"></p>
+            <p id="about-data"></p>
+            <p id="about-refresh"></p>
+            <h4 id="shortcuts-title" class="side-heading"></h4>
+            <ul id="shortcuts" class="shortcuts" aria-labelledby="shortcuts-title">
+              <li><span class="keys"><kbd>[</kbd><kbd>]</kbd></span><span id="shortcut-queue"></span></li>
+              <li><span class="keys"><kbd>Esc</kbd></span><span id="shortcut-esc"></span></li>
+              <li><span class="keys"><kbd>/</kbd></span><span id="shortcut-search"></span></li>
+            </ul>
+          </section>
+        </section>
+      </main>
+      <footer id="footer"></footer>
     </div>
-    <section id="tasks-view" hidden>
-      <div id="statuses" class="tabs"></div>
-      <p id="task-count"></p>
-      <div id="tasks-loading" class="skeleton">
-        <span id="loading-text" class="sr-only"></span>
-        <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-        <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-        <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-      </div>
-      <div id="tasks-table" class="table-wrap" hidden>
-        <table aria-labelledby="task-count">
-          <thead><tr id="columns"></tr></thead>
-          <tbody id="task-rows"></tbody>
-        </table>
-      </div>
-      <div id="tasks-empty" class="empty" hidden><p id="empty-message"></p><button id="empty-clear" type="button"></button></div>
-    </section>
-    <section id="board-view" hidden>
-      <div id="lanes" class="lanes">
-        <section class="lane" aria-labelledby="lane-needsYou-title"><h2 id="lane-needsYou-title"></h2><div id="lane-needsYou" class="lane-cards" role="list"></div><p id="lane-needsYou-empty" class="lane-empty" hidden></p></section>
-        <section class="lane" aria-labelledby="lane-awaitingReview-title"><h2 id="lane-awaitingReview-title"></h2><div id="lane-awaitingReview" class="lane-cards" role="list"></div><p id="lane-awaitingReview-empty" class="lane-empty" hidden></p></section>
-        <section class="lane" aria-labelledby="lane-running-title"><h2 id="lane-running-title"></h2><div id="lane-running" class="lane-cards" role="list"></div><p id="lane-running-empty" class="lane-empty" hidden></p></section>
-        <section class="lane" aria-labelledby="lane-waiting-title"><h2 id="lane-waiting-title"></h2><div id="lane-waiting" class="lane-cards" role="list"></div><p id="lane-waiting-empty" class="lane-empty" hidden></p></section>
-      </div>
-      <details id="finished" class="finished"><summary id="finished-summary"></summary><div id="finished-cards" class="lane-cards finished-cards" role="list"></div></details>
-    </section>
-    <section id="accounts-view" class="page-column" aria-labelledby="accounts-title" hidden>
-      <h2 id="accounts-title" class="view-title"></h2>
-      <div id="accounts-loading" class="skeleton">
-        <span id="accounts-loading-text" class="sr-only"></span>
-        <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-        <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-        <div class="skeleton-row" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-      </div>
-      <div id="accounts-body" hidden>
-        <div id="fallback-panels" class="fallback-panels"></div>
-        <div id="account-cards" class="account-grid" role="list"></div>
-        <div id="accounts-empty" class="empty" hidden><p id="accounts-empty-text"></p><div id="accounts-empty-command"></div></div>
-        <section id="switches-section" class="panel" aria-labelledby="switches-title">
-          <h2 id="switches-title" class="section-title"></h2>
-          <div id="switches" class="switch-list" role="list"></div>
-          <p id="switches-empty" class="section-empty" hidden></p>
-        </section>
-        <div id="accounts-hint" class="accounts-hint"></div>
-      </div>
-    </section>
-  </main>
-  <footer id="footer"></footer>
+  </div>
   <aside id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
     <button id="close" class="close" type="button"></button>
     <h2 id="drawer-title"></h2>

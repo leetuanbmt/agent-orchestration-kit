@@ -11,13 +11,21 @@ const I18N = {
     log: 'Log', messagesOnly: 'Messages only', logTail: 'Showing the last 256 KB', noLog: 'No log for this attempt',
     awaitingReview: 'Awaiting review', nextStep: 'Next step', approve: 'Approve', result: 'View result', resume: 'Resume',
     groupWorktree: 'Group by worktree', stale: 'stale',
-    views: 'Views', open: 'Open', needsAction: 'Needs action', displaySettings: 'Display settings', waiting: 'Waiting', status: 'Status', task: 'Task', location: 'Location',
+    open: 'Open', needsAction: 'Needs action', waiting: 'Waiting', status: 'Status', task: 'Task', location: 'Location',
     search: 'Search', searchPlaceholder: 'Task ID or objective', worktree: 'Worktree', branch: 'Branch', main: 'main',
     allProjects: 'All projects', allWorktrees: 'All worktrees', clear: 'Clear filters', noMatches: 'No task matches these filters',
     viewTasks: 'View tasks', projectCounts: 'Needs action {needs} · Open {open} · Done {done}',
     showWorktrees: 'Show {n} worktrees without open tasks', hideWorktrees: 'Hide {n} worktrees without open tasks',
     tokenRequired: "Open the link printed by agent-bridge web.",
-    brand: 'agent-bridge', vi: 'VI', en: 'EN', all: 'All', projects: 'Projects', language: 'Language',
+    brand: 'Agent Orchestration Kit', vi: 'VI', en: 'EN', all: 'All', projects: 'Projects', language: 'Language',
+    home: 'Home', settings: 'Settings', menu: 'Menu', mainNav: 'Main', appearance: 'Appearance', about: 'About',
+    filterProjects: 'Filter projects', filterProjectsPlaceholder: 'Filter projects', needYouCount: '{n} need you',
+    showAllProjects: 'Show all ({n})', showFewerProjects: 'Show fewer', noProjectMatch: 'No project matches',
+    aboutCli: 'Command-line tool: agent-bridge',
+    aboutData: "Data comes from each project's bridge database, read-only; actions run through the command-line tool.",
+    aboutRefresh: 'Refreshes every 3 seconds while this page is visible.', shortcuts: 'Keyboard shortcuts',
+    shortcutQueue: 'Previous or next item waiting on you', shortcutEsc: 'Close panels and menus',
+    shortcutSearch: 'Focus the search box',
     live: 'Live · every 3 s', offline: 'Disconnected · retrying in 5 s', loading: 'Loading…',
     running: 'Running', project: 'Project', updated: 'Updated', done: 'Done', cancelled: 'Cancelled',
     needs: 'Needs you', blocked: 'Blocked', failed: 'Failed', paused: 'Paused', review_wait: 'Waiting for review',
@@ -53,7 +61,7 @@ const I18N = {
     elapsedOf: '{elapsed} of {limit}', elapsedOnly: 'Running for {elapsed}', quotaLeft: '{n}% quota left', timeUsed: 'Time used',
     announce: '{n} tasks need you', announceOne: '1 task needs you', announceNone: 'No task needs you now',
     testsRun: 'Tests run', filesChanged: 'Files changed', rawOutput: 'Raw output',
-    overview: 'Overview', tasksTab: 'Tasks ({n} open)', accounts: 'Accounts', accountsCount: 'Accounts ({n})',
+    accounts: 'Accounts',
     inProgress: 'In progress', nothingRunning: 'Nothing is running.',
     waitingLine: '{n} waiting on you', openOverview: 'Open overview',
     stateAvailable: 'Available', stateQuota: 'Out of quota', stateAuth: 'Login needed',
@@ -82,13 +90,21 @@ const I18N = {
     log: 'Nhật ký', messagesOnly: 'Chỉ tin nhắn agent', logTail: 'Đang hiển thị 256 KB cuối', noLog: 'Không có nhật ký cho lần chạy này',
     awaitingReview: 'Chờ duyệt', nextStep: 'Việc tiếp theo', approve: 'Phê duyệt', result: 'Xem kết quả', resume: 'Tiếp tục',
     groupWorktree: 'Gom theo worktree', stale: 'cũ',
-    views: 'Chế độ xem', open: 'Đang mở', needsAction: 'Cần xử lý', displaySettings: 'Cài đặt hiển thị', waiting: 'Đang chờ', status: 'Trạng thái', task: 'Tác vụ', location: 'Vị trí',
+    open: 'Đang mở', needsAction: 'Cần xử lý', waiting: 'Đang chờ', status: 'Trạng thái', task: 'Tác vụ', location: 'Vị trí',
     search: 'Tìm kiếm', searchPlaceholder: 'Mã tác vụ hoặc mục tiêu', worktree: 'Worktree', branch: 'Nhánh', main: 'chính',
     allProjects: 'Tất cả dự án', allWorktrees: 'Tất cả worktree', clear: 'Xóa bộ lọc', noMatches: 'Không có tác vụ khớp với bộ lọc này',
     viewTasks: 'Xem tác vụ', projectCounts: 'Cần xử lý {needs} · Đang mở {open} · Xong {done}',
     showWorktrees: 'Hiện {n} worktree không có tác vụ mở', hideWorktrees: 'Ẩn {n} worktree không có tác vụ mở',
     tokenRequired: "Mở đường dẫn do agent-bridge web in ra.",
-    brand: 'agent-bridge', vi: 'VI', en: 'EN', all: 'Tất cả', projects: 'Dự án', language: 'Ngôn ngữ',
+    brand: 'Agent Orchestration Kit', vi: 'VI', en: 'EN', all: 'Tất cả', projects: 'Dự án', language: 'Ngôn ngữ',
+    home: 'Tổng quan', settings: 'Cài đặt', menu: 'Menu', mainNav: 'Chính', appearance: 'Giao diện hiển thị', about: 'Giới thiệu',
+    filterProjects: 'Lọc dự án', filterProjectsPlaceholder: 'Lọc dự án', needYouCount: '{n} cần bạn',
+    showAllProjects: 'Xem tất cả ({n})', showFewerProjects: 'Thu gọn', noProjectMatch: 'Không có dự án khớp',
+    aboutCli: 'Công cụ dòng lệnh: agent-bridge',
+    aboutData: 'Dữ liệu lấy từ cơ sở dữ liệu bridge của từng dự án, chỉ đọc; các thao tác chạy qua công cụ dòng lệnh.',
+    aboutRefresh: 'Làm mới mỗi 3 giây khi trang đang hiển thị.', shortcuts: 'Phím tắt',
+    shortcutQueue: 'Mục đang chờ bạn, trước hoặc sau', shortcutEsc: 'Đóng bảng và menu',
+    shortcutSearch: 'Chuyển đến ô tìm kiếm',
     live: 'Trực tiếp · mỗi 3 giây', offline: 'Mất kết nối · thử lại sau 5 giây', loading: 'Đang tải…',
     running: 'Đang chạy', project: 'Dự án', updated: 'Cập nhật', done: 'Xong', cancelled: 'Đã hủy',
     needs: 'Cần bạn', blocked: 'Bị chặn', failed: 'Lỗi', paused: 'Tạm dừng', review_wait: 'Chờ duyệt',
@@ -124,7 +140,7 @@ const I18N = {
     elapsedOf: '{elapsed} / {limit}', elapsedOnly: 'Đã chạy {elapsed}', quotaLeft: 'còn {n}% quota', timeUsed: 'Thời gian đã dùng',
     announce: '{n} tác vụ cần bạn', announceOne: '1 tác vụ cần bạn', announceNone: 'Hiện không có tác vụ nào cần bạn',
     testsRun: 'Kiểm thử đã chạy', filesChanged: 'Tệp đã thay đổi', rawOutput: 'Kết quả thô',
-    overview: 'Tổng quan', tasksTab: 'Tác vụ ({n})', accounts: 'Tài khoản', accountsCount: 'Tài khoản ({n})',
+    accounts: 'Tài khoản',
     inProgress: 'Đang thực hiện', nothingRunning: 'Không có tác vụ nào đang chạy.',
     waitingLine: '{n} mục đang chờ bạn', openOverview: 'Mở tổng quan',
     stateAvailable: 'Sẵn sàng', stateQuota: 'Hết quota', stateAuth: 'Cần đăng nhập',
@@ -152,7 +168,12 @@ const I18N = {
 };
 const $ = id => document.getElementById(id);
 const GROUPS = ['open', 'needsYou', 'awaitingReview', 'running', 'waiting', 'done', 'cancelled', 'all'];
-const VIEWS = ['overview', 'tasks', 'board', 'accounts'];
+// The single list of views: the sidebar nav, the hash and the page title all follow it.
+const VIEWS = ['overview', 'tasks', 'board', 'accounts', 'settings'];
+const viewLabel = view => tr(view === 'overview' ? 'home' : view);
+const PROJECT_ROWS = 8;
+let projectsExpanded = false, projectFilter = '', sidebarOpen = false, drawerOpen = false;
+const narrow = window.matchMedia('(max-width: 1023px)');
 // Account states as badges: the family picks the glyph and color, the key the label.
 const ACCOUNT_STATES = {available: ['done', 'stateAvailable'], quota: ['paused', 'stateQuota'], auth: ['blocked', 'stateAuth']};
 const CAPACITY_ROWS = 6;
@@ -605,13 +626,13 @@ function renderAccounts(groups) {
   commandLine($('accounts-hint'), 'agent-bridge account-list', tr('accountsHint'));
 }
 function renderOverview() {
-  document.documentElement.lang = state.lang; document.title = tr('brand'); text($('brand'), tr('brand'));
+  document.documentElement.lang = state.lang; text($('brand-text'), tr('brand'));
   text($('live'), tr(tokenRequired ? 'tokenRequired' : disconnected ? 'offline' : overview ? 'live' : 'loading'));
   attr($('live'), 'class', disconnected ? 'live offline' : 'live'); $('content').classList.toggle('disconnected', disconnected);
-  text($('footer'), tr('viewOnly')); attr($('languages'), 'aria-label', tr('language')); attr($('views'), 'aria-label', tr('views'));
-  text($('theme-label'), tr('theme')); text($('language-label'), tr('language'));
-  text($('settings-label'), tr('displaySettings'));
+  text($('footer'), tr('viewOnly')); attr($('languages'), 'aria-label', tr('language')); attr($('nav'), 'aria-label', tr('mainNav'));
+  text($('theme-label'), tr('theme'));
   selectOptions($('theme'), [['system', tr('themeSystem')], ['light', tr('themeLight')], ['dark', tr('themeDark')]], theme);
+  renderSettings();
   attr($('filters'), 'aria-label', tr('filters'));
   const banner = $('offline-banner');
   banner.hidden = !disconnected || tokenRequired;
@@ -622,25 +643,30 @@ function renderOverview() {
   const groups = projectGroups(), tasks = overview?.tasks || [];
   const openCount = tasks.filter(t => matches(t, 'open')).length;
   const troubled = (overview?.accounts || []).filter(a => a.state !== 'available').length;
-  patch($('views'), VIEWS, x => x, x => [state.view, openCount, troubled], (node, view) => {
-    const label = view === 'tasks' ? tr('tasksTab', {n: openCount})
-      : view === 'accounts' && troubled ? tr('accountsCount', {n: troubled}) : tr(view);
-    const tab = button(label, () => setState({view}));
-    attr(tab, 'aria-pressed', state.view === view); node.replaceChildren(tab);
+  const counts = {tasks: overview ? openCount : 0, accounts: troubled};
+  patch($('nav'), VIEWS, x => x, x => [state.view, counts[x] || 0, !!overview], (node, view) => {
+    const tab = button(undefined, () => { closeSidebar(true); setState({view}); }, 'nav-item');
+    tab.append(el('span', viewLabel(view), 'nav-label'));
+    if (counts[view]) tab.append(el('span', counts[view], 'nav-count'));
+    if (state.view === view) attr(tab, 'aria-current', 'page');
+    node.replaceChildren(tab);
   });
-  $('overview-view').hidden = state.view !== 'overview'; $('accounts-view').hidden = state.view !== 'accounts';
-  $('tasks-view').hidden = state.view !== 'tasks'; $('board-view').hidden = state.view !== 'board';
+  const selected = groups.find(g => g.project.pid === state.p);
+  const title = `${viewLabel(state.view)}${selected ? ` · ${selected.project.name}` : ''}`;
+  text($('page-title'), title);
+  document.title = `${viewLabel(state.view)} · ${tr('brand')}`;
+  renderProjectNav(groups);
+  attr($('menu-button'), 'aria-label', tr('menu'));
+  syncSidebar();
+  for (const view of VIEWS) { const node = $(`${view}-view`); if (node) node.hidden = state.view !== view; }
   $('task-tools').hidden = !['tasks', 'board'].includes(state.view);
-  // Project and worktree filters only when there is something to choose (or the address already chose).
-  const pickProject = groups.length > 1 || !!state.p || !!state.w;
-  $('project').closest('label').hidden = !pickProject; $('worktree').closest('label').hidden = !pickProject;
+  // The worktree filter only when the selected project has several checkouts (or the address already chose one).
+  $('worktree').closest('label').hidden = !(selected?.members.length > 1 || !!state.w);
   $('group-worktree').hidden = state.view !== 'tasks' || !(state.g === '1' || groups.some(g => g.members.length > 1));
-  text($('search-label'), tr('search')); text($('project-label'), tr('project')); text($('worktree-label'), tr('worktree'));
+  text($('search-label'), tr('search')); text($('worktree-label'), tr('worktree'));
   attr($('search'), 'placeholder', tr('searchPlaceholder'));
   text($('group-worktree'), tr('groupWorktree')); attr($('group-worktree'), 'aria-pressed', state.g === '1');
   if ($('search').value !== state.q) $('search').value = state.q;
-  const selected = groups.find(g => g.project.pid === state.p);
-  selectOptions($('project'), [['', tr('allProjects')], ...groups.map(g => [g.project.pid, g.project.name])], state.p);
   selectOptions($('worktree'), [['', tr('allWorktrees')], ...(selected?.members || []).map((p, i) => [p.pid, i === 0 ? `${p.name} (${tr('main')})` : `${p.name} · ${p.branch || tr('dash')}`])], state.w);
   $('worktree').disabled = !selected; text($('clear'), tr('clear'));
   $('clear').hidden = !state.p && !state.w && !state.q && state.s === 'open';
@@ -720,10 +746,71 @@ function renderOverview() {
     scrollToProjects = false; $('projects-view').scrollIntoView({block: 'start'});
   }
 }
+// Projects that need a person first, then the most recently updated.
+function sortedGroups(groups) {
+  const latest = group => Math.max(0, ...group.members.map(p => p.updated_at || 0));
+  return [...groups].sort((a, b) => totals(b.members).needs - totals(a.members).needs || latest(b) - latest(a));
+}
+// Sidebar project list: All projects, then the first few groups; a filter box once the list is long.
+function renderProjectNav(groups) {
+  const all = sortedGroups(groups), many = all.length > PROJECT_ROWS;
+  if (!many) projectFilter = '';
+  $('project-filter-box').hidden = !many;
+  text($('projects-heading'), tr('projects')); text($('project-filter-label'), tr('filterProjects'));
+  attr($('project-filter'), 'placeholder', tr('filterProjectsPlaceholder'));
+  if ($('project-filter').value !== projectFilter) $('project-filter').value = projectFilter;
+  const needle = projectFilter.trim().toLocaleLowerCase();
+  const found = needle ? all.filter(g => g.project.name.toLocaleLowerCase().includes(needle)) : all;
+  let shown = projectsExpanded || needle ? found : found.slice(0, PROJECT_ROWS);
+  const chosen = all.find(g => g.project.pid === state.p);
+  if (chosen && !shown.includes(chosen) && !needle) shown = [...shown, chosen];
+  const items = [{key: 'all'}, ...shown.map(group => ({key: `p:${group.project.pid}`, group, needs: totals(group.members).needs}))];
+  patch($('project-nav'), items, item => item.key, item => [item.key, item.group?.project.name, item.needs, state.p],
+    (node, item) => {
+      const pid = item.group ? item.group.project.pid : '';
+      const name = item.group ? item.group.project.name : tr('allProjects');
+      const choose = button(undefined, () => { closeSidebar(true); setState({p: pid, w: ''}); }, 'nav-item project-item');
+      const label = el('span', name, 'nav-label'); attr(label, 'title', name); choose.append(label);
+      if (item.needs > 0) {
+        const count = el('span', item.needs, 'nav-count'); attr(count, 'aria-hidden', 'true');
+        choose.append(count, el('span', tr('needYouCount', {n: item.needs}), 'sr-only'));
+      }
+      if (state.p === pid) attr(choose, 'aria-current', 'page');
+      node.append(choose);
+    });
+  const more = $('project-more');
+  more.hidden = !!needle || found.length <= PROJECT_ROWS;
+  text(more, projectsExpanded ? tr('showFewerProjects') : tr('showAllProjects', {n: all.length}));
+  attr(more, 'aria-expanded', projectsExpanded);
+  text($('project-none'), tr('noProjectMatch')); $('project-none').hidden = !needle || found.length > 0;
+}
+function renderSettings() {
+  text($('settings-title'), tr('settings')); text($('appearance-title'), tr('appearance')); text($('language-title'), tr('language'));
+  text($('about-title'), tr('about')); text($('about-name'), tr('brand')); text($('about-cli'), tr('aboutCli'));
+  text($('about-data'), tr('aboutData')); text($('about-refresh'), tr('aboutRefresh')); text($('shortcuts-title'), tr('shortcuts'));
+  text($('shortcut-queue'), tr('shortcutQueue')); text($('shortcut-esc'), tr('shortcutEsc')); text($('shortcut-search'), tr('shortcutSearch'));
+}
+// The sidebar is a column on wide screens and an off-canvas panel below 1024 px.
+function syncSidebar() {
+  const open = sidebarOpen && narrow.matches;
+  attr($('menu-button'), 'aria-expanded', open); $('scrim').hidden = !open;
+  $('app').classList.toggle('sidebar-open', open);
+  const blocked = narrow.matches && !open || drawerOpen;
+  if ($('sidebar').inert !== blocked) $('sidebar').inert = blocked;
+}
+function openSidebar() {
+  sidebarOpen = true; syncSidebar();
+  ($('nav').querySelector('[aria-current]') || $('nav').querySelector('button'))?.focus();
+}
+function closeSidebar(refocus) {
+  if (!sidebarOpen) return;
+  sidebarOpen = false; syncSidebar();
+  if (refocus && narrow.matches) $('menu-button').focus();
+}
 // The overview's last section: one card per project with its worktrees.
 function renderProjects(groups, tasks) {
   text($('projects-title'), tr('projects')); $('projects-view').hidden = !overview;
-  groups = [...groups].sort((a, b) => totals(b.members).needs - totals(a.members).needs || Math.max(...b.members.map(p => p.updated_at || 0)) - Math.max(...a.members.map(p => p.updated_at || 0)));
+  groups = sortedGroups(groups);
   patch($('project-cards'), groups, g => g.project.pid, g => [g, tasks, expanded.has(g.project.pid), Math.floor(Date.now() / 1000)], (card, group) => {
     attr(card, 'class', 'project-card'); const project = group.project, count = totals(group.members);
     const head = el('div', undefined, 'card-header'), title = el('div', undefined, 'card-title');
@@ -964,6 +1051,7 @@ function finalSummary(raw) {
 }
 function setInert(value) {
   for (const node of [$('content'), $('topbar'), $('footer')]) if (node.inert !== value) node.inert = value;
+  drawerOpen = value; syncSidebar();
 }
 function renderDetail() {
   const drawer = $('drawer'), wasHidden = drawer.hidden;
@@ -972,7 +1060,7 @@ function renderDetail() {
   text($('close'), tr('closeSymbol')); attr($('close'), 'aria-label', tr('close'));
   if (drawer.hidden) { stopLog(); if (!wasHidden && returnFocus?.isConnected) returnFocus.focus(); return; }
   if (attemptLog && attemptLog.task !== state.t) stopLog();
-  if (wasHidden) { closeSettings(false); $('close').focus(); }
+  if (wasHidden) { closeSidebar(false); $('close').focus(); }
   text($('drawer-title'), taskData?.objective || state.t.split(':').pop());
   const body = $('drawer-body');
   const signature = JSON.stringify([state.lang, taskData, detailError]);
@@ -1066,7 +1154,11 @@ async function poll() {
   }
 }
 $('search').addEventListener('input', event => setState({q: event.target.value}, true));
-$('project').onchange = event => setState({p: event.target.value, w: ''});
+$('project-filter').addEventListener('input', event => { projectFilter = event.target.value; renderOverview(); });
+$('project-more').onclick = () => { projectsExpanded = !projectsExpanded; renderOverview(); };
+$('menu-button').onclick = () => { if (sidebarOpen) closeSidebar(true); else openSidebar(); };
+$('scrim').onclick = () => closeSidebar(true);
+narrow.addEventListener('change', () => { sidebarOpen = false; syncSidebar(); });
 $('worktree').onchange = event => setState({w: event.target.value});
 $('group-worktree').onclick = () => setState({g: state.g === '1' ? '' : '1'});
 $('clear').onclick = clearFilters; $('empty-clear').onclick = clearFilters;
@@ -1078,19 +1170,19 @@ $('theme').onchange = event => {
   applyTheme();
 };
 $('close').addEventListener('click', closeDrawer);
-// The display-settings menu: Escape closes it and returns focus to its summary; a click outside closes it.
-function closeSettings(refocus) {
-  const menu = $('settings');
-  if (!menu.open) return;
-  menu.open = false;
-  if (refocus) menu.querySelector('summary').focus();
-}
+// Escape closes the off-canvas sidebar and returns focus to the menu button.
 document.addEventListener('keydown', event => {
-  if (event.key !== 'Escape' || !$('settings').open || !$('drawer').hidden) return;
-  event.preventDefault(); closeSettings(true);
+  if (event.key !== 'Escape' || !sidebarOpen || !$('drawer').hidden) return;
+  event.preventDefault(); closeSidebar(true);
 });
-document.addEventListener('click', event => {
-  if (event.target instanceof Node && !$('settings').contains(event.target)) closeSettings(false);
+// "/" jumps to the task search (from any view), unless the reader is already typing.
+document.addEventListener('keydown', event => {
+  if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || !$('drawer').hidden) return;
+  const target = event.target;
+  if (target instanceof Element && (target.closest('input, select, textarea') || target.isContentEditable)) return;
+  event.preventDefault(); closeSidebar(false);
+  if (!['tasks', 'board'].includes(state.view)) setState({view: 'tasks'});
+  $('search').focus();
 });
 // [ and ] step through the attention queue, unless the reader is typing or the drawer is open.
 document.addEventListener('keydown', event => {
