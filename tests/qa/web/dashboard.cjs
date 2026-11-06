@@ -33,6 +33,32 @@ async function open(page, hash = '') {
 }
 
 const scenarios = {
+  async workflow(page) {
+    await open(page, '#view=tasks&s=all');
+    const first = rows(page).filter({ hasText: cfg.tasks.first });
+    check('task row shows workflow id', (await first.innerText()).includes('W0001'));
+    await first.click();
+    await page.locator('.workflow-section').waitFor();
+    const section = page.locator('.workflow-section');
+    const body = await section.innerText();
+    check('drawer shows workflow id and objective', body.includes('W0001') && body.includes('Do two steps'), body);
+    check('drawer shows workflow progress', body.includes('0 of 2'), body);
+    check('drawer lists both steps in task id order',
+      JSON.stringify(await section.locator('code').allTextContents()) === JSON.stringify([cfg.tasks.first, cfg.tasks.second]));
+    const current = section.locator('[aria-current="true"]');
+    check('Step one is current and is not a button',
+      (await current.innerText()).includes('Step one') && await current.evaluate(node => node.tagName !== 'BUTTON'));
+    await section.getByRole('button', { name: /Step two/ }).click();
+    await page.waitForFunction(() => document.getElementById('drawer-title').textContent === 'Step two');
+    await page.locator('.workflow-section [aria-current="true"]').filter({ hasText: 'Step two' }).waitFor();
+    check('Step two opens its drawer', await page.locator('#drawer-title').innerText() === 'Step two');
+    await page.keyboard.press('Escape');
+    await page.locator('#search').fill('W0001');
+    await page.waitForFunction(() => document.querySelectorAll('#task-rows tr').length === 2);
+    const ids = await rows(page).locator('.task-line code').allTextContents();
+    check('workflow search lists exactly its two steps',
+      JSON.stringify(ids.sort()) === JSON.stringify([cfg.tasks.first, cfg.tasks.second].sort()), ids);
+  },
   async target_size(page) {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.route('**/api/overview', async route => {

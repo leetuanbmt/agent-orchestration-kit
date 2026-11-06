@@ -8,12 +8,13 @@ if (launchParams.has("token")) {
 
 const I18N = {
   en: {
+    workflow: 'Workflow', workflowTitle: '{id} · {objective}', workflowProgress: '{done} of {total} steps done',
     showQueue: 'Show all ({n})', homeProjects: 'Show all projects ({n})', showLess: 'Show fewer', fileGroup: '{dir}/ · {n} files', fileGroupOne: '{dir}/ · {n} file',
     log: 'Log', messagesOnly: 'Messages only', logTail: 'Showing the last 256 KB', noLog: 'No log for this attempt',
     awaitingReview: 'Awaiting review', nextStep: 'Next step', approve: 'Approve', result: 'View result', resume: 'Resume',
     groupWorktree: 'Group by worktree', stale: 'stale',
     open: 'Open', needsAction: 'Needs action', waiting: 'Waiting', status: 'Status', task: 'Task', location: 'Location',
-    search: 'Search', searchPlaceholder: 'Task ID or objective', worktree: 'Worktree', branch: 'Branch', main: 'main',
+    search: 'Search', searchPlaceholder: 'Task ID, workflow ID or objective', worktree: 'Worktree', branch: 'Branch', main: 'main',
     allProjects: 'All projects', allWorktrees: 'All worktrees', clear: 'Clear filters', noMatches: 'No task matches these filters',
     viewTasks: 'View tasks', projectCounts: 'Needs action {needs} · Open {open} · Done {done}',
     showWorktrees: 'Show {n} worktrees without open tasks', hideWorktrees: 'Hide {n} worktrees without open tasks',
@@ -88,12 +89,13 @@ const I18N = {
     accountsHint: 'Accounts are added and logged in by a person in a terminal:'
   },
   vi: {
+    workflow: 'Quy trình', workflowTitle: '{id} · {objective}', workflowProgress: '{done} trên {total} bước đã xong',
     showQueue: 'Xem tất cả ({n})', homeProjects: 'Xem tất cả dự án ({n})', showLess: 'Thu gọn', fileGroup: '{dir}/ · {n} tệp', fileGroupOne: '{dir}/ · {n} tệp',
     log: 'Nhật ký', messagesOnly: 'Chỉ tin nhắn agent', logTail: 'Đang hiển thị 256 KB cuối', noLog: 'Không có nhật ký cho lần chạy này',
     awaitingReview: 'Chờ duyệt', nextStep: 'Việc tiếp theo', approve: 'Phê duyệt', result: 'Xem kết quả', resume: 'Tiếp tục',
     groupWorktree: 'Gom theo worktree', stale: 'cũ',
     open: 'Đang mở', needsAction: 'Cần xử lý', waiting: 'Đang chờ', status: 'Trạng thái', task: 'Tác vụ', location: 'Vị trí',
-    search: 'Tìm kiếm', searchPlaceholder: 'Mã tác vụ hoặc mục tiêu', worktree: 'Worktree', branch: 'Nhánh', main: 'chính',
+    search: 'Tìm kiếm', searchPlaceholder: 'Mã tác vụ, mã quy trình hoặc mục tiêu', worktree: 'Worktree', branch: 'Nhánh', main: 'chính',
     allProjects: 'Tất cả dự án', allWorktrees: 'Tất cả worktree', clear: 'Xóa bộ lọc', noMatches: 'Không có tác vụ khớp với bộ lọc này',
     viewTasks: 'Xem tác vụ', projectCounts: 'Cần xử lý {needs} · Đang mở {open} · Xong {done}',
     showWorktrees: 'Hiện {n} worktree không có tác vụ mở', hideWorktrees: 'Ẩn {n} worktree không có tác vụ mở',
@@ -716,7 +718,7 @@ function renderOverview() {
   const ids = selected ? new Set(selected.members.map(p => p.pid)) : null;
   const scoped = pid => (!state.p || !!ids?.has(pid)) && (!state.w || pid === state.w);
   const filtered = tasks.filter(t => scoped(t.pid) &&
-    `${t.task_id} ${t.objective}`.toLocaleLowerCase().includes(state.q.toLocaleLowerCase()));
+    `${t.task_id} ${t.workflow_id || ''} ${t.objective}`.toLocaleLowerCase().includes(state.q.toLocaleLowerCase()));
   renderMonitor(scoped, tasks);
   renderHome(scoped, tasks);
   renderCapacity(scoped, groups);
@@ -752,7 +754,9 @@ function renderOverview() {
     const status = el('td', undefined, 'cell-status'); status.append(statusBadge(task));
     const name = el('td', undefined, 'task-cell'), line = el('div', undefined, 'task-line');
     const objective = el('span', (task.objective || '').split('\n')[0], 'objective');
-    attr(objective, 'title', task.objective || ''); line.append(el('code', task.task_id), objective); name.append(line);
+    attr(objective, 'title', task.objective || ''); line.append(el('code', task.task_id));
+    if (task.workflow_id) line.append(el('small', task.workflow_id, 'workflow-id'));
+    line.append(objective); name.append(line);
     const next = el('td', undefined, 'next-step');
     // No command: the cell stays empty (the phone layout then drops it).
     if (task.command) {
@@ -1121,6 +1125,34 @@ function setInert(value) {
   for (const node of [$('content'), $('topbar'), $('footer')]) if (node.inert !== value) node.inert = value;
   drawerOpen = value; syncSidebar();
 }
+function workflowContext() {
+  const task = overview?.tasks.find(t => `${t.pid}:${t.task_id}` === state.t);
+  if (!task?.workflow_id) return null;
+  return {
+    task,
+    request: overview.requests?.find(r => r.pid === task.pid && r.id === task.workflow_id),
+    steps: overview.tasks.filter(t => t.pid === task.pid && t.workflow_id === task.workflow_id)
+      .sort((a, b) => a.task_id.localeCompare(b.task_id)),
+  };
+}
+function workflowSection(context) {
+  const block = section('workflow', 'workflow-section');
+  const {task, request, steps} = context;
+  block.append(el('p', tr('workflowTitle', {id: task.workflow_id, objective: request?.name || tr('unknown')})));
+  if (request) block.append(el('p', tr('workflowProgress', {done: request.done, total: request.total}), 'muted'));
+  const list = el('ul', undefined, 'workflow-steps');
+  for (const step of steps) {
+    const item = el('li');
+    const current = `${step.pid}:${step.task_id}` === state.t;
+    const row = current ? el('div', undefined, 'workflow-step') :
+      button(undefined, () => openItem(step.pid, step.task_id), 'workflow-step');
+    if (current) attr(row, 'aria-current', 'true');
+    row.append(statusBadge(step), el('code', step.task_id), el('span', step.objective));
+    item.append(row); list.append(item);
+  }
+  block.append(list);
+  return block;
+}
 function renderDetail() {
   const drawer = $('drawer'), wasHidden = drawer.hidden;
   drawer.hidden = !state.t;
@@ -1131,7 +1163,8 @@ function renderDetail() {
   if (wasHidden) { closeSidebar(false); $('close').focus(); }
   text($('drawer-title'), taskData?.objective || state.t.split(':').pop());
   const body = $('drawer-body');
-  const signature = JSON.stringify([state.lang, taskData, detailError]);
+  const context = workflowContext();
+  const signature = JSON.stringify([state.lang, taskData, detailError, context]);
   if (body._signature === signature) return;
   body._signature = signature; body.replaceChildren();
   if (detailError) { stopLog(); body.append(el('p', tr(detailError)), button(tr('retry'), () => loadDetail())); return; }
@@ -1145,6 +1178,7 @@ function renderDetail() {
   }
   // (a) who and what, (b) where it is, (c) what to do now.
   body.append(drawerHead(task), lifecycle(task));
+  if (context) body.append(workflowSection(context));
   if (task.command) {
     const verb = task.command.split(' ')[1];
     const callout = section('nextStep', 'callout');
@@ -1217,7 +1251,7 @@ async function poll() {
   }
   catch { disconnected = true; }
   finally {
-    inFlight = false; renderOverview();
+    inFlight = false; renderOverview(); renderDetail();
     if (!document.hidden) timer = setTimeout(poll, disconnected ? 5000 : 3000);
   }
 }

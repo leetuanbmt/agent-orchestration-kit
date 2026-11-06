@@ -294,3 +294,35 @@ def test_web_many_projects(sandbox: Sandbox) -> None:
         assert set(task["files"]) == set(paths), task["files"]
     result = board.browser("projects")
     assert result["ok"] and not result.get("error"), json.dumps(result, indent=1)[:5000]
+
+
+# @pt.id QA-E2E-097-web-workflow
+# @pt.item Planner workflow context in the dashboard
+# @pt.condition a two-step planner workflow stops WAITING with Step one in REVIEW and Step two in BACKLOG
+# @pt.expected drawer shows workflow objective, progress and sibling navigation; task rows show workflow id and search finds both steps; no JavaScript errors
+# @pt.target bridge/static/app.js, bridge/static/app.css
+# @pt.method e2e (Playwright)
+# @pt.legacy none
+@needs_browser
+def test_web_workflow(sandbox: Sandbox) -> None:
+    from tests.qa.test_e2e_workflows import AGENTS, TWO_STEPS, workflow
+
+    sandbox.orchestrator(AGENTS.format(reviewer="claude"))
+    env = {"FAKE_CODEX_PLAN": TWO_STEPS}
+    planned = sandbox.ok("plan", "Do two steps", env=env)
+    wid = planned["workflow_id"]
+    assert wid == "W0001", planned
+    planned = workflow(sandbox, wid, {"READY", "FAILED"})
+    assert planned["state"] == "READY", planned
+    assert [t["state"] for t in planned["tasks"]] == ["READY", "BACKLOG"], planned
+    sandbox.ok("run-workflow", wid, env=env)
+    waiting = workflow(sandbox, wid, {"WAITING", "DONE", "INCOMPLETE"})
+    assert waiting["state"] == "WAITING", waiting
+    assert [t["state"] for t in waiting["tasks"]] == ["REVIEW", "BACKLOG"], waiting
+    first, second = (t["task_id"] for t in waiting["tasks"])
+    proc, url = start_web(sandbox)
+    base, _, token = url.partition("/?token=")
+    board = Dashboard(sandbox, proc, url, base, int(base.rsplit(":", 1)[1]), token,
+                      project_id(str(sandbox.root)), {"first": first, "second": second})
+    result = board.browser("workflow")
+    assert result["ok"] and not result.get("error"), json.dumps(result, indent=1)[:5000]
