@@ -558,10 +558,10 @@ token that every API request needs; do not share it.
 
 <img alt="Web dashboard overview: tasks waiting on you with the command to copy, work in progress with time used, and account capacity with the quota-fallback policy" src="docs/images/web-overview-light.png" width="900">
 
-It covers every project agent-bridge knows on this machine and their git worktrees, in four
-views:
+It covers every project agent-bridge knows on this machine and their git worktrees. A sidebar
+lists the views and the projects; choosing a project scopes every view. The views:
 
-- **Overview.** What is waiting on you, in the bridge's priority order, each with the command to
+- **Home.** What is waiting on you, in the bridge's priority order, each with the command to
   copy (`[` and `]` open the previous or next one); the tasks running now with time used against
   their timeout; every account with its state, busy slots and quota left; whether quota fallback
   is on; and the projects.
@@ -577,14 +577,14 @@ views:
   URL, so a link reopens it.
 
 It refreshes every 3 s and says when the bridge cannot be reached, keeping the last data on screen.
-Light, dark or the system theme and English or Vietnamese sit in the settings menu; on a phone the
-views move to a bottom bar and each task becomes a compact row. A state is shown by a symbol and a
+Light, dark or the system theme and English or Vietnamese sit in the Settings view; on a phone the
+sidebar opens from the menu button and each task becomes a compact row. A state is shown by a symbol and a
 label, never by color alone. The design rules and the accessibility checks are in
 [docs/design/web-dashboard.md](docs/design/web-dashboard.md).
 
 <img alt="Accounts view in the dark theme: quota fallback on, quota windows per account, and an automatic switch" src="docs/images/web-accounts-dark.png" width="900">
 
-<img alt="Task drawer with the lifecycle stepper, next step and readable final summary" src="docs/images/web-drawer-light.png" width="640"> <img alt="Phone layout of the overview with the bottom navigation bar" src="docs/images/web-mobile-light.png" width="240">
+<img alt="Task drawer with the lifecycle stepper, next step and readable final summary" src="docs/images/web-drawer-light.png" width="640"> <img alt="Phone layout of Home with the menu button" src="docs/images/web-mobile-light.png" width="240">
 
 The web dashboard is read-only: it opens each `bridge.db` with SQLite `mode=ro`, reads account
 state and quota only from that database and the project config (it never probes a CLI or reads an
