@@ -139,11 +139,6 @@ def _command(tid: str, state: str, needs_human: bool) -> str | None:
     return None
 
 
-def _risk_level(spec):
-    value = spec.get("risk_level") if isinstance(spec, dict) else None
-    return value if isinstance(value, str) and value else "low"
-
-
 def _tasks(data):
     result = []
     states = {row["id"]: row["state"] for row in data["tasks"]}
@@ -166,8 +161,7 @@ def _tasks(data):
                 "exception": exception_of(row["state"], bool(row.get("needs_human")), failure),
                 "needs_human": bool(row.get("needs_human")), "failure": failure,
                 "updated_at": row.get("updated_at", 0), "agent": row.get("agent"),
-                "account": row.get("account"), "workflow_id": row.get("workflow_id"),
-                "risk_level": _risk_level(spec)}
+                "account": row.get("account"), "workflow_id": row.get("workflow_id")}
         task["command"] = _command(tid, task["state"], task["needs_human"])
         result.append(task)
     return result
@@ -271,42 +265,6 @@ def _config_accounts(orch):
         return profiles, agents
     except Exception:
         return {}, {}
-
-
-def _agents(orch):
-    """Configured agents in config order with roles and write permission; [] when unusable."""
-    if orch is None:
-        return []
-    try:
-        roles = {}
-        for role in orch.roles:
-            for agent in orch.role(role).agents:
-                roles.setdefault(agent, []).append(str(role))
-        result = []
-        for name, agent in orch.agents.items():
-            account = str(agent.account) if agent.account else None
-            profile = orch.accounts.get(agent.account) if agent.account else None
-            provider = profile.provider if profile is not None else None
-            result.append({"agent": str(name), "adapter": str(agent.adapter), "account": account,
-                           "provider": str(provider) if provider else None,
-                           "roles": roles.get(name, []), "enabled": bool(agent.enabled),
-                           "write": bool(agent.can("write"))})
-        return result
-    except Exception:
-        return []
-
-
-def _review_by(orch):
-    """"you" for a client reviewer, "agent" for another reviewer, None without a review stage."""
-    if orch is None:
-        return None
-    try:
-        if "review" not in orch.workflow.stages:
-            return None
-        first = orch.role("reviewer").agents[0]
-        return "you" if orch.agents[first].adapter == "client" else "agent"
-    except Exception:
-        return None
 
 
 _NO_LIMITS = object()
@@ -445,7 +403,7 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
             shown = "~" + shown[len(home):]
         project = {"pid": pid, "name": path.name, "root": shown, "worktree_of": None,
                    "root_missing": not path.is_dir(), "error": None, "counts": {}, "percent": None, "badge": None,
-                   "branch": None, "updated_at": None, "fallback": None, "agents": [], "review_by": None}
+                   "branch": None, "updated_at": None, "fallback": None}
         try:
             data = _read(root)
         except FileNotFoundError:
@@ -458,13 +416,10 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
         tasks = _tasks(data)
         loaded = _config(root)
         project["fallback"] = _fallback(loaded[1])
-        project["agents"] = _agents(loaded[1])
-        project["review_by"] = _review_by(loaded[1])
         _merge_accounts(merged_accounts, pid, data, tasks, loaded[1], now)
         result["switches"].extend(_switches(data, pid, now))
         result["tasks"].extend({"pid": pid,
                                 "reason": pause_reason(t["failure"]) if t["state"] == "PAUSED" else None,
-                                "risk_level": t["risk_level"],
                                 **{k: t[k] for k in (
             "task_id", "objective", "state", "stage", "exception", "needs_human",
             "updated_at", "agent", "account", "workflow_id", "command")}} for t in tasks)
@@ -663,13 +618,6 @@ def task_detail(pid: str, tid: str, roots: list[str] | None = None) -> dict | No
         return None
     verification = _json(latest.get("verification"))
     changes = _json(latest.get("changes"))
-    if not isinstance(changes, dict):
-        changes = {}
-    raw_patch = changes.get("patch")
-    raw_patch = raw_patch if isinstance(raw_patch, str) else ""
-    patch = _text(raw_patch, 200000)
-    # _text appends "…" past the cap, so a cut patch is one character longer than the cap.
-    patch_truncated = bool(changes.get("patch_truncated")) or len(patch) > 200000
     reviews = []
     for event in data["events"]:
         if event.get("task_id") == tid and event.get("kind") == "review":
@@ -687,4 +635,4 @@ def task_detail(pid: str, tid: str, roots: list[str] | None = None) -> dict | No
             "scope_violations": [_text(v) for v in verification.get("scope_violations", [])],
             "head_changed": changes.get("head_changed", False), "files": changes.get("files", []),
             "stat": _text(changes.get("stat"), len(str(changes.get("stat") or ""))), "reviews": reviews,
-            "final": _text(latest.get("final")), "patch": patch, "patch_truncated": patch_truncated}
+            "final": _text(latest.get("final"))}
