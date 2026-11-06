@@ -34,6 +34,42 @@ async function open(page, hash = '') {
 }
 
 const scenarios = {
+  async actions(page) {
+    await open(page, '#view=tasks&s=all');
+    const target = cfg.readOnly ? cfg.tasks.xss : cfg.tasks.review;
+    await rows(page).filter({hasText: target}).click();
+    await page.locator('#drawer-body .technical').waitFor();
+    const actions = page.locator('.task-actions');
+    if (cfg.readOnly) {
+      check('read-only has no Actions section', await actions.count() === 0);
+      return;
+    }
+    await actions.getByLabel('Notes (required)', {exact: true}).fill('Reviewed the diff and checks.');
+    await actions.getByRole('button', {name: 'Submit review', exact: true}).click();
+    await page.waitForFunction(() => document.querySelector('#drawer-body').textContent.includes('Request accepted.'));
+    const reviewed = await page.evaluate(async ({pid, tid}) =>
+      (await (await fetch('/api/projects/' + pid + '/tasks/' + tid)).json()).state,
+      {pid: cfg.pid, tid: cfg.tasks.review});
+    check('review approval becomes DONE', reviewed === 'DONE', reviewed);
+    await page.locator('#close').click();
+    await rows(page).filter({hasText: cfg.tasks.vi}).click();
+    await page.locator('.task-actions').waitFor();
+    check('confirm is initially hidden', !await page.getByRole('button', {name: 'Confirm cancel', exact: true}).isVisible());
+    await page.getByRole('button', {name: 'Cancel task', exact: true}).click();
+    await page.getByRole('button', {name: 'Confirm cancel', exact: true}).click();
+    const before = await page.evaluate(async ({pid, tid}) =>
+      (await (await fetch('/api/projects/' + pid + '/tasks/' + tid)).json()).state,
+      {pid: cfg.pid, tid: cfg.tasks.vi});
+    check('empty reason does not cancel', before === 'READY', before);
+    await page.getByLabel('Reason (required)', {exact: true}).fill('No longer needed.');
+    await page.getByRole('button', {name: 'Confirm cancel', exact: true}).click();
+    await page.waitForFunction(() => document.querySelector('#drawer-body').textContent.includes('Request accepted.'));
+    const after = await page.evaluate(async ({pid, tid}) =>
+      (await (await fetch('/api/projects/' + pid + '/tasks/' + tid)).json()).state,
+      {pid: cfg.pid, tid: cfg.tasks.vi});
+    check('confirmed cancellation becomes CANCELLED', after === 'CANCELLED', after);
+  },
+
   async axe(page) {
     const source = fs.readFileSync(path.join(path.dirname(require.resolve('axe-core')), 'axe.min.js'), 'utf8');
     async function audit(view, theme, width) {
@@ -326,7 +362,7 @@ const scenarios = {
     check('drawer title is the objective', (await page.textContent('#drawer-title')).includes('Set x to 2'));
     check('drawer shows the task id and state', body.includes(cfg.tasks.review) || /Review/.test(body), body.slice(0, 300));
     check('drawer shows the verification checks', /Verification checks/.test(body), body.slice(0, 600));
-    const command = await page.locator('#drawer-body textarea.command').inputValue().catch(() => '');
+    const command = await page.locator('#drawer-body .callout textarea.command').inputValue().catch(() => '');
     check('drawer shows the suggested command', command.includes(`agent-bridge result ${cfg.tasks.review}`), command);
     const hash = decodeURIComponent(new URL(page.url()).hash);
     check('selection is in the address (deep link)', hash.includes(`t=${cfg.pid}:${cfg.tasks.review}`), hash);

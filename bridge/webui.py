@@ -1,4 +1,4 @@
-"""Read-only localhost HTTP view of bridge progress."""
+"""Localhost HTTP view of bridge progress."""
 
 import errno
 import hmac
@@ -14,16 +14,20 @@ import time
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
-from . import progress
+from . import progress, webactions
 
 STATIC = Path(__file__).parent / "static"
+MAX_BODY = 16384
+SESSION_IDLE = 43200
+ACTION_PATH = re.compile(r"/api/projects/([0-9a-f]{12})/tasks/(T[0-9]{4,})/actions")
 
 
 def make_server(port: int = 8765, roots: list[str] | None = None,
-                launch_code: str | None = None) -> ThreadingHTTPServer:
+                launch_code: str | None = None, read_only: bool = True) -> ThreadingHTTPServer:
+    actions_enabled = not read_only and launch_code is not None
     started = time.monotonic()
     code_used = False
-    sessions: set[str] = set()
+    sessions: dict[str, float] = {}
     auth_lock = threading.Lock()
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -48,6 +52,35 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
             if self.command != "HEAD":
                 self.wfile.write(body)
 
+        def handle_action(self, pid, tid):
+            ctype = self.headers.get("Content-Type", "")
+            if ctype.split(";", 1)[0].strip().lower() != "application/json":
+                self.respond(415, {"error": "content type must be application/json"})
+                return
+            if not (self.headers.get("Origin") or self.headers.get("Sec-Fetch-Site")):
+                self.respond(403, {"error": "browser headers required"})
+                return
+            length = self.headers.get("Content-Length")
+            if length is None:
+                self.respond(411, {"error": "length required"})
+                return
+            if not length.isdigit() or int(length) > MAX_BODY:
+                self.respond(413, {"error": "body too large"})
+                return
+            raw = self.rfile.read(int(length))
+            try:
+                body = json.loads(raw.decode("utf-8"))
+            except ValueError:
+                body = None
+            if not isinstance(body, dict):
+                self.respond(400, {"error": "body must be a JSON object"})
+                return
+            try:
+                status, result = webactions.run_action(roots, pid, tid, body)
+            except Exception:
+                status, result = 500, {"error": "internal"}
+            self.respond(status, result)
+
         def handle_request(self):
             nonlocal code_used
             port = self.server.server_address[1]
@@ -56,6 +89,13 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
                 self.respond(421, {"error": "bad host"})
                 return
             path = self.path.split("?", 1)[0]
+            if path.startswith("/api/"):
+                origins = self.headers.get_all("Origin", [])
+                sites = self.headers.get_all("Sec-Fetch-Site", [])
+                if ((origins and (len(origins) != 1 or origins[0] != f"http://{hosts[0]}"))
+                        or (sites and (len(sites) != 1 or sites[0] not in ("same-origin", "none")))):
+                    self.respond(403, {"error": "cross-site request"})
+                    return
             if launch_code is not None and path.startswith("/api/"):
                 cookie = SimpleCookie()
                 try:
@@ -64,12 +104,23 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
                 except CookieError:
                     supplied = ""
                 with auth_lock:
-                    authenticated = any(hmac.compare_digest(
-                        supplied.encode("utf-8"), session.encode("utf-8")) for session in sessions)
+                    now = time.monotonic()
+                    for session in list(sessions):
+                        if now - sessions[session] >= SESSION_IDLE:
+                            del sessions[session]
+                    authenticated = False
+                    for session in sessions:
+                        if hmac.compare_digest(supplied.encode("utf-8"), session.encode("utf-8")):
+                            sessions[session] = now
+                            authenticated = True
                 if not authenticated:
                     self.respond(401, {"error": "session required"})
                     return
             if self.command not in ("GET", "HEAD"):
+                action = ACTION_PATH.fullmatch(path) if self.command == "POST" else None
+                if action and actions_enabled:
+                    self.handle_action(*action.groups())
+                    return
                 self.respond(405, {"error": "method not allowed"}, allow=True)
                 return
             if self.command == "GET" and path == "/" and launch_code is not None:
@@ -81,7 +132,7 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
                                                     launch_code.encode("utf-8"))):
                         code_used = True
                         session = secrets.token_urlsafe(32)
-                        sessions.add(session)
+                        sessions[session] = time.monotonic()
                         self.send_response(303)
                         self.send_header("Location", "/")
                         self.send_header("Set-Cookie",
@@ -105,7 +156,7 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
                 return
             try:
                 if path == "/api/overview":
-                    self.respond(200, progress.snapshot(roots))
+                    self.respond(200, {**progress.snapshot(roots), "actions": actions_enabled})
                     return
                 log_match = re.fullmatch(r"/api/projects/([0-9a-f]{12})/tasks/(T[0-9]{4,})/log", path)
                 if log_match:
@@ -144,10 +195,10 @@ def make_server(port: int = 8765, roots: list[str] | None = None,
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 
 
-def serve(port: int = 8765, open_browser: bool = False) -> None:
+def serve(port: int = 8765, open_browser: bool = False, read_only: bool = False) -> None:
     launch_code = secrets.token_urlsafe(32)
     try:
-        server = make_server(port, launch_code=launch_code)
+        server = make_server(port, launch_code=launch_code, read_only=read_only)
     except OSError as error:
         if error.errno != errno.EADDRINUSE:
             raise

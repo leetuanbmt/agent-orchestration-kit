@@ -331,6 +331,7 @@ def main(argv: list[str] | None = None) -> None:
     web.add_argument("--port", type=int, default=8765,
                      help="port on 127.0.0.1; 0 picks a free one (default 8765)")
     web.add_argument("--open", action="store_true", help="open the dashboard in a browser")
+    web.add_argument("--read-only", action="store_true", help="view only: no actions from the page")
     sub.add_parser("serve", help="run the MCP stdio server")
     sub.add_parser("health", help="adapters, logins, quota and task counts; exit 1 when "
                               "not OK")
@@ -436,7 +437,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "web":
         from . import webui
 
-        webui.serve(args.port, args.open)
+        webui.serve(args.port, args.open, read_only=args.read_only)
         return
     if args.cmd in (None, "tui"):
         if not (sys.stdin.isatty() and sys.stdout.isatty()):

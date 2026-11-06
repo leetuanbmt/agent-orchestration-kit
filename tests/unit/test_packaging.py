@@ -90,7 +90,7 @@ def test_web_launch_code(monkeypatch, capsys):
         def server_close(self):
             self.closed = True
     servers = []
-    def make_server(port, roots=None, launch_code=None):
+    def make_server(port, roots=None, launch_code=None, read_only=False):
         assert port == 0
         launch_codes.append(launch_code)
         server = Server()

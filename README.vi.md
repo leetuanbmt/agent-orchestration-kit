@@ -102,8 +102,8 @@ một vòng giao việc lặp lại được và kiểm toán được trong t�
 
 **Theo dõi và cài đặt**
 
-- **Dashboard.** Dashboard trong terminal, các lệnh CLI xuất bảng/JSON và dashboard web chỉ đọc
-  trên localhost, bao quát mọi project trên máy.
+- **Dashboard.** Dashboard trong terminal, các lệnh CLI xuất bảng/JSON và dashboard web trên
+  localhost bao quát mọi project trên máy, nơi bạn cũng có thể duyệt, chạy, tiếp tục và hủy task.
 - **Cài đặt theo project.** `agent-bridge init` chỉ ghi file trong project; không bao giờ sửa
   `~/.claude`, `~/.codex` hay cấu hình MCP global.
 
@@ -150,7 +150,8 @@ flowchart LR
     bridge --> db[("bridge.db<br/>task · attempt · event")]
     router --> acct[("~/.agent-bridge<br/>account · slot · sổ usage")]
     cli --> db
-    web["agent-bridge web<br/>(chỉ đọc)"] --> db
+    web["agent-bridge web"] --> db
+    web -- "duyệt · chạy · tiếp tục · hủy" --> cli
 ```
 
 | Thành phần | Vị trí |
@@ -553,8 +554,9 @@ giả, `HOME` mới, một project demo). Tạo lại bằng
 ### Dashboard web
 
 `agent-bridge web [--port N] [--open]` phục vụ dashboard trên trình duyệt tại `127.0.0.1` (port
-mặc định 8765; `--port 0` tự chọn port trống; Ctrl+C để dừng). URL được in ra chứa một token bí
-mật sinh cho mỗi lần chạy, mọi request API đều cần token này; đừng chia sẻ nó.
+mặc định 8765; `--port 0` tự chọn port trống; Ctrl+C để dừng). URL được in ra là link dùng một
+lần: mở nó sẽ cấp cho trình duyệt này một session cookie và link hết hiệu lực. Đừng chia sẻ link;
+nếu link đã được dùng hoặc đã quá mười phút, hãy chạy lại lệnh.
 
 <img alt="Trang tổng quan của dashboard web: task đang chờ bạn kèm lệnh để sao chép, việc đang chạy với thời gian đã dùng, và năng lực của các tài khoản cùng chính sách chuyển dự phòng khi hết quota" src="docs/images/web-overview-light.png" width="900">
 
@@ -574,7 +576,9 @@ bên liệt kê các view và các dự án; chọn một dự án sẽ thu ph�
 - **Ngăn chi tiết task.** Trạng thái, thanh tiến trình vòng đời, việc tiếp theo kèm lệnh, kết quả
   từng lệnh kiểm tra (đạt hoặc không), vi phạm phạm vi, file thay đổi, tóm tắt của agent, review,
   các lần chạy và log trực tiếp; các trường thô nằm trong *Chi tiết kỹ thuật*. Task đang chọn nằm
-  trong URL nên mở lại được bằng link.
+  trong URL nên mở lại được bằng link. Mục Thao tác cho phép duyệt task ở REVIEW (phê duyệt, làm
+  lại hoặc chặn, kèm ghi chú), chạy task READY, tiếp tục task ở REWORK, FAILED hoặc PAUSED với
+  phản hồi tùy chọn, và hủy bất kỳ task nào chưa kết thúc kèm lý do.
 
 Dashboard làm mới mỗi 3 giây; khi không kết nối được bridge, nó báo rõ và giữ dữ liệu cuối cùng
 trên màn hình. Theme sáng, tối hoặc theo hệ thống và tiếng Anh hoặc tiếng Việt nằm trong view Cài
@@ -586,10 +590,14 @@ nằm trong [docs/design/web-dashboard.md](docs/design/web-dashboard.md) (chỉ 
 
 <img alt="Ngăn chi tiết task với thanh vòng đời, việc tiếp theo và tóm tắt dễ đọc" src="docs/images/web-drawer-light.png" width="640"> <img alt="Trang tổng quan trên điện thoại với nút menu" src="docs/images/web-mobile-light.png" width="240">
 
-Dashboard web chỉ đọc: nó mở từng `bridge.db` bằng SQLite `mode=ro`, chỉ đọc trạng thái và quota
-của tài khoản từ database đó và cấu hình dự án (không bao giờ gọi thử CLI hay đọc thư mục home
-của tài khoản), không khởi chạy agent nào và không thực hiện thao tác nào dành cho con người. Nó
-chỉ lắng nghe trên `127.0.0.1` và từ chối các header `Host` khác.
+Dashboard web mở từng `bridge.db` bằng SQLite `mode=ro` và chỉ đọc trạng thái và quota của tài
+khoản từ database đó và cấu hình dự án (không bao giờ gọi thử CLI hay đọc thư mục home của tài
+khoản). Các thao tác của nó chạy đúng các lệnh CLI bạn sẽ gõ (`agent-bridge review`, `execute`,
+`resume`, `cancel`); phê duyệt của con người cho task rủi ro cao, việc chuyển agent và các lệnh tài
+khoản vẫn chỉ làm trong terminal. Mỗi thao tác cần session cookie, body JSON và request cùng
+origin; `agent-bridge web --read-only` ẩn các thao tác và từ chối chúng. Nó chỉ lắng nghe trên
+`127.0.0.1` và từ chối các header `Host` khác. Mô hình đe dọa nằm trong
+[docs/design/web-dashboard.md](docs/design/web-dashboard.md#threat-model) (chỉ có bản tiếng Anh).
 
 ## Xử lý sự cố
 

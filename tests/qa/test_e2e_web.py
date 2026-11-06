@@ -106,8 +106,8 @@ class Dashboard:
         return json.loads(lines[-1])
 
 
-def start_web(box: Sandbox, port: str = "0") -> tuple[subprocess.Popen, str]:
-    proc = box.spawn("web", "--port", port)
+def start_web(box: Sandbox, port: str = "0", *, read_only: bool = False) -> tuple[subprocess.Popen, str]:
+    proc = box.spawn("web", "--port", port, *(["--read-only"] if read_only else []))
     line = proc.stdout.readline()
     assert "agent-bridge web: http://127.0.0.1:" in line, (line, proc.stderr.read() if proc.poll() else "")
     return proc, line.split("web: ", 1)[1].strip()
@@ -381,4 +381,23 @@ def test_web_visual(dashboard: Dashboard) -> None:
     if not _playwright():
         pytest.skip("node with playwright not installed")
     result = dashboard.browser("visual", update=update)
+    assert result["ok"] and not result.get("error"), json.dumps(result, indent=1)[:5000]
+
+
+# @pt.id QA-E2E-100-web-actions
+# @pt.item Task drawer actions and read-only mode
+# @pt.condition Review approval with notes, cancellation of READY, and a read-only server
+# @pt.expected Review becomes DONE; cancellation requires confirmation and reason; read-only hides Actions
+# @pt.target bridge/static/app.js, bridge/webui.py
+# @pt.method e2e (Playwright)
+# @pt.legacy none
+@needs_browser
+def test_web_actions(dashboard: Dashboard) -> None:
+    result = dashboard.browser("actions")
+    assert result["ok"] and not result.get("error"), json.dumps(result, indent=1)[:5000]
+    proc, url = start_web(dashboard.box, read_only=True)
+    base, _, code = url.partition("/?code=")
+    readonly = Dashboard(dashboard.box, proc, url, base, int(base.rsplit(":", 1)[1]),
+                         code, dashboard.pid, dashboard.tasks)
+    result = readonly.browser("actions", readOnly=True)
     assert result["ok"] and not result.get("error"), json.dumps(result, indent=1)[:5000]

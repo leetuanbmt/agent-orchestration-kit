@@ -101,8 +101,8 @@ a repeatable, auditable delegation loop in one repository, without a hosted serv
 
 **Monitoring and setup**
 
-- **Dashboards.** A terminal dashboard, table/JSON CLI views and a read-only localhost web
-  dashboard covering every project on the machine.
+- **Dashboards.** A terminal dashboard, table/JSON CLI views and a localhost web dashboard
+  covering every project on the machine, where you can also review, run, resume and cancel tasks.
 - **Project-scoped setup.** `agent-bridge init` writes only project files; it never edits
   `~/.claude`, `~/.codex` or global MCP configuration.
 
@@ -149,7 +149,8 @@ flowchart LR
     bridge --> db[("bridge.db<br/>tasks · attempts · events")]
     router --> acct[("~/.agent-bridge<br/>accounts · slots · usage ledger")]
     cli --> db
-    web["agent-bridge web<br/>(read-only)"] --> db
+    web["agent-bridge web"] --> db
+    web -- "review · run · resume · cancel" --> cli
 ```
 
 | Component | Where it lives |
@@ -553,8 +554,9 @@ CLIs, a fresh `HOME`, a demo project). Regenerate them with
 ### Web dashboard
 
 `agent-bridge web [--port N] [--open]` serves a browser dashboard on `127.0.0.1` (default port
-8765; `--port 0` picks a free one; Ctrl+C stops it). The printed URL carries a per-launch secret
-token that every API request needs; do not share it.
+8765; `--port 0` picks a free one; Ctrl+C stops it). The printed URL is a one-time link: opening it gives
+this browser a session cookie and the link stops working. Do not share it; if it was already used
+or is more than ten minutes old, restart the command.
 
 <img alt="Web dashboard overview: tasks waiting on you with the command to copy, work in progress with time used, and account capacity with the quota-fallback policy" src="docs/images/web-overview-light.png" width="900">
 
@@ -574,7 +576,9 @@ lists the views and the projects; choosing a project scopes every view. The view
 - **Task drawer.** Status, a lifecycle stepper, the next step with its command, verification
   checks as pass or fail, scope violations, changed files, the agent's summary, reviews, attempts
   and the live attempt log; raw fields sit under *Technical details*. The selection is part of the
-  URL, so a link reopens it.
+  URL, so a link reopens it. Its Actions section reviews a task in REVIEW (approve, rework or block,
+  with notes), runs a READY task, resumes one in REWORK, FAILED or PAUSED with optional feedback,
+  and cancels any open task with a reason.
 
 It refreshes every 3 s and says when the bridge cannot be reached, keeping the last data on screen.
 Light, dark or the system theme and English or Vietnamese sit in the Settings view; on a phone the
@@ -586,10 +590,14 @@ label, never by color alone. The design rules and the accessibility checks are i
 
 <img alt="Task drawer with the lifecycle stepper, next step and readable final summary" src="docs/images/web-drawer-light.png" width="640"> <img alt="Phone layout of Home with the menu button" src="docs/images/web-mobile-light.png" width="240">
 
-The web dashboard is read-only: it opens each `bridge.db` with SQLite `mode=ro`, reads account
-state and quota only from that database and the project config (it never probes a CLI or reads an
-account home), starts no agent and performs no human action. It listens on `127.0.0.1` only and
-rejects other `Host` headers.
+The web dashboard opens each `bridge.db` with SQLite `mode=ro` and reads account state and quota
+only from that database and the project config (it never probes a CLI or reads an account home).
+Its actions run the same CLI commands you would type (`agent-bridge review`, `execute`, `resume`,
+`cancel`); human approval of high-risk tasks, reassignment and account commands stay in the
+terminal. An action needs the session cookie, a JSON body and a same-origin request;
+`agent-bridge web --read-only` hides the actions and refuses them. It listens on `127.0.0.1` only
+and rejects other `Host` headers. The threat model is in
+[docs/design/web-dashboard.md](docs/design/web-dashboard.md#threat-model).
 
 ## Troubleshooting
 
