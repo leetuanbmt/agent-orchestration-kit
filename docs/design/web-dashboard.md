@@ -43,6 +43,19 @@ Measured with the seeded sandbox used for the README screenshots (one project, e
 | 4 | Columns without information | With one project and one agent, Location and Agent repeated one value on every row; Next step showed "–" in 6 of 8 rows; phone cards repeated six labels per task (about 200 px each). | Medium |
 | 5 | No visual hierarchy | Navigation, filters, statuses and badges were all outlined pills of the same weight; the warm beige palette made panels and page blend. | Medium |
 
+## Before and after
+
+The same seeded project (eight tasks, three accounts, one real quota failover) on `main` (left)
+and on this redesign (right), at 1280 px unless noted.
+
+![Landing page: the old task list and the new Home](../images/web-compare-home.png)
+
+![Board in the dark theme](../images/web-compare-board.png)
+
+![Task drawer for a task waiting for review](../images/web-compare-drawer.png)
+
+![Phone, 390 px](../images/web-compare-phone.png)
+
 ## Benchmark
 
 [OrchestratorInc/agent-orchestrator](https://github.com/OrchestratorInc/agent-orchestrator) (its
