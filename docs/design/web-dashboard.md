@@ -46,7 +46,7 @@ tokens, names and components, and any action buttons (this dashboard is view-onl
 
 | View | Answers | Contents |
 |---|---|---|
-| Home (default) | Questions 1 to 3 | Summary tiles, "Waiting on you" queue with copyable commands, In progress cards with time used, account summary with the quota-fallback line, projects |
+| Home (default) | Questions 1 to 3 | Summary tiles, "Waiting on you" queue with copyable commands (first six, then a toggle), In progress cards with time used, account summary with the quota-fallback line, projects (first eight, then a toggle) |
 | Tasks | Question 4 | Search, status tabs, the task table (phone: compact rows) |
 | Board | Question 4 by stage | Lanes: Needs action, In review, Running, Queued, plus Finished |
 | Accounts | Question 3 in detail | Fallback policy per project, one card per account (state, quota windows, slots, agents), recent automatic switches |
@@ -58,7 +58,7 @@ and "Show all". Choosing a project scopes every view and the page title. Below 1
 is off-canvas, opened from the menu button.
 
 The task drawer opens from every view (`t=` in the URL) and holds status, the next step, the
-lifecycle, checks, changed files, reviews and the live log. Old links keep working: `view=projects`
+lifecycle, checks, changed files (grouped by directory above eight, cache folders closed), reviews and the live log. With more than one project in view, every task id carries its project name, because ids restart at T0001 in each project; Accounts then shows one fallback summary listing every project. Old links keep working: `view=projects`
 opens Home at the projects section.
 
 Progressive disclosure: project and worktree filters appear only with more than one project,
