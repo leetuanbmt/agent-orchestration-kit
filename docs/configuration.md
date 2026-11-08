@@ -245,9 +245,10 @@ An account is one login with its own auth home. Projects declare accounts in
     never forwarded and reads as logged out: the two bill different sources.
   - When the named secret is missing or has the wrong prefix, the run stops with PAUSED AUTH
     instead of using whatever login the home holds. This applies to both kinds.
-  - Not verified with a real key yet: whether `claude auth status` reports `loggedIn` for an
-    account whose only credential is `ANTHROPIC_API_KEY`. If it does not, `account-verify`
-    and `account-list` show the account as logged out.
+  - With `ANTHROPIC_API_KEY` as its only credential (empty `CLAUDE_CONFIG_DIR`), `claude auth
+    status` reports `loggedIn: true`, `authMethod: api_key`, `apiKeySource:
+    ANTHROPIC_API_KEY` (Claude Code, probed 2026-11-08 with a fake key; the CLI does not check
+    the key there). A rejected key shows up on the first run as PAUSED AUTH.
   - API-key usage is billed per token and does not report the 5-hour and weekly windows, so
     `five_hour_pct` and `weekly_pct` never stop such an account. Use `budget_usd` instead.
 - **Checking one account.** Both commands are read-only and safe to run from Claude Code:
