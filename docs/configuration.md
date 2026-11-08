@@ -232,13 +232,31 @@ An account is one login with its own auth home. Projects declare accounts in
     these are `limits.five_hour_pct` and `limits.weekly_pct`. Other `limits` keys in the entry
     are kept.
   - All three commands are human-only and need a terminal.
+- **An Anthropic Console API key (`credential_kind: api_key`).** With `credential: keychain` or
+  `token_env`, the stored secret can be an API key instead of a setup-token:
+
+  ```bash
+  agent-bridge project-account-add claude-api --provider anthropic --credential keychain --credential-kind api_key
+  agent-bridge account-set-token claude-api   # prompts for the sk-ant-api... key
+  ```
+
+  - Runs get only `ANTHROPIC_API_KEY`, and only for a value starting with `sk-ant-api`. A
+    setup-token in an `api_key` account, or a key in an `oauth_token` account (the default), is
+    never forwarded and reads as logged out: the two bill different sources.
+  - When the named secret is missing or has the wrong prefix, the run stops with PAUSED AUTH
+    instead of using whatever login the home holds. This applies to both kinds.
+  - Not verified with a real key yet: whether `claude auth status` reports `loggedIn` for an
+    account whose only credential is `ANTHROPIC_API_KEY`. If it does not, `account-verify`
+    and `account-list` show the account as logged out.
+  - API-key usage is billed per token and does not report the 5-hour and weekly windows, so
+    `five_hour_pct` and `weekly_pct` never stop such an account. Use `budget_usd` instead.
 - **Checking one account.** Both commands are read-only and safe to run from Claude Code:
   - `agent-bridge account-show <name>` prints the account's `account-list` row, plus where its
     token comes from (`keychain agent-bridge/<key>` or `env <VAR>`, never the value), the
     agents that use it and the roles whose `default` is one of them.
   - `agent-bridge account-verify <name>` checks the CLI login and, for a `token_env` or
-    keychain account, that the token is present and has the `sk-ant-oat` shape. It exits 1
-    when the account cannot run.
+    keychain account, that the secret is present and has its kind's prefix (`sk-ant-oat` or
+    `sk-ant-api`). It exits 1 when the account cannot run.
 - **The same token in the macOS Keychain (`credential: keychain`).** Instead of `token_env`
   (the two cannot be combined), an `anthropic` account can keep its `setup-token` token in the
   login Keychain. A human stores it once with `agent-bridge account-set-token <name>`.

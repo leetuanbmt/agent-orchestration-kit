@@ -123,7 +123,9 @@ def _set_token(args: argparse.Namespace) -> dict[str, Any]:
     if args.delete:
         done = keychain("delete-generic-password", *item)
         return {"account": name, "deleted": done is not None and done.returncode == 0}
-    print("Paste the token `claude setup-token` printed; it is not echoed.", file=sys.stderr)
+    print("Paste the Anthropic Console API key (sk-ant-api...)" if acc.credential_kind == "api_key"
+          else "Paste the token `claude setup-token` printed", "; it is not echoed.",
+          sep="", file=sys.stderr)
     # -w last: `security` prompts on the terminal itself, so the token never passes through
     # argv or this process.
     done = subprocess.run(["security", "add-generic-password", "-U", *item,
@@ -172,6 +174,8 @@ def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
         account["credential"] = args.credential
     if args.token_env:
         account["token_env"] = args.token_env
+    if args.credential_kind != "oauth_token":
+        account["credential_kind"] = args.credential_kind
     if limits := _window_limits(args):
         account["limits"] = limits
     adapter = _PROVIDER_ADAPTER[args.provider]
@@ -186,7 +190,7 @@ def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
         data["executor"] = list(dict.fromkeys([agent, *(data.get("executor") or [])]))
     # The isolation check routing applies, before anything is written.
     resolve_profile(args.name, args.provider, account.get("home"), root, args.token_env,
-                    args.credential)
+                    args.credential, args.credential_kind)
     _write_managed(yaml_path, path, data)
     if home is not None and not home.exists():
         home.mkdir(mode=0o700, parents=True)
@@ -561,6 +565,9 @@ def main(argv: list[str] | None = None) -> None:
     cred.add_argument("--credential", choices=["keychain"],
                       help="anthropic: keep a setup-token in the macOS Keychain")
     cred.add_argument("--token-env", help="anthropic: AGENT_BRIDGE_CLAUDE_<NAME>_TOKEN")
+    padd.add_argument("--credential-kind", choices=["oauth_token", "api_key"],
+                      default="oauth_token", help="anthropic: what the secret is: a "
+                      "`claude setup-token` token (default) or a Console API key")
     padd.add_argument("--agent", help="agent name (default: agent-<name>)")
     padd.add_argument("--model")
     padd.add_argument("--executor", action="store_true",
@@ -578,8 +585,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("project-account-remove", help="HUMAN ONLY: remove an account added with "
                                                   "project-account-add; its home is kept"
                    ).add_argument("name")
-    token = sub.add_parser("account-set-token", help="HUMAN ONLY: store a `claude setup-token` "
-                                                     "token in the macOS Keychain for an "
+    token = sub.add_parser("account-set-token", help="HUMAN ONLY: store a setup-token or API "
+                                                     "key in the macOS Keychain for an "
                                                      "account with `credential: keychain`")
     token.add_argument("name")
     token.add_argument("--delete", action="store_true", help="remove the stored token")

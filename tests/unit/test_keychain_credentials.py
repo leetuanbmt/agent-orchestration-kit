@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from bridge import cli
 from bridge.accounts import (CLAUDE_KEY_ENV, CLAUDE_TOKEN_ENV, KEYCHAIN_SERVICE, Account,
-                             account_env, keychain_account, login_status)
+                             account_env, credential_check, keychain_account, login_status)
 from bridge.config import BridgeConfig
 from bridge.orchestrator import AccountProfile
 from tests.conftest import FAKES
@@ -190,7 +190,8 @@ def test_show_and_verify_account(fake_security, repo, tmp_path):
     acc = b._account("kc")
     shown = b.show_account("kc")
     assert shown["credential"] == {"reference": f"keychain {KEYCHAIN_SERVICE}/{keychain_account(acc)}",
-                                   "present": False, "well_formed": False}
+                                   "kind": "oauth_token", "present": False,
+                                   "well_formed": False}
     assert (shown["agents"], shown["role_defaults"]) == (["claude-kc"], ["executor"])
     assert b.verify_account("kc")["ok"] is False
     store(fake_security, acc, "ghp_wrong")
@@ -202,3 +203,69 @@ def test_show_and_verify_account(fake_security, repo, tmp_path):
     assert TOKEN_A not in json.dumps(out) + json.dumps(b.show_account("kc"))
     with pytest.raises(ValueError):
         b.show_account("nope")
+
+
+API_KEY = "sk-ant-api03-cccc"
+
+
+# @pt.id KIT-KEYCHAIN-007-api-key-kind
+# @pt.item An api_key account forwards only a Console API key, as ANTHROPIC_API_KEY
+# @pt.condition keychain accounts of each kind holding their own value, then the other kind's value; a global token and key in the base env
+# @pt.expected each forwards only its own kind's variable; a value of the other kind is never forwarded, reads as logged out and fails verify's well_formed
+# @pt.target bridge.accounts.account_env, credential_check, login_status
+# @pt.method unit
+# @pt.legacy none
+def test_api_key_kind(fake_security, tmp_path):
+    cfg = BridgeConfig(claude_bin="/nonexistent/claude")
+    key = Account("k", tmp_path / "k", "anthropic", credential="keychain", credential_kind="api_key")
+    oat = Account("o", tmp_path / "o", "anthropic", credential="keychain")
+    base = {CLAUDE_TOKEN_ENV: "global", CLAUDE_KEY_ENV: "sk-ant-api-global"}
+    store(fake_security, key, API_KEY)
+    store(fake_security, oat, TOKEN_A)
+    env_k, env_o = account_env(key, base), account_env(oat, base)
+    assert env_k[CLAUDE_KEY_ENV] == API_KEY and CLAUDE_TOKEN_ENV not in env_k
+    assert env_o[CLAUDE_TOKEN_ENV] == TOKEN_A and CLAUDE_KEY_ENV not in env_o
+    assert credential_check(key)["well_formed"] and credential_check(key)["kind"] == "api_key"
+    store(fake_security, key, TOKEN_B)  # a setup-token where an API key belongs
+    store(fake_security, oat, API_KEY)  # and the other way round
+    for acc in (key, oat):
+        env = account_env(acc, base)
+        assert CLAUDE_TOKEN_ENV not in env and CLAUDE_KEY_ENV not in env
+        assert login_status(cfg, acc) is False
+        assert credential_check(acc)["well_formed"] is False
+
+
+# @pt.id KIT-KEYCHAIN-008-kind-config
+# @pt.item credential_kind needs a credential source and reaches the resolved account
+# @pt.condition an anthropic profile with credential_kind api_key and no credential/token_env; one with credential keychain
+# @pt.expected the first is refused; the second resolves to an Account whose credential_kind is api_key
+# @pt.target bridge.orchestrator.AccountProfile, bridge.accounts.resolve_profile
+# @pt.method unit
+# @pt.legacy none
+def test_credential_kind_config(tmp_path):
+    from bridge.accounts import resolve_profile
+    with pytest.raises(ValidationError, match="credential_kind needs"):
+        AccountProfile(provider="anthropic", credential_kind="api_key")
+    p = AccountProfile(provider="anthropic", credential="keychain", credential_kind="api_key")
+    acc = resolve_profile("k", p.provider, str(tmp_path / "k"), None, p.token_env, p.credential,
+                          p.credential_kind)
+    assert acc.credential_kind == "api_key"
+
+
+# @pt.id KIT-KEYCHAIN-009-run-guard
+# @pt.item A run on an account whose named credential does not resolve pauses with AUTH
+# @pt.condition a keychain api_key account with no stored item, run through the Claude adapter
+# @pt.expected the adapter returns outcome auth before starting the CLI, instead of falling back to the home's login
+# @pt.target bridge.executor.Adapter.run
+# @pt.method unit
+# @pt.legacy none
+def test_missing_credential_pauses_run(fake_security, tmp_path, monkeypatch):
+    import asyncio
+
+    from bridge.executor import ADAPTERS, RunRequest
+    acc = Account("k", tmp_path / "k", "anthropic", credential="keychain", credential_kind="api_key")
+    cfg = BridgeConfig()
+    adapter = ADAPTERS["claude-cli"](cfg, tmp_path)
+    monkeypatch.setattr(adapter, "available", lambda: True)
+    res = asyncio.run(adapter.run(RunRequest("p", acc, "workspace-write", 60)))
+    assert res.outcome == "auth" and "api_key" in res.error

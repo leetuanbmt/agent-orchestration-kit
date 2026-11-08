@@ -69,6 +69,8 @@ class Account:
     token_env: str | None = None
     # "keychain": the same token, stored in the macOS Keychain (`account-set-token`).
     credential: str | None = None
+    # What that secret is: a setup-token ("oauth_token") or a Console API key ("api_key").
+    credential_kind: str = "oauth_token"
 
     @property
     def codex_home(self) -> Path | None:
@@ -76,10 +78,11 @@ class Account:
 
 
 def resolve_profile(name: str, provider: str, home: str | None, root: Path | None,
-                    token_env: str | None = None, credential: str | None = None) -> Account:
+                    token_env: str | None = None, credential: str | None = None,
+                    credential_kind: str = "oauth_token") -> Account:
     """`root` is the project the account is used from; None when registering it machine-wide."""
     if home is None:
-        return Account(name, None, provider, token_env, credential)
+        return Account(name, None, provider, token_env, credential, credential_kind)
     path = Path(home).expanduser()
     if not path.is_absolute():
         raise ValueError(f"account {name}: home must be absolute")
@@ -96,7 +99,7 @@ def resolve_profile(name: str, provider: str, home: str | None, root: Path | Non
     if shared:
         raise ValueError(f"account {name}: home must be isolated from the project and the "
                          "global login")
-    return Account(name, path, provider, token_env, credential)
+    return Account(name, path, provider, token_env, credential, credential_kind)
 
 
 def resolve(cfg: BridgeConfig, root: Path, name: str | None) -> Account:
@@ -115,9 +118,11 @@ def resolve(cfg: BridgeConfig, root: Path, name: str | None) -> Account:
 
 CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 CLAUDE_TOKEN_PREFIX = "sk-ant-oat"  # what `claude setup-token` prints
-
-
 CLAUDE_KEY_ENV = "ANTHROPIC_API_KEY"
+# credential_kind -> (variable its runs get, prefix the value must have). A value of the other
+# kind is never forwarded: a setup-token and an API key bill different sources.
+CREDENTIAL_KINDS = {"oauth_token": (CLAUDE_TOKEN_ENV, CLAUDE_TOKEN_PREFIX),
+                    "api_key": (CLAUDE_KEY_ENV, "sk-ant-api")}
 KEYCHAIN_SERVICE = "agent-bridge"
 
 
@@ -143,26 +148,30 @@ def _keychain_token(acc: Account) -> str | None:
     return found.stdout.strip() if found is not None and found.returncode == 0 else None
 
 
-def _claude_token(acc: Account) -> str | None:
-    """The account's token, only if it looks like one: a wrong variable is never forwarded."""
+def _raw_secret(acc: Account) -> str:
     if acc.credential == "keychain":
-        token = _keychain_token(acc) or ""
-    else:
-        token = os.environ.get(acc.token_env or "", "")
-    return token if token.startswith(CLAUDE_TOKEN_PREFIX) else None
+        return _keychain_token(acc) or ""
+    return os.environ.get(acc.token_env or "", "")
+
+
+def claude_token(acc: Account) -> str | None:
+    """The account's secret, only if it has its kind's prefix: a wrong value is never forwarded."""
+    secret = _raw_secret(acc)
+    return secret if secret.startswith(CREDENTIAL_KINDS[acc.credential_kind][1]) else None
 
 
 def credential_check(acc: Account) -> dict[str, Any] | None:
-    """Where the account's token comes from and whether it is usable; never the value.
+    """Where the account's secret comes from and whether it is usable; never the value.
     None when the account relies on its home's own CLI login."""
     if acc.credential == "keychain":
-        reference, raw = f"keychain {KEYCHAIN_SERVICE}/{keychain_account(acc)}", _keychain_token(acc)
+        reference = f"keychain {KEYCHAIN_SERVICE}/{keychain_account(acc)}"
     elif acc.token_env:
-        reference, raw = f"env {acc.token_env}", os.environ.get(acc.token_env)
+        reference = f"env {acc.token_env}"
     else:
         return None
-    return {"reference": reference, "present": bool(raw),
-            "well_formed": bool(raw) and raw.startswith(CLAUDE_TOKEN_PREFIX)}
+    raw = _raw_secret(acc)
+    return {"reference": reference, "kind": acc.credential_kind, "present": bool(raw),
+            "well_formed": raw.startswith(CREDENTIAL_KINDS[acc.credential_kind][1])}
 
 
 def account_env(acc: Account, base: Mapping[str, str]) -> dict[str, str]:
@@ -175,8 +184,8 @@ def account_env(acc: Account, base: Mapping[str, str]) -> dict[str, str]:
         # an `env_allow` let through would win over the token in `claude -p`, so it goes too.
         env.pop(CLAUDE_TOKEN_ENV, None)
         env.pop(CLAUDE_KEY_ENV, None)
-        if token := _claude_token(acc):
-            env[CLAUDE_TOKEN_ENV] = token
+        if token := claude_token(acc):
+            env[CREDENTIAL_KINDS[acc.credential_kind][0]] = token
     return env
 
 
@@ -204,7 +213,7 @@ def login_status(cfg: BridgeConfig, acc: Account) -> bool | None:
         with contextlib.suppress(OSError):
             return ((acc.home or Path.home()) / AGY_TOKEN).stat().st_size > 0
         return False
-    if (acc.token_env or acc.credential) and not _claude_token(acc):
+    if (acc.token_env or acc.credential) and not claude_token(acc):
         return False  # its runs would silently fall back to whatever the home holds
     exe = binary(cfg, acc.provider)
     argv = {"openai": [exe, "login", "status", *codex_overrides(acc)],

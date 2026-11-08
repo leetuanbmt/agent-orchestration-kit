@@ -39,7 +39,7 @@ def project(tmp_path, monkeypatch):
 
 def add(name, **over):
     args = {"name": name, "provider": "anthropic", "home": None, "credential": None,
-            "token_env": None, "agent": None, "model": None, "executor": False,
+            "token_env": None, "credential_kind": "oauth_token", "agent": None, "model": None, "executor": False,
             "five_hour_pct": None, "weekly_pct": None, **over}
     return cli._project_account_add(argparse.Namespace(**args))
 

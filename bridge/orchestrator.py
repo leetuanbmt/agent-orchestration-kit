@@ -121,6 +121,8 @@ class AccountProfile(BaseModel):
     token_env: str | None = Field(None, pattern=r"^AGENT_BRIDGE_CLAUDE_[A-Z0-9_]{1,40}_TOKEN$")
     # "keychain": the token lives in the macOS Keychain (`agent-bridge account-set-token`).
     credential: Literal["keychain"] | None = None
+    # What that secret is: a `claude setup-token` token or an Anthropic Console API key.
+    credential_kind: Literal["oauth_token", "api_key"] = "oauth_token"
 
     @model_validator(mode="after")
     def _known_provider(self) -> AccountProfile:
@@ -132,6 +134,8 @@ class AccountProfile(BaseModel):
                              "(claude setup-token)")
         if self.token_env and self.credential:
             raise ValueError("use token_env or credential, not both")
+        if self.credential_kind != "oauth_token" and not (self.token_env or self.credential):
+            raise ValueError("credential_kind needs credential or token_env")
         if self.home and self.provider in GLOBAL_ONLY_PROVIDERS:
             raise ValueError(f"{self.provider} accounts use the global login (no home); "
                              "log in with: opencode auth login")
