@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""Stand-in for macOS `security` generic-password commands, so no test touches a real Keychain.
+
+FAKE_SECURITY_DIR: items.json holds {"service\\naccount": password}; argv.log gets one JSON argv
+                   per call, so tests can check that no secret was ever passed on a command line.
+add-generic-password with a trailing -w reads the password from stdin, as the real one prompts.
+Exit 44 is what the real `security` returns for a missing item.
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+state = Path(os.environ["FAKE_SECURITY_DIR"])
+state.mkdir(parents=True, exist_ok=True)
+argv = sys.argv[1:]
+with (state / "argv.log").open("a") as log:
+    log.write(json.dumps(argv) + "\n")
+items_file = state / "items.json"
+items = json.loads(items_file.read_text()) if items_file.exists() else {}
+
+
+def opt(flag):
+    return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+command = argv[0] if argv else ""
+key = f"{opt('-s')}\n{opt('-a')}"
+if command == "find-generic-password":
+    if key not in items:
+        sys.exit(44)
+    if argv[-1] == "-w":
+        print(items[key])
+    sys.exit(0)
+if command == "add-generic-password":
+    if argv[-1] != "-w":
+        sys.exit("fake security: the password must be prompted for (-w last)")
+    if key in items and "-U" not in argv:
+        sys.exit(45)
+    items[key] = sys.stdin.readline().strip()
+elif command == "delete-generic-password":
+    if items.pop(key, None) is None:
+        sys.exit(44)
+else:
+    sys.exit(f"fake security: unsupported {argv}")
+items_file.write_text(json.dumps(items))

@@ -94,11 +94,20 @@ def _seatbelt_profile(writable: list[str], mode: Mode) -> str:
     profile = ('(version 1)(allow default)(deny file-write*)(allow file-write* '
                + " ".join(rules)
                + ' (literal "/dev/null") (regex #"^/dev/(tty|fd/|stdout|stderr|ptmx|ttys)"))')
-    # (allow default) keeps toolchains working; these close known launch-service escapes.
+    # (allow default) keeps toolchains working; these close known launch-service escapes and the
+    # Keychain, where an account token may live (`credential: keychain`). Denying the `security`
+    # binary alone is not enough: Security.framework through ctypes reached it (probed), so the
+    # Security services and the keychain files are denied too.
     # ponytail: an allow-default profile is not a full sandbox; upgrade to a deny-default allowlist.
+    keychains = str((Path.home() / "Library" / "Keychains").resolve())
+    if any(c in ('"', chr(92)) or ord(c) < 32 or ord(c) == 127 for c in keychains):
+        raise ValueError("invalid Seatbelt keychain path")
     profile += ('(deny appleevent-send)(deny lsopen)'
                 '(deny process-exec (literal "/usr/bin/open") (literal "/bin/launchctl")'
-                ' (literal "/usr/bin/osascript"))')
+                ' (literal "/usr/bin/osascript") (literal "/usr/bin/security"))'
+                '(deny mach-lookup (global-name "com.apple.SecurityServer")'
+                ' (global-name "com.apple.securityd"))'
+                f'(deny file-read* (subpath "{keychains}"))')
     if mode == "strict":
         profile += '(deny network-outbound (remote ip))(deny network-bind (local ip))'
     return profile

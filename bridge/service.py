@@ -65,7 +65,8 @@ def resolve_account(orch: OrchestratorConfig, cfg: BridgeConfig, root: Path,
     profile = orch.accounts.get(name)
     if profile is None:
         raise ValueError(f"unknown account: {name}")
-    return resolve_profile(name, profile.provider, profile.home, root, profile.token_env)
+    return resolve_profile(name, profile.provider, profile.home, root, profile.token_env,
+                           profile.credential)
 
 
 class Bridge:

@@ -115,14 +115,19 @@ class AccountProfile(BaseModel):
     # tampered file from pointing at another secret (GITHUB_TOKEN); the _TOKEN suffix keeps it
     # under the built-in *_TOKEN scrub, so no agent or verification command inherits it.
     token_env: str | None = Field(None, pattern=r"^AGENT_BRIDGE_CLAUDE_[A-Z0-9_]{1,40}_TOKEN$")
+    # "keychain": the token lives in the macOS Keychain (`agent-bridge account-set-token`).
+    credential: Literal["keychain"] | None = None
 
     @model_validator(mode="after")
     def _known_provider(self) -> AccountProfile:
         if self.provider not in PROVIDERS:
             raise ValueError(f"unsupported provider {self.provider!r}; supported: "
                              f"{sorted(PROVIDERS)}")
-        if self.token_env and self.provider != "anthropic":
-            raise ValueError("token_env is for anthropic accounts (claude setup-token)")
+        if (self.token_env or self.credential) and self.provider != "anthropic":
+            raise ValueError("token_env and credential are for anthropic accounts "
+                             "(claude setup-token)")
+        if self.token_env and self.credential:
+            raise ValueError("use token_env or credential, not both")
         if self.home and self.provider in GLOBAL_ONLY_PROVIDERS:
             raise ValueError(f"{self.provider} accounts use the global login (no home); "
                              "log in with: opencode auth login")

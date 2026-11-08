@@ -199,6 +199,22 @@ An account is one login with its own auth home. Projects declare accounts in
   - Never write the token into `orchestrator.yaml`. The file lives in the worktree, and agents
     can read the worktree. Claude agents are denied `.ai/orchestrator.yaml`, but Codex agents
     are not.
+- **The same token in the macOS Keychain (`credential: keychain`).** Instead of `token_env`
+  (the two cannot be combined), an `anthropic` account can keep its `setup-token` token in the
+  login Keychain. A human stores it once with `agent-bridge account-set-token <name>`.
+  `security` prompts for the token itself, so it never appears on a command line. Remove it with
+  `--delete`.
+  - The bridge reads the item on every run, so a new token needs no restart of Claude Code.
+  - The item is keyed by the account's home (service `agent-bridge`), so projects that use
+    the same account share it. A missing, locked or wrong-shaped item reads as logged out.
+  - Only `CLAUDE_CODE_OAUTH_TOKEN` reaches that account's runs; a global token or an
+    `env_allow`ed `ANTHROPIC_API_KEY` is removed from them. Under Seatbelt, verification
+    commands cannot reach the Keychain: the `security` binary, the Security services and the
+    keychain files are denied. Without the services deny, a `ctypes` call into
+    Security.framework reached it; this was probed.
+  - Limit: the Keychain keeps the token off disk and out of git. It does not stop unsandboxed
+    code running as you, such as a Claude agent with `allow_bash`, from asking `security`
+    for it. Linux has no Keychain support; use `token_env` there.
 
 ### Machine-wide accounts
 

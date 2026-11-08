@@ -19,8 +19,9 @@ from pathlib import Path
 from typing import Any
 
 from . import install, orchestrator
-from .accounts import (account_env, global_auth_fingerprint, global_claude_identity,
-                       global_login_marker, load_registry, login_argv, login_status,
+from .accounts import (KEYCHAIN_SERVICE, account_env, global_auth_fingerprint,
+                       global_claude_identity, global_login_marker, keychain, keychain_account,
+                       load_registry, login_argv, login_status,
                        pick_account, register, resolve_profile, shell_use, unregister)
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config
 from .executor import AGENT_ENV
@@ -48,7 +49,7 @@ def _server_entry() -> dict[str, Any]:
 # Commands a person reads: a table in a terminal, JSON with --json or through a pipe.
 VIEWS = {"account-list": "accounts_view", "health": "health_view", "agents": "agents_view",
          "list": "tasks_view", "tasks": "projects_view", "usage": "usage_view"}
-HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove"}
+HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove", "account-set-token"}
 EXAMPLES = install.KIT / "examples"
 # Commands that drive agent runs: a stop signal lets them kill their agent and park the task.
 RUN_CMDS = {"execute", "resume", "plan", "run-workflow"}
@@ -102,6 +103,28 @@ def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
             print("ERROR: global auth was modified", file=sys.stderr)
             raise SystemExit(3)
     return login_status(cfg, acc)
+
+
+def _set_token(args: argparse.Namespace) -> dict[str, Any]:
+    root = find_root()
+    cfg = load_config(root)
+    orch = orchestrator.load(root, cfg)
+    name = _pick(args, {k: a.provider for k, a in orch.accounts.items()})
+    acc = resolve_account(orch, cfg, root, name)
+    if acc.credential != "keychain":
+        raise ValueError(f"account {name} needs `credential: keychain` in .ai/orchestrator.yaml")
+    item = ["-s", KEYCHAIN_SERVICE, "-a", keychain_account(acc)]
+    if args.delete:
+        done = keychain("delete-generic-password", *item)
+        return {"account": name, "deleted": done is not None and done.returncode == 0}
+    print("Paste the token `claude setup-token` printed; it is not echoed.", file=sys.stderr)
+    # -w last: `security` prompts on the terminal itself, so the token never passes through
+    # argv or this process.
+    done = subprocess.run(["security", "add-generic-password", "-U", *item,
+                           "-l", f"agent-bridge {name}", "-w"], check=False)
+    if done.returncode != 0:
+        raise SystemExit(done.returncode)
+    return {"account": name, "stored": True, "logged_in": login_status(cfg, acc) is True}
 
 
 def _limit_warnings(orch: orchestrator.OrchestratorConfig) -> list[str]:
@@ -220,6 +243,8 @@ async def _run(args: argparse.Namespace) -> Any:
         shutil.copyfile(EXAMPLES / f"{args.example}.yaml", target)
         print(f"wrote {target}\nEdit its accounts and agents, then run: agent-bridge config-check")
         return None
+    if args.cmd == "account-set-token":
+        return _set_token(args)
     if args.cmd == "account-add":
         acc = register(args.name, args.provider, args.home)
         print(f"registered {acc.name} ({acc.provider}) at {acc.home or 'its global login'}")
@@ -376,13 +401,18 @@ def main(argv: list[str] | None = None) -> None:
     add.add_argument("--home", help="register an existing isolated home (e.g. a codex-switch "
                                     "home) instead of creating one")
     add.add_argument("--device-auth", action="store_true")
+    token = sub.add_parser("account-set-token", help="HUMAN ONLY: store a `claude setup-token` "
+                                                     "token in the macOS Keychain for an "
+                                                     "account with `credential: keychain`")
+    token.add_argument("name")
+    token.add_argument("--delete", action="store_true", help="remove the stored token")
     sub.add_parser("account-remove", help="HUMAN ONLY: forget a machine-wide account and "
                                           "delete the home it created").add_argument("name")
     use = sub.add_parser("account-use", help="point your interactive CLI at an account: "
                                              'eval "$(agent-bridge account-use <name>)"')
     use.add_argument("name")
     use.add_argument("--shell", action="store_true", help="open a subshell using the account")
-    for cmd in (clear, login, use, sub.choices["account-remove"]):
+    for cmd in (clear, login, use, token, sub.choices["account-remove"]):
         cmd.add_argument("--provider", help="which account, when one name is used by several "
                                             "providers")
     c = sub.add_parser("create", help="create a task from a JSON spec file")

@@ -55,6 +55,9 @@ Accounts:
   limits a CLI reported on its last run through the bridge; `UNKNOWN` without either. A QUOTA
   or AUTH pause marks the account unavailable: report it to the user. AUTH never triggers a
   switch.
+- A `credential: keychain` token lives in the macOS login Keychain (service `agent-bridge`).
+  Claude never runs `agent-bridge account-set-token` and never runs `security
+  find-generic-password` for it; the bridge reads it only to build that account's run env.
 - Never read, print, copy or log `auth.json`, `.credentials.json`, `~/.codex-accounts/*`,
   `~/.agent-bridge/homes/*`, `~/.gemini/antigravity-cli/*`, an account home's credentials or
   any token. For agy the bridge checks only the token file's size and mtime, never its content. The bridge reads only

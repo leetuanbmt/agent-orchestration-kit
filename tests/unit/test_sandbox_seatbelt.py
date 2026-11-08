@@ -4,6 +4,7 @@ import os
 import socket
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -42,7 +43,10 @@ def test_seatbelt_profile(monkeypatch, tmp_path, mode):
     assert '(deny appleevent-send)' in profile
     assert '(deny lsopen)' in profile
     assert ('(deny process-exec (literal "/usr/bin/open") (literal "/bin/launchctl")'
-            ' (literal "/usr/bin/osascript"))') in profile
+            ' (literal "/usr/bin/osascript") (literal "/usr/bin/security"))') in profile
+    assert ('(deny mach-lookup (global-name "com.apple.SecurityServer")'
+            ' (global-name "com.apple.securityd"))') in profile
+    assert f'(deny file-read* (subpath "{(Path.home() / "Library/Keychains").resolve()}"))' in profile
     denies = '(deny network-outbound (remote ip))(deny network-bind (local ip))'
     assert (denies in profile) == (mode == "strict")
     assert sandbox.describe(mode) == (
@@ -99,15 +103,16 @@ def test_seatbelt_confines_writes(tmp_path):
 
 # @pt.id KIT-SEATBELT-008-launch-services
 # @pt.item Seatbelt denies launch-service executables while allowing ordinary commands
-# @pt.condition auto and strict modes execute open, osascript and true
-# @pt.expected open and osascript fail without launching applications; true succeeds
+# @pt.condition auto and strict modes execute open, osascript, security and true
+# @pt.expected open, osascript and security fail (no app launch, no Keychain read); true succeeds
 # @pt.target bridge.sandbox.wrap
 # @pt.method integration
 # @pt.legacy allow-default permitted launch-service escapes
 @needs_seatbelt
 @pytest.mark.parametrize("mode", ["auto", "strict"])
 def test_seatbelt_denies_launch_services(tmp_path, mode):
-    for argv in (["/usr/bin/open"], ["/usr/bin/osascript", "-e", "return 1"]):
+    for argv in (["/usr/bin/open"], ["/usr/bin/osascript", "-e", "return 1"],
+                 ["/usr/bin/security", "list-keychains"]):
         result = subprocess.run(
             sandbox.wrap(argv, [str(tmp_path)], mode),
             capture_output=True, text=True, timeout=10,
@@ -195,3 +200,32 @@ def test_seatbelt_probe_cached(monkeypatch, returncode):
         sandbox._seatbelt_available.cache_clear()
 
 
+
+
+KEYCHAIN_PROBE = """
+import ctypes
+sec = ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")
+svc, acc = b"agent-bridge-probe-none", b"none"
+n, data = ctypes.c_uint32(), ctypes.c_void_p()
+print(sec.SecKeychainFindGenericPassword(None, len(svc), svc, len(acc), acc,
+                                         ctypes.byref(n), ctypes.byref(data), None))
+"""
+
+
+# @pt.id KIT-SEATBELT-KEYCHAIN
+# @pt.item Verification code cannot reach the Keychain, even without the security binary
+# @pt.condition a lookup of a nonexistent generic password through Security.framework (ctypes), outside and inside the profile
+# @pt.expected outside, the keychain answers not found (-25300); inside, the lookup never reaches it
+# @pt.target bridge.sandbox.wrap
+# @pt.method integration
+# @pt.legacy security review: the exec deny on /usr/bin/security alone was bypassed this way
+@needs_seatbelt
+@pytest.mark.parametrize("mode", ["auto", "strict"])
+def test_seatbelt_denies_keychain(tmp_path, mode):
+    argv = ["/usr/bin/python3", "-c", KEYCHAIN_PROBE]
+    outside = subprocess.run(argv, capture_output=True, text=True, timeout=20).stdout.strip()
+    if outside != "-25300":
+        pytest.skip(f"no usable login keychain here ({outside or 'no output'})")
+    inside = subprocess.run(sandbox.wrap(argv, [str(tmp_path)], mode), capture_output=True,
+                            text=True, timeout=20).stdout.strip()
+    assert inside != "-25300", inside
