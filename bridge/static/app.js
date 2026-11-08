@@ -36,7 +36,7 @@ const I18N = {
     shortcutSearch: 'Focus the search box',
     live: 'Live · every 3 s', offline: 'Disconnected · retrying in 5 s', loading: 'Loading…',
     running: 'Running', project: 'Project', updated: 'Updated', done: 'Done', cancelled: 'Cancelled',
-    needs: 'Needs you', blocked: 'Blocked', failed: 'Failed', paused: 'Paused', review_wait: 'Waiting for review',
+    needs: 'Needs you', runner_dead: 'Runner stopped', blocked: 'Blocked', failed: 'Failed', paused: 'Paused', review_wait: 'Waiting for review',
     QUOTA: 'out of quota', AUTH: 'login needed', NETWORK: 'network down', INTERRUPTED: 'interrupted',
     MISSING_BINARY: 'CLI missing', OTHER: 'other',
     rootMissing: 'folder deleted, history kept',
@@ -124,7 +124,7 @@ const I18N = {
     shortcutSearch: 'Chuyển đến ô tìm kiếm',
     live: 'Trực tiếp · mỗi 3 giây', offline: 'Mất kết nối · thử lại sau 5 giây', loading: 'Đang tải…',
     running: 'Đang chạy', project: 'Dự án', updated: 'Cập nhật', done: 'Xong', cancelled: 'Đã hủy',
-    needs: 'Cần bạn', blocked: 'Bị chặn', failed: 'Lỗi', paused: 'Tạm dừng', review_wait: 'Chờ duyệt',
+    needs: 'Cần bạn', runner_dead: 'Runner đã dừng', blocked: 'Bị chặn', failed: 'Lỗi', paused: 'Tạm dừng', review_wait: 'Chờ duyệt',
     QUOTA: 'hết quota', AUTH: 'lỗi đăng nhập', NETWORK: 'mất mạng', INTERRUPTED: 'bị ngắt',
     MISSING_BINARY: 'thiếu CLI', OTHER: 'khác',
     rootMissing: 'thư mục đã xoá, lịch sử vẫn còn',
@@ -195,14 +195,14 @@ const narrow = window.matchMedia('(max-width: 1023px)');
 const ACCOUNT_STATES = {available: ['done', 'stateAvailable'], quota: ['paused', 'stateQuota'], auth: ['blocked', 'stateAuth']};
 const CAPACITY_ROWS = 6;
 let scrollToProjects = false;
-const NEEDS_KINDS = ['needs', 'failed', 'blocked', 'paused'];
+const NEEDS_KINDS = ['needs', 'runner_dead', 'failed', 'blocked', 'paused'];
 // Board lanes, left to right, with the heading key of each.
 const LANES = [['needsYou', 'needsAction'], ['awaitingReview', 'inReview'], ['running', 'running'], ['waiting', 'queued']];
 // The needsYou group keeps its key and hash value; its label is "Needs action", so it does not read
 // like the "Waiting on you" queue, which also counts reviews.
 const groupLabel = group => tr(group === 'needsYou' ? 'needsAction' : group);
 // One glyph per state family, so a status reads without color.
-const GLYPHS = {needs: '!', review_wait: '◐', running: '▶', queued: '○', done: '✓', failed: '✕', blocked: '✕', paused: '‖', cancelled: '–'};
+const GLYPHS = {needs: '!', runner_dead: '!', review_wait: '◐', running: '▶', queued: '○', done: '✓', failed: '✕', blocked: '✕', paused: '‖', cancelled: '–'};
 const SUMMARY = [['needsYou', 'needs'], ['awaitingReview', 'review_wait'], ['running', 'running'], ['done24h', 'done']];
 let queueExpanded = false, homeProjectsExpanded = false;
 let attentionShown = [], lastOpened = '', lastNeeds = null;
@@ -304,7 +304,7 @@ function projectGroups() {
 }
 function matches(task, group) {
   if (group === 'open') return !['DONE', 'CANCELLED'].includes(task.state);
-  if (group === 'needsYou') return ['needs', 'failed', 'blocked', 'paused'].includes(task.exception);
+  if (group === 'needsYou') return ['needs', 'runner_dead', 'failed', 'blocked', 'paused'].includes(task.exception);
   if (group === 'awaitingReview') return task.exception === 'review_wait';
   if (group === 'running') return ['RUNNING', 'VERIFYING'].includes(task.state);
   if (group === 'waiting') return ['BACKLOG', 'READY', 'REWORK'].includes(task.state) || task.state === 'APPROVED' && !task.needs_human;

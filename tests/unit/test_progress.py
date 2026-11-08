@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import sqlite3
 import subprocess
 import time
@@ -10,6 +11,35 @@ import pytest
 from bridge import progress
 from bridge.models import Actor, State, TaskSpec
 from bridge.state import Store
+
+
+# @pt.id T0120-progress-runner-dead
+# @pt.item Read-only runner liveness
+# @pt.condition Active tasks have dead, missing, or current-process runner PIDs
+# @pt.expected Dead runners need resume while state and stage stay unchanged
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy none
+@pytest.mark.parametrize("state,stage", [("RUNNING", "build"), ("VERIFYING", "check")])
+def test_snapshot_dead_runner(repo, store, state, stage):
+    dead = add(store, state)
+    missing = add(store, state)
+    owned = add(store, state)
+    store.update(dead, runner_pid=2_147_483_647, runner_started="dead runner")
+    store.update(owned, runner_pid=os.getpid(), runner_started="different start")
+    before = store.db.total_changes
+    rows = store.list()
+    snap = progress.snapshot([str(repo)], now=1000)
+    attention = {task["task_id"]: task for task in snap["attention"]}
+    for tid in (dead, missing):
+        assert attention[tid]["kind"] == "runner_dead"
+        assert attention[tid]["command"] == f"agent-bridge resume {tid}"
+        detail = progress.task_detail(progress.project_id(str(repo)), tid, [str(repo)])
+        assert (detail["state"], detail["stage"]) == (state, stage)
+    assert owned not in attention
+    assert {task["task_id"] for task in snap["running"]} == {dead, missing, owned}
+    assert store.list() == rows
+    assert store.db.total_changes == before
 
 
 # @pt.id T0048-log-cursor

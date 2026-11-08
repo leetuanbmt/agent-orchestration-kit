@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -12,7 +13,7 @@ import time
 from pathlib import Path
 
 from . import accounts, config, install, orchestrator, quota, registry, storage
-from .security import redact
+from .security import redact, runner_alive
 from .executor import describe_event
 
 TASK_ID = re.compile(r"^T\d{4,}$")
@@ -20,7 +21,7 @@ WORKFLOW_ID = re.compile(r"^W\d{4,}$")
 _STAGES = {"BACKLOG": "queue", "READY": "queue", "RUNNING": "build", "REWORK": "build",
            "VERIFYING": "check", "REVIEW": "review", "APPROVED": "review", "DONE": "done",
            "CANCELLED": None}
-_ORDER = ["needs", "blocked", "failed", "paused", "review_wait"]
+_ORDER = ["needs", "runner_dead", "blocked", "failed", "paused", "review_wait"]
 _CACHE = {}
 _CACHE_LOCK = threading.Lock()
 # ponytail: Codex rollout reads have a 30 s cache ceiling per home.
@@ -180,6 +181,11 @@ def _tasks(data):
                 "updated_at": row.get("updated_at", 0), "agent": row.get("agent"),
                 "account": row.get("account"), "workflow_id": row.get("workflow_id")}
         task["command"] = _command(tid, task["state"], task["needs_human"])
+        if (task["state"] in {"RUNNING", "VERIFYING"}
+                and row.get("runner_pid") != os.getpid()
+                and not runner_alive(row.get("runner_pid"), row.get("runner_started"))):
+            task["exception"] = "runner_dead"
+            task["command"] = f"agent-bridge resume {tid}"
         result.append(task)
     return result
 

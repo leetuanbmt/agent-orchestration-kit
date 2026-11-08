@@ -197,3 +197,8 @@ def process_started(pid: int) -> str | None:
     except OSError:
         return None  # no ps: orphans are left alone rather than guessed at
     return ps.stdout.strip() or None
+
+
+def runner_alive(pid: int | None, started: str | None) -> bool:
+    """Check that the runner is alive and its PID has not been reused."""
+    return osutil.alive(pid) and started in (None, process_started(pid))

@@ -36,7 +36,7 @@ from .review import EvidenceError, content_hashes, current_head, diff, parse_com
 from .runner import _write_attempt_log_line as _write_attempt_log_line
 from .sandbox import describe as describe_sandbox
 from .runner import TaskRunner
-from .security import hook_settings_error, PathError, process_started, redact, validate_pattern
+from .security import hook_settings_error, PathError, process_started, redact, runner_alive, validate_pattern
 from .state import ConflictError, LimitExceeded, Store, overview
 
 REBINDABLE = {State.READY, State.REWORK, State.FAILED, State.PAUSED}
@@ -151,6 +151,8 @@ class Bridge:
             "account": row["account"] or ("default" if self.legacy else None),
             "workflow_id": row["workflow_id"],
             "state": row["state"],
+            "runner_alive": (row["runner_pid"] == os.getpid() or self._runner_alive(row))
+            if row["state"] in {State.RUNNING, State.VERIFYING} else None,
             "objective": spec["objective"][:200],
             "attempts": row["attempts"],
             "max_attempts": self._max_attempts(row),
@@ -1068,8 +1070,7 @@ class Bridge:
     def _runner_alive(row: dict[str, Any]) -> bool:
         """The task's runner process still runs. A pid the OS reused for another process has a
         different start time, so it does not count (rows from older versions have none)."""
-        pid = row["runner_pid"]
-        return _alive(pid) and row.get("runner_started") in (None, process_started(pid))
+        return runner_alive(row["runner_pid"], row.get("runner_started"))
 
     def recover(self) -> list[str]:
         """Park tasks and workflows whose process died mid-run (crash, kill, closed session)."""
