@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from bridge.config import load_config
 from bridge.models import State
+from bridge.service import Bridge
 from tests.conftest import git, run, spec
 
 
@@ -13,6 +16,7 @@ from tests.conftest import git, run, spec
 # @pt.item An executor that rewrites the project's bridge config is stopped
 # @pt.condition the committed .ai/config.json is rewritten by the agent to drop protected_paths and allow sh
 # @pt.expected the task is BLOCKED with PROTECTED naming the file (not REWORK, so no agent runs on the tampered worktree), and health reports the file as protected_dirty with ok false
+# @pt.expected a new Bridge loading the tampered config still rejects .ai paths at task creation
 # @pt.target bridge.models.verdict, bridge.review.protected_dirty, Bridge.health
 # @pt.method integration
 # @pt.legacy audit SEC-02: the task went to REWORK and the next bridge loaded the tampered config silently
@@ -31,6 +35,10 @@ def test_protected_write_blocks_and_health_reports(make_bridge, repo, monkeypatc
     assert load_config(repo).verify_allowlist == ["sh"]  # still on disk: a human must look
     health = run(b.health())
     assert health["protected_dirty"] == [".ai/config.json"] and health["ok"] is False
+    restarted = Bridge(repo)
+    for path in (".ai/config.json", ".ai/**"):
+        with pytest.raises(ValueError, match="protected or over-broad path"):
+            run(restarted.create_task(spec(allowed_paths=[path])))
 
 
 # @pt.id KIT-SEC-PROT-002-agent-instructions
