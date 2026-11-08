@@ -405,9 +405,7 @@ class Bridge:
             path = self._adapter(name).available()
             adapters[name] = {"path": path,
                               "version": self._adapter(name).version() if path else None}
-        counts: dict[str, int] = {}
-        for r in self.store.list(limit=10_000):
-            counts[r["state"]] = counts.get(r["state"], 0) + 1
+        counts = self.store.task_counts()
         active = [r["id"] for r in self.store.list(limit=10_000) if r["state"] in ACTIVE]
         quota = {}
         for name in self.orch.accounts:
@@ -844,6 +842,11 @@ class Bridge:
             "reviews": [e["detail"] for e in self.store.events(task_id, 200)
                         if e["kind"] == "review"],
         }
+
+    async def count_tasks(self, state: str | None = None) -> int:
+        if state:
+            State(state)
+        return self.store.count(state)
 
     async def list_tasks(self, state: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         if state:

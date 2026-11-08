@@ -274,13 +274,19 @@ def projects_view(data: dict[str, Any], now: float | None = None) -> Group | Tex
     return Group(*blocks)
 
 
+def task_list_notice(shown: int, total: int) -> str:
+    return f"showing {shown} of {total} tasks (newest first); narrow with --state"
+
+
 def tasks_view(tasks: list[dict[str, Any]], now: float | None = None,
-               project: str | None = None) -> Group | Text:
+               project: str | None = None, total: int | None = None) -> Group | Text:
     """`project` is the root the tasks belong to: each project (worktree) has its own tasks."""
     head = Text()
     if project:
         head.append(f"project {Path(project).name}", style="bold")
         head.append(f"  {project}", style="dim")
+    if total is not None and len(tasks) < total:
+        head.append(("\n" if project else "") + task_list_notice(len(tasks), total), style="dim")
     if not tasks:
         head.append(("\n" if project else "") + "No tasks yet. Ask Claude Code for a change; it "
                     "creates them through the bridge.", style="dim")
@@ -293,4 +299,4 @@ def tasks_view(tasks: list[dict[str, Any]], now: float | None = None,
                       t["agent"] or "-", f"{t['attempts']}/{t['max_attempts']}",
                       ago(t["updated_at"], now), (t["objective"].splitlines() or [""])[0])
     hints = [hint for t in tasks if (hint := _next_for(t))]
-    return Group(*([head] if project else []), table, *_steps(hints, "● needs you:"))
+    return Group(*([head] if head else []), table, *_steps(hints, "● needs you:"))

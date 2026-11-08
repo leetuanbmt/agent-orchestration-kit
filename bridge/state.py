@@ -639,6 +639,13 @@ class Store:
             self._event(c, tid, actor, kind, detail=detail)
         return self.get(tid)
 
+    def task_counts(self) -> dict[str, int]:
+        return dict(self.db.execute("SELECT state, COUNT(*) FROM tasks GROUP BY state"))
+
+    def count(self, state: str | None = None) -> int:
+        counts = self.task_counts()
+        return counts.get(state, 0) if state else sum(counts.values())
+
     def list(self, state: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         q, args = "SELECT * FROM tasks", ()
         if state:

@@ -282,6 +282,7 @@ async def _run(args: argparse.Namespace) -> Any:
         case "result":
             return await b.task_result(args.task_id)
         case "list":
+            args.task_total = await b.count_tasks(args.state)
             return await b.list_tasks(args.state, args.limit)
         case "agents":
             return b.list_agents()
@@ -464,10 +465,14 @@ def main(argv: list[str] | None = None) -> None:
             console = Console()
             extra = ({"width": console.width, "show_all": args.all}
                      if args.cmd == "account-list" else
-                     {"project": str(find_root())} if args.cmd == "list" else {})
+                     {"project": str(find_root()), "total": args.task_total}
+                     if args.cmd == "list" else {})
             console.print(getattr(render, view)(out, **extra))
         else:
             print(dumps(out))
+            if args.cmd == "list" and len(out) < args.task_total:
+                from .render import task_list_notice
+                print(task_list_notice(len(out), args.task_total), file=sys.stderr)
     if args.cmd == "storage" and any(e["status"] in ("failed", "corrupt", "changed")
                                      for e in out.get("sources", []) + out.get("entries", [])):
         raise SystemExit(1)
