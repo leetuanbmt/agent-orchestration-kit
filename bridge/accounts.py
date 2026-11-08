@@ -111,6 +111,13 @@ def resolve(cfg: BridgeConfig, root: Path, name: str | None) -> Account:
 
 
 CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
+CLAUDE_TOKEN_PREFIX = "sk-ant-oat"  # what `claude setup-token` prints
+
+
+def _claude_token(acc: Account) -> str | None:
+    """The account's token, only if it looks like one: a wrong variable is never forwarded."""
+    token = os.environ.get(acc.token_env or "", "")
+    return token if token.startswith(CLAUDE_TOKEN_PREFIX) else None
 
 
 def account_env(acc: Account, base: Mapping[str, str]) -> dict[str, str]:
@@ -121,7 +128,7 @@ def account_env(acc: Account, base: Mapping[str, str]) -> dict[str, str]:
         # Read from the bridge's environment, not `base`: scrubbing removed it there, so no
         # other account's run (and no verification command) ever sees it.
         env.pop(CLAUDE_TOKEN_ENV, None)
-        if token := os.environ.get(acc.token_env):
+        if token := _claude_token(acc):
             env[CLAUDE_TOKEN_ENV] = token
     return env
 
@@ -150,7 +157,7 @@ def login_status(cfg: BridgeConfig, acc: Account) -> bool | None:
         with contextlib.suppress(OSError):
             return ((acc.home or Path.home()) / AGY_TOKEN).stat().st_size > 0
         return False
-    if acc.token_env and not os.environ.get(acc.token_env):
+    if acc.token_env and not _claude_token(acc):
         return False  # its runs would silently fall back to whatever the home holds
     exe = binary(cfg, acc.provider)
     argv = {"openai": [exe, "login", "status", *codex_overrides(acc)],

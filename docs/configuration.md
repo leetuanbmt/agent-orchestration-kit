@@ -186,13 +186,13 @@ An account is one login with its own auth home. Projects declare accounts in
   and claude-switch *profiles* are listed but never used, because they hold copied tokens.
 - **Claude long-lived token (`claude setup-token`).** Instead of a login in `home`, an
   `anthropic` account can name an environment variable that holds the token:
-  `token_env: PRINTLESS_TOKEN`. The bridge reads that variable from its own environment and
+  `token_env: AGENT_BRIDGE_CLAUDE_PRINTLESS_TOKEN`. The bridge reads that variable from its own environment and
   passes it as `CLAUDE_CODE_OAUTH_TOKEN` to that account's runs only. Other accounts, and
   verification commands, never see it.
-  - The name must end in `_TOKEN`, so the built-in `*_TOKEN` scrub keeps it away from every
-    other process.
-  - It must not be `CLAUDE_CODE_OAUTH_TOKEN` itself, because a global value would reach every
-    run.
+  - The name must match `AGENT_BRIDGE_CLAUDE_<NAME>_TOKEN`. The namespace stops a tampered
+    config from pointing at another secret, such as `GITHUB_TOKEN`. The `_TOKEN` suffix keeps it
+    under the built-in scrub, so no other process inherits it.
+  - Only a value starting with `sk-ant-oat` (what `setup-token` prints) is forwarded.
   - Export the variable in the shell that starts Claude Code (the MCP server inherits it) or
     runs `agent-bridge`.
   - While the variable is unset, the account reads as logged out.
