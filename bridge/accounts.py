@@ -13,6 +13,7 @@ import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from . import osutil, registry, storage
 from .config import BridgeConfig
@@ -149,6 +150,19 @@ def _claude_token(acc: Account) -> str | None:
     else:
         token = os.environ.get(acc.token_env or "", "")
     return token if token.startswith(CLAUDE_TOKEN_PREFIX) else None
+
+
+def credential_check(acc: Account) -> dict[str, Any] | None:
+    """Where the account's token comes from and whether it is usable; never the value.
+    None when the account relies on its home's own CLI login."""
+    if acc.credential == "keychain":
+        reference, raw = f"keychain {KEYCHAIN_SERVICE}/{keychain_account(acc)}", _keychain_token(acc)
+    elif acc.token_env:
+        reference, raw = f"env {acc.token_env}", os.environ.get(acc.token_env)
+    else:
+        return None
+    return {"reference": reference, "present": bool(raw),
+            "well_formed": bool(raw) and raw.startswith(CLAUDE_TOKEN_PREFIX)}
 
 
 def account_env(acc: Account, base: Mapping[str, str]) -> dict[str, str]:

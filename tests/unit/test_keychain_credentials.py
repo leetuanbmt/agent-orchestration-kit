@@ -158,3 +158,47 @@ def test_set_token_needs_terminal(tmp_path):
                          text=True, stdin=subprocess.DEVNULL)
     assert out.returncode == 2 and "human only" in out.stderr
     assert "account-set-token" in cli.HUMAN_ACCOUNT_CMDS
+
+
+SHOW_YAML = """version: 1
+accounts:
+  kc: {provider: anthropic, home: '%s', credential: keychain}
+agents:
+  claude-kc: {adapter: claude-cli, account: kc, allow_write: true}
+roles:
+  executor: {agents: [claude-kc], default: claude-kc}
+workflow: {stages: [execute, test]}
+"""
+
+
+# @pt.id KIT-KEYCHAIN-006-show-verify
+# @pt.item account-show and account-verify report the credential reference, never its value
+# @pt.condition a keychain account that is the executor default, with no item, then a wrong-shaped item, then a valid token
+# @pt.expected show names the keychain reference, its agent and role default; verify is not ok until the token is valid; no output holds the token
+# @pt.target bridge.service.Bridge.show_account, verify_account, bridge.accounts.credential_check
+# @pt.method unit
+# @pt.legacy none
+def test_show_and_verify_account(fake_security, repo, tmp_path):
+    from bridge.config import BridgeConfig as Cfg
+    from bridge.service import Bridge
+
+    home = tmp_path / "homes" / "kc"
+    home.mkdir(parents=True)
+    (repo / ".ai").mkdir(exist_ok=True)
+    (repo / ".ai" / "orchestrator.yaml").write_text(SHOW_YAML % home)
+    b = Bridge(repo, Cfg(claude_bin="/nonexistent/claude"), create=False)
+    acc = b._account("kc")
+    shown = b.show_account("kc")
+    assert shown["credential"] == {"reference": f"keychain {KEYCHAIN_SERVICE}/{keychain_account(acc)}",
+                                   "present": False, "well_formed": False}
+    assert (shown["agents"], shown["role_defaults"]) == (["claude-kc"], ["executor"])
+    assert b.verify_account("kc")["ok"] is False
+    store(fake_security, acc, "ghp_wrong")
+    assert b.verify_account("kc")["credential"] == {**shown["credential"], "present": True}
+    store(fake_security, acc, TOKEN_A)
+    out = b.verify_account("kc")
+    assert out["credential"]["well_formed"] is True
+    assert out["ok"] is False  # the claude binary is missing, so the CLI login check fails
+    assert TOKEN_A not in json.dumps(out) + json.dumps(b.show_account("kc"))
+    with pytest.raises(ValueError):
+        b.show_account("nope")

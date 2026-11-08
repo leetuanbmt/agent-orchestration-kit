@@ -232,6 +232,13 @@ An account is one login with its own auth home. Projects declare accounts in
     these are `limits.five_hour_pct` and `limits.weekly_pct`. Other `limits` keys in the entry
     are kept.
   - All three commands are human-only and need a terminal.
+- **Checking one account.** Both commands are read-only and safe to run from Claude Code:
+  - `agent-bridge account-show <name>` prints the account's `account-list` row, plus where its
+    token comes from (`keychain agent-bridge/<key>` or `env <VAR>`, never the value), the
+    agents that use it and the roles whose `default` is one of them.
+  - `agent-bridge account-verify <name>` checks the CLI login and, for a `token_env` or
+    keychain account, that the token is present and has the `sk-ant-oat` shape. It exits 1
+    when the account cannot run.
 - **The same token in the macOS Keychain (`credential: keychain`).** Instead of `token_env`
   (the two cannot be combined), an `anthropic` account can keep its `setup-token` token in the
   login Keychain. A human stores it once with `agent-bridge account-set-token <name>`.

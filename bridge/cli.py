@@ -438,7 +438,7 @@ async def _run(args: argparse.Namespace) -> Any:
                              "home)")
         return _login(cfg, acc, args.device_auth)
     readonly = args.cmd in {"health", "status", "result", "list", "agents", "workflow-status",
-                            "usage"}
+                            "usage", "account-show", "account-verify"}
     if args.cmd == "status" and args.wait > 0:
         readonly = False
     b = Bridge(create=False) if readonly else Bridge()
@@ -453,6 +453,10 @@ async def _run(args: argparse.Namespace) -> Any:
     match args.cmd:
         case "account-clear":
             return b.clear_account(_pick(args, {k: a.provider for k, a in b.orch.accounts.items()}))
+        case "account-show":
+            return b.show_account(_pick(args, {k: a.provider for k, a in b.orch.accounts.items()}))
+        case "account-verify":
+            return b.verify_account(_pick(args, {k: a.provider for k, a in b.orch.accounts.items()}))
         case "health":
             return await b.health()
         case "create":
@@ -530,6 +534,10 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("account-list", help="usable accounts on this machine").add_argument(
         "--all", action="store_true",
         help="also list switch profiles, homes not added and CLIs without an account")
+    sub.add_parser("account-show", help="one account: credential reference (never the "
+                   "value), login, quota, limits, agents, role defaults").add_argument("name")
+    sub.add_parser("account-verify", help="check an account's login and credential; exit 1 "
+                   "if it cannot run").add_argument("name")
     clear = sub.add_parser("account-clear", help="clear a QUOTA/AUTH unavailable mark on an "
                                                  "account after a human fixed it")
     clear.add_argument("name")
@@ -693,7 +701,7 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(1)
     if _signalled:
         raise SystemExit(128 + _signalled[0])  # the run was stopped; its task is PAUSED
-    if args.cmd in ("health", "config-check") and not out["ok"]:
+    if args.cmd in ("health", "config-check", "account-verify") and not out["ok"]:
         raise SystemExit(1)  # scripts and CI can gate on both
 
 
