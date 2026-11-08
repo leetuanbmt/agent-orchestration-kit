@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from . import osutil, progress, storage
-from .accounts import Account, AccountLock, account_key, binary, discover, load_registry, \
-    login_status, resolve, resolve_profile
+from .accounts import Account, AccountLock, account_key, binary, credential_check, discover, \
+    load_registry, login_status, resolve, resolve_profile
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
 from .executor import ADAPTERS, AGENT_ENV, PLAN_SCHEMA, Adapter, RunRequest, RunResult, \
     build_plan_prompt, build_prompt, build_rework_prompt, kill_stale
@@ -65,7 +65,8 @@ def resolve_account(orch: OrchestratorConfig, cfg: BridgeConfig, root: Path,
     profile = orch.accounts.get(name)
     if profile is None:
         raise ValueError(f"unknown account: {name}")
-    return resolve_profile(name, profile.provider, profile.home, root, profile.token_env)
+    return resolve_profile(name, profile.provider, profile.home, root, profile.token_env,
+                           profile.credential, profile.credential_kind)
 
 
 class Bridge:
@@ -278,10 +279,12 @@ class Bridge:
 
     # ---- accounts and agents ---------------------------------------------------------------
 
-    def list_accounts(self) -> dict[str, Any]:
+    def list_accounts(self, names: list[str] | None = None) -> dict[str, Any]:
+        """`names` limits the login probes to those accounts."""
         only_config = set(self.orch.accounts) == {"default", *self.cfg.accounts}
-        listing = (discover(self.cfg, self.root) if self.legacy and only_config else
-                   discover(self.cfg, self.root, [self._account(n) for n in self.orch.accounts]))
+        listing = (discover(self.cfg, self.root) if self.legacy and only_config and not names
+                   else discover(self.cfg, self.root,
+                                 [self._account(n) for n in names or self.orch.accounts]))
         registry = load_registry()
         for account in listing["accounts"]:
             account["quota"] = self._account_quota(account["name"])
@@ -302,6 +305,23 @@ class Bridge:
             for provider in sorted(PROVIDERS - used)
             if (path := shutil.which(binary(self.cfg, provider)))]
         return listing
+
+    def show_account(self, name: str) -> dict[str, Any]:
+        """One account: its listing row, credential reference, agents and role defaults."""
+        acc = self._account(name)
+        row = self.list_accounts([name])["accounts"][0]
+        agents = sorted(n for n, a in self.orch.agents.items() if a.account == name)
+        row.update(credential=credential_check(acc), agents=agents,
+                   role_defaults=sorted(r for r in self.orch.roles
+                                        if self.orch.role(r).default in agents))
+        return row
+
+    def verify_account(self, name: str) -> dict[str, Any]:
+        """Login state and the credential reference's health; `ok` gates scripts."""
+        acc = self._account(name)
+        cred, logged_in = credential_check(acc), login_status(self.cfg, acc)
+        return {"account": name, "logged_in": logged_in, "credential": cred,
+                "ok": logged_in is True and (cred is None or cred["well_formed"])}
 
     def usage_report(self, name: str | None = None) -> dict[str, Any]:
         """Per-account state, limit checks with spend, and provider quota; read-only.

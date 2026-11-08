@@ -34,6 +34,17 @@ if argv[:2] == ["login", "status"]:
         sys.exit(1)
     print("Logged in using ChatGPT (fake)")
     sys.exit(0)
+if argv[:1] == ["login"] and "--with-api-key" in argv:
+    # Like codex 0.166: the key comes on stdin and lands in $CODEX_HOME/auth.json.
+    key = sys.stdin.read().strip()
+    if not key:
+        print("No API key provided via stdin.", file=sys.stderr)
+        sys.exit(1)
+    (Path(os.environ["CODEX_HOME"]) / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": key}))
+    Path(os.environ["FAKE_CODEX_DIR"]).mkdir(parents=True, exist_ok=True)
+    with (Path(os.environ["FAKE_CODEX_DIR"]) / "login.log").open("a") as f:
+        f.write(json.dumps(argv) + "\n")
+    sys.exit(0)
 
 state = Path(os.environ["FAKE_CODEX_DIR"])
 state.mkdir(parents=True, exist_ok=True)

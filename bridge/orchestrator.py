@@ -19,6 +19,10 @@ from .registry import registry_dir
 from .config import AI_DIR, BridgeConfig
 
 ORCHESTRATOR_FILE = "orchestrator.yaml"
+# Written only by the human-only `project-account-add/-remove` commands; merged under
+# orchestrator.yaml, which wins on a name clash, so the user's own file is never rewritten.
+MANAGED_FILE = "accounts.yaml"
+MANAGED_KEYS = frozenset({"accounts", "agents", "executor"})
 
 # Adapter -> provider it speaks for. `client` is the MCP client driving the bridge (an
 # interactive Claude Code session, for example): it plans and reviews through the MCP tools and
@@ -115,14 +119,23 @@ class AccountProfile(BaseModel):
     # tampered file from pointing at another secret (GITHUB_TOKEN); the _TOKEN suffix keeps it
     # under the built-in *_TOKEN scrub, so no agent or verification command inherits it.
     token_env: str | None = Field(None, pattern=r"^AGENT_BRIDGE_CLAUDE_[A-Z0-9_]{1,40}_TOKEN$")
+    # "keychain": the token lives in the macOS Keychain (`agent-bridge account-set-token`).
+    credential: Literal["keychain"] | None = None
+    # What that secret is: a `claude setup-token` token or an Anthropic Console API key.
+    credential_kind: Literal["oauth_token", "api_key"] = "oauth_token"
 
     @model_validator(mode="after")
     def _known_provider(self) -> AccountProfile:
         if self.provider not in PROVIDERS:
             raise ValueError(f"unsupported provider {self.provider!r}; supported: "
                              f"{sorted(PROVIDERS)}")
-        if self.token_env and self.provider != "anthropic":
-            raise ValueError("token_env is for anthropic accounts (claude setup-token)")
+        if (self.token_env or self.credential) and self.provider != "anthropic":
+            raise ValueError("token_env and credential are for anthropic accounts "
+                             "(claude setup-token)")
+        if self.token_env and self.credential:
+            raise ValueError("use token_env or credential, not both")
+        if self.credential_kind != "oauth_token" and not (self.token_env or self.credential):
+            raise ValueError("credential_kind needs credential or token_env")
         if self.home and self.provider in GLOBAL_ONLY_PROVIDERS:
             raise ValueError(f"{self.provider} accounts use the global login (no home); "
                              "log in with: opencode auth login")
@@ -388,14 +401,51 @@ def legacy(cfg: BridgeConfig, registry: dict | None = None) -> OrchestratorConfi
     )
 
 
+def load_managed(path: Path) -> dict:
+    """The CLI-managed `.ai/accounts.yaml`: {accounts, agents, executor}, all optional."""
+    if not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"{path}: invalid YAML: {e}") from e
+    if not isinstance(data, dict) or set(data) - MANAGED_KEYS:
+        raise ValueError(f"{path}: expected only {sorted(MANAGED_KEYS)}")
+    return data
+
+
+def _with_managed(data: dict, managed: dict) -> tuple[set[str], set[str]]:
+    """Merge `managed` into `data` in place; returns the account and agent names it added."""
+    added = {}
+    for key in ("accounts", "agents"):
+        own = data.get(key) or {}
+        mine = {k: v for k, v in (managed.get(key) or {}).items() if k not in own}
+        added[key] = set(mine)
+        data[key] = {**mine, **own}
+    first = [a for a in managed.get("executor") or [] if a in data["agents"]]
+    roles = data.get("roles")
+    if first and isinstance(roles, dict) and "executor" in roles:
+        role = roles["executor"]
+        if isinstance(role, str):
+            role = [role]
+        if isinstance(role, list):
+            roles["executor"] = list(dict.fromkeys([*first, *role]))
+        elif isinstance(role, dict) and isinstance(role.get("agents"), list):
+            # A `default:` in orchestrator.yaml still goes first; these come next.
+            role["agents"] = list(dict.fromkeys([*first, *role["agents"]]))
+    return added["accounts"], added["agents"]
+
+
 def parse(text: str, source: str = ORCHESTRATOR_FILE,
-          registry: dict | None = None) -> OrchestratorConfig:
+          registry: dict | None = None, managed: dict | None = None,
+          managed_source: str = MANAGED_FILE) -> OrchestratorConfig:
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as e:
         raise ValueError(f"{source}: invalid YAML: {e}") from e
     if not isinstance(data, dict):
         raise ValueError(f"{source}: expected a mapping at the top level")
+    managed_accounts, managed_agents = _with_managed(data, managed or {})
     inherited = set()
     if registry:
         # Registry accounts are usable by name; the project's own declarations win.
@@ -407,9 +457,13 @@ def parse(text: str, source: str = ORCHESTRATOR_FILE,
         problems: dict[str, list[str]] = {}
         for err in e.errors():
             loc = err["loc"]
-            # An error in a machine-wide account belongs to the registry file, not this one.
-            where = (str(registry_dir() / "accounts.json")
-                     if len(loc) > 1 and loc[0] == "accounts" and loc[1] in inherited else source)
+            # An error in a machine-wide or CLI-managed entry belongs to that file.
+            where = source
+            if len(loc) > 1 and loc[0] == "accounts" and loc[1] in inherited:
+                where = str(registry_dir() / "accounts.json")
+            elif len(loc) > 1 and ((loc[0] == "accounts" and loc[1] in managed_accounts)
+                                   or (loc[0] == "agents" and loc[1] in managed_agents)):
+                where = managed_source
             problems.setdefault(where, []).append(
                 f"{'.'.join(str(p) for p in loc) or '<root>'}: {err['msg']}")
         raise ValueError("; ".join(f"{where}: {'; '.join(found)}"
@@ -424,4 +478,5 @@ def load(root: Path, cfg: BridgeConfig) -> OrchestratorConfig:
     if cfg.accounts or cfg.auto_switch.enabled:
         raise ValueError(f"{path}: accounts and auto_switch moved to orchestrator.yaml; "
                          "remove them from .ai/config.json")
-    return parse(path.read_text(), str(path), registry)
+    managed = root / AI_DIR / MANAGED_FILE
+    return parse(path.read_text(), str(path), registry, load_managed(managed), str(managed))

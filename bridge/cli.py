@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import getpass
 import json
 import os
 import shutil
@@ -19,11 +20,13 @@ from pathlib import Path
 from typing import Any
 
 from . import install, orchestrator
-from .accounts import (account_env, global_auth_fingerprint, global_claude_identity,
-                       global_login_marker, load_registry, login_argv, login_status,
+from .accounts import (KEYCHAIN_SERVICE, account_env, global_auth_fingerprint,
+                       global_claude_identity, global_login_marker, keychain, keychain_account,
+                       load_registry, login_argv, login_status,
                        pick_account, register, resolve_profile, shell_use, unregister)
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config
 from .executor import AGENT_ENV
+from .registry import registry_dir
 from .service import Bridge, dumps, project_tasks, resolve_account
 
 
@@ -48,7 +51,12 @@ def _server_entry() -> dict[str, Any]:
 # Commands a person reads: a table in a terminal, JSON with --json or through a pipe.
 VIEWS = {"account-list": "accounts_view", "health": "health_view", "agents": "agents_view",
          "list": "tasks_view", "tasks": "projects_view", "usage": "usage_view"}
-HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove"}
+HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove", "account-set-token",
+                      "project-account-add", "project-account-remove",
+                      "project-account-limits"}
+# Adapter per provider for `project-account-add`; google and opencode only plan and review.
+_PROVIDER_ADAPTER = {"openai": "codex-cli", "anthropic": "claude-cli", "google": "agy-cli",
+                     "opencode": "opencode-cli"}
 EXAMPLES = install.KIT / "examples"
 # Commands that drive agent runs: a stop signal lets them kill their agent and park the task.
 RUN_CMDS = {"execute", "resume", "plan", "run-workflow"}
@@ -82,8 +90,16 @@ def _pick(args: argparse.Namespace, known: dict[str, str]) -> str:
     return pick_account(args.name, getattr(args, "provider", None), known)
 
 
-def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
+def _login(cfg: Any, acc: Any, device_auth: bool, api_key: bool = False) -> Any:
     """Run the provider's own login inside the account's home; refuse if the global one moved."""
+    key = None
+    if api_key:
+        if acc.provider != "openai" or acc.home is None:
+            raise ValueError("--with-api-key is for an openai account with its own home")
+        # Typed here and piped to codex: never on a command line, in the env or in a log.
+        key = getpass.getpass("OpenAI API key (not echoed): ").strip()
+        if not key.startswith("sk-"):
+            raise ValueError("that is not an OpenAI API key (sk-...); nothing was changed")
     if acc.home is not None:
         acc.home.mkdir(mode=0o700, parents=True, exist_ok=True)
     markers = {"openai": lambda: global_auth_fingerprint(),
@@ -95,13 +111,170 @@ def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
               file=sys.stderr)
     before = marker() if marker else None
     try:
-        subprocess.run(login_argv(cfg, acc, device_auth), env=account_env(acc, os.environ),
-                       check=False)
+        subprocess.run(login_argv(cfg, acc, device_auth, api_key), env=account_env(acc, os.environ),
+                       check=False, input=key, text=True)
     finally:
         if marker and marker() != before:
             print("ERROR: global auth was modified", file=sys.stderr)
             raise SystemExit(3)
     return login_status(cfg, acc)
+
+
+def _set_token(args: argparse.Namespace) -> dict[str, Any]:
+    root = find_root()
+    cfg = load_config(root)
+    orch = orchestrator.load(root, cfg)
+    name = _pick(args, {k: a.provider for k, a in orch.accounts.items()})
+    acc = resolve_account(orch, cfg, root, name)
+    if acc.credential != "keychain":
+        raise ValueError(f"account {name} needs `credential: keychain` in .ai/orchestrator.yaml")
+    item = ["-s", KEYCHAIN_SERVICE, "-a", keychain_account(acc)]
+    if args.delete:
+        done = keychain("delete-generic-password", *item)
+        return {"account": name, "deleted": done is not None and done.returncode == 0}
+    print("Paste the Anthropic Console API key (sk-ant-api...)" if acc.credential_kind == "api_key"
+          else "Paste the token `claude setup-token` printed", "; it is not echoed.",
+          sep="", file=sys.stderr)
+    # -w last: `security` prompts on the terminal itself, so the token never passes through
+    # argv or this process.
+    done = subprocess.run(["security", "add-generic-password", "-U", *item,
+                           "-l", f"agent-bridge {name}", "-w"], check=False)
+    if done.returncode != 0:
+        raise SystemExit(done.returncode)
+    return {"account": name, "stored": True, "logged_in": login_status(cfg, acc) is True}
+
+
+def _managed_paths() -> tuple[Path, Path, Path]:
+    root = find_root()
+    ai = root / AI_DIR
+    if not (ai / orchestrator.ORCHESTRATOR_FILE).exists():
+        raise ValueError(f"{ai / orchestrator.ORCHESTRATOR_FILE} is missing: start one with "
+                         "`agent-bridge config-init` first")
+    return root, ai / orchestrator.ORCHESTRATOR_FILE, ai / orchestrator.MANAGED_FILE
+
+
+def _write_managed(yaml_path: Path, path: Path, data: dict) -> None:
+    """Only a merged config that loads is written, and atomically."""
+    import yaml
+    orchestrator.parse(yaml_path.read_text(), str(yaml_path), load_registry(), data, str(path))
+    tmp = path.with_suffix(".yaml.tmp")
+    tmp.write_text("# Managed by `agent-bridge project-account-add` / `project-account-remove`.\n"
+                   "# Entries in orchestrator.yaml win on a name clash.\n"
+                   + yaml.safe_dump(data, sort_keys=True))
+    os.replace(tmp, path)
+
+
+def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
+    root, yaml_path, path = _managed_paths()
+    data = orchestrator.load_managed(path)
+    current = orchestrator.load(root, load_config(root))
+    agent = args.agent or f"agent-{args.name}"
+    for kind, name, known in (("account", args.name, current.accounts),
+                              ("agent", agent, current.agents)):
+        if name in known:
+            raise ValueError(f"{kind} {name} already exists; pick another name")
+    home = Path(args.home).expanduser() if args.home else None
+    if home is None and args.provider != "opencode":
+        home = registry_dir() / "homes" / args.name  # a fresh login home, like account-add
+    account: dict[str, Any] = {"provider": args.provider}
+    if home is not None:
+        account["home"] = str(home.resolve())
+    if args.credential:
+        account["credential"] = args.credential
+    if args.token_env:
+        account["token_env"] = args.token_env
+    if args.credential_kind != "oauth_token":
+        account["credential_kind"] = args.credential_kind
+    if limits := _window_limits(args):
+        account["limits"] = limits
+    adapter = _PROVIDER_ADAPTER[args.provider]
+    spec: dict[str, Any] = {"adapter": adapter, "account": args.name}
+    if adapter not in orchestrator.READ_ONLY_ADAPTERS:
+        spec["allow_write"] = True
+    if args.model:
+        spec["model"] = args.model
+    data = {**data, "accounts": {**(data.get("accounts") or {}), args.name: account},
+            "agents": {**(data.get("agents") or {}), agent: spec}}
+    if args.executor:
+        data["executor"] = list(dict.fromkeys([agent, *(data.get("executor") or [])]))
+    # The isolation check routing applies, before anything is written.
+    resolve_profile(args.name, args.provider, account.get("home"), root, args.token_env,
+                    args.credential, args.credential_kind)
+    _write_managed(yaml_path, path, data)
+    if home is not None and not home.exists():
+        home.mkdir(mode=0o700, parents=True)
+        if args.provider == "openai":
+            (home / "config.toml").write_text('cli_auth_credentials_store = "file"\n')
+    if args.credential == "keychain":
+        step = f"agent-bridge account-set-token {args.name}"
+    elif args.token_env:
+        step = f"export {args.token_env}=... in the shell that starts Claude Code"
+    else:
+        step = f"agent-bridge account-login {args.name}"
+    return {"account": args.name, "agent": agent, "home": account.get("home"),
+            "executor": args.executor, "file": str(path), "next": step}
+
+
+def _window_limits(args: argparse.Namespace) -> dict[str, float]:
+    """The provider-window limits typed on the command line (percent used that stops work)."""
+    return {key: value for key, value in (("five_hour_pct", args.five_hour_pct),
+                                          ("weekly_pct", args.weekly_pct)) if value is not None}
+
+
+def _project_account_limits(args: argparse.Namespace) -> dict[str, Any]:
+    """Set or clear the 5-hour and weekly limits of an account in .ai/accounts.yaml; other
+    limit keys (budget_usd, pricing, ...) are kept."""
+    _, yaml_path, path = _managed_paths()
+    data = orchestrator.load_managed(path)
+    accounts = dict(data.get("accounts") or {})
+    if args.name not in accounts:
+        raise ValueError(f"{args.name} is not in {path}; accounts declared in orchestrator.yaml "
+                         "are edited there")
+    entry = dict(accounts[args.name])
+    limits = dict(entry.get("limits") or {})
+    if args.clear:
+        limits.pop("five_hour_pct", None)
+        limits.pop("weekly_pct", None)
+    new = _window_limits(args)
+    if not new and not args.clear:
+        raise ValueError("give --five-hour-pct, --weekly-pct or --clear")
+    limits |= new
+    if limits:
+        entry["limits"] = limits
+    else:
+        entry.pop("limits", None)
+    accounts[args.name] = entry
+    _write_managed(yaml_path, path, {**data, "accounts": accounts})
+    return {"account": args.name, "limits": entry.get("limits") or {}}
+
+
+def _project_account_remove(args: argparse.Namespace) -> dict[str, Any]:
+    root, yaml_path, path = _managed_paths()
+    data = orchestrator.load_managed(path)
+    accounts = dict(data.get("accounts") or {})
+    if args.name not in accounts:
+        raise ValueError(f"{args.name} is not in {path}; accounts declared in orchestrator.yaml "
+                         "are edited there")
+    typed = input(f"Type the account name to remove {args.name}: ").strip()
+    if typed != args.name:
+        raise SystemExit(2)
+    cfg = load_config(root)
+    acc = resolve_account(orchestrator.load(root, cfg), cfg, root, args.name)
+    entry = accounts.pop(args.name)
+    agents = {k: v for k, v in (data.get("agents") or {}).items()
+              if v.get("account") != args.name}
+    gone = set(data.get("agents") or {}) - set(agents)
+    data = {"accounts": accounts, "agents": agents,
+            "executor": [a for a in data.get("executor") or [] if a not in gone]}
+    _write_managed(yaml_path, path, data)
+    deleted = False
+    if entry.get("credential") == "keychain":
+        done = keychain("delete-generic-password", "-s", KEYCHAIN_SERVICE,
+                        "-a", keychain_account(acc))
+        deleted = done is not None and done.returncode == 0
+    # The home may hold a login worth keeping, so it is never deleted here.
+    return {"account": args.name, "agents_removed": sorted(gone), "token_deleted": deleted,
+            "home_kept": entry.get("home")}
 
 
 def _limit_warnings(orch: orchestrator.OrchestratorConfig) -> list[str]:
@@ -220,6 +393,14 @@ async def _run(args: argparse.Namespace) -> Any:
         shutil.copyfile(EXAMPLES / f"{args.example}.yaml", target)
         print(f"wrote {target}\nEdit its accounts and agents, then run: agent-bridge config-check")
         return None
+    if args.cmd == "account-set-token":
+        return _set_token(args)
+    if args.cmd == "project-account-add":
+        return _project_account_add(args)
+    if args.cmd == "project-account-remove":
+        return _project_account_remove(args)
+    if args.cmd == "project-account-limits":
+        return _project_account_limits(args)
     if args.cmd == "account-add":
         acc = register(args.name, args.provider, args.home)
         print(f"registered {acc.name} ({acc.provider}) at {acc.home or 'its global login'}")
@@ -268,9 +449,9 @@ async def _run(args: argparse.Namespace) -> Any:
         if acc.home is None and acc.provider != "opencode":
             raise ValueError("account-login requires a configured named account (with its own "
                              "home)")
-        return _login(cfg, acc, args.device_auth)
+        return _login(cfg, acc, args.device_auth, getattr(args, "with_api_key", False))
     readonly = args.cmd in {"health", "status", "result", "list", "agents", "workflow-status",
-                            "usage"}
+                            "usage", "account-show", "account-verify"}
     if args.cmd == "status" and args.wait > 0:
         readonly = False
     b = Bridge(create=False) if readonly else Bridge()
@@ -285,6 +466,10 @@ async def _run(args: argparse.Namespace) -> Any:
     match args.cmd:
         case "account-clear":
             return b.clear_account(_pick(args, {k: a.provider for k, a in b.orch.accounts.items()}))
+        case "account-show":
+            return b.show_account(_pick(args, {k: a.provider for k, a in b.orch.accounts.items()}))
+        case "account-verify":
+            return b.verify_account(_pick(args, {k: a.provider for k, a in b.orch.accounts.items()}))
         case "health":
             return await b.health()
         case "create":
@@ -362,12 +547,19 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("account-list", help="usable accounts on this machine").add_argument(
         "--all", action="store_true",
         help="also list switch profiles, homes not added and CLIs without an account")
+    sub.add_parser("account-show", help="one account: credential reference (never the "
+                   "value), login, quota, limits, agents, role defaults").add_argument("name")
+    sub.add_parser("account-verify", help="check an account's login and credential; exit 1 "
+                   "if it cannot run").add_argument("name")
     clear = sub.add_parser("account-clear", help="clear a QUOTA/AUTH unavailable mark on an "
                                                  "account after a human fixed it")
     clear.add_argument("name")
     login = sub.add_parser("account-login", help="HUMAN ONLY: log in an isolated account")
     login.add_argument("name")
-    login.add_argument("--device-auth", action="store_true")
+    how = login.add_mutually_exclusive_group()
+    how.add_argument("--device-auth", action="store_true")
+    how.add_argument("--with-api-key", action="store_true",
+                     help="openai: log Codex in with an API key, typed at a hidden prompt")
     add = sub.add_parser("account-add", help="HUMAN ONLY: create a machine-wide account and "
                                              "log in (fresh login in its own home)")
     add.add_argument("name")
@@ -376,13 +568,47 @@ def main(argv: list[str] | None = None) -> None:
     add.add_argument("--home", help="register an existing isolated home (e.g. a codex-switch "
                                     "home) instead of creating one")
     add.add_argument("--device-auth", action="store_true")
+    padd = sub.add_parser("project-account-add", help="HUMAN ONLY: add an account and its agent "
+                                                      "to this project (.ai/accounts.yaml)")
+    padd.add_argument("name")
+    padd.add_argument("--provider", required=True, choices=sorted(_PROVIDER_ADAPTER))
+    padd.add_argument("--home", help="auth home (default: a new ~/.agent-bridge/homes/<name>)")
+    cred = padd.add_mutually_exclusive_group()
+    cred.add_argument("--credential", choices=["keychain"],
+                      help="anthropic: keep a setup-token in the macOS Keychain")
+    cred.add_argument("--token-env", help="anthropic: AGENT_BRIDGE_CLAUDE_<NAME>_TOKEN")
+    padd.add_argument("--credential-kind", choices=["oauth_token", "api_key"],
+                      default="oauth_token", help="anthropic: what the secret is: a "
+                      "`claude setup-token` token (default) or a Console API key")
+    padd.add_argument("--agent", help="agent name (default: agent-<name>)")
+    padd.add_argument("--model")
+    padd.add_argument("--executor", action="store_true",
+                      help="put the agent first in roles.executor (after any default)")
+    plim = sub.add_parser("project-account-limits", help="HUMAN ONLY: set the 5-hour and weekly "
+                                                         "limits of an account added with "
+                                                         "project-account-add")
+    plim.add_argument("name")
+    plim.add_argument("--clear", action="store_true", help="remove both window limits first")
+    for cmd in (padd, plim):
+        cmd.add_argument("--five-hour-pct", type=float,
+                         help="stop taking work at this percent of the 5-hour window used")
+        cmd.add_argument("--weekly-pct", type=float,
+                         help="stop taking work at this percent of the weekly window used")
+    sub.add_parser("project-account-remove", help="HUMAN ONLY: remove an account added with "
+                                                  "project-account-add; its home is kept"
+                   ).add_argument("name")
+    token = sub.add_parser("account-set-token", help="HUMAN ONLY: store a setup-token or API "
+                                                     "key in the macOS Keychain for an "
+                                                     "account with `credential: keychain`")
+    token.add_argument("name")
+    token.add_argument("--delete", action="store_true", help="remove the stored token")
     sub.add_parser("account-remove", help="HUMAN ONLY: forget a machine-wide account and "
                                           "delete the home it created").add_argument("name")
     use = sub.add_parser("account-use", help="point your interactive CLI at an account: "
                                              'eval "$(agent-bridge account-use <name>)"')
     use.add_argument("name")
     use.add_argument("--shell", action="store_true", help="open a subshell using the account")
-    for cmd in (clear, login, use, sub.choices["account-remove"]):
+    for cmd in (clear, login, use, token, sub.choices["account-remove"]):
         cmd.add_argument("--provider", help="which account, when one name is used by several "
                                             "providers")
     c = sub.add_parser("create", help="create a task from a JSON spec file")
@@ -494,7 +720,7 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(1)
     if _signalled:
         raise SystemExit(128 + _signalled[0])  # the run was stopped; its task is PAUSED
-    if args.cmd in ("health", "config-check") and not out["ok"]:
+    if args.cmd in ("health", "config-check", "account-verify") and not out["ok"]:
         raise SystemExit(1)  # scripts and CI can gate on both
 
 

@@ -13,6 +13,7 @@ import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from . import osutil, registry, storage
 from .config import BridgeConfig
@@ -66,6 +67,10 @@ class Account:
     # Name of a variable in the bridge's own environment holding this account's Claude token
     # (`claude setup-token`); passed to its runs only, as CLAUDE_CODE_OAUTH_TOKEN.
     token_env: str | None = None
+    # "keychain": the same token, stored in the macOS Keychain (`account-set-token`).
+    credential: str | None = None
+    # What that secret is: a setup-token ("oauth_token") or a Console API key ("api_key").
+    credential_kind: str = "oauth_token"
 
     @property
     def codex_home(self) -> Path | None:
@@ -73,10 +78,11 @@ class Account:
 
 
 def resolve_profile(name: str, provider: str, home: str | None, root: Path | None,
-                    token_env: str | None = None) -> Account:
+                    token_env: str | None = None, credential: str | None = None,
+                    credential_kind: str = "oauth_token") -> Account:
     """`root` is the project the account is used from; None when registering it machine-wide."""
     if home is None:
-        return Account(name, None, provider, token_env)
+        return Account(name, None, provider, token_env, credential, credential_kind)
     path = Path(home).expanduser()
     if not path.is_absolute():
         raise ValueError(f"account {name}: home must be absolute")
@@ -93,7 +99,7 @@ def resolve_profile(name: str, provider: str, home: str | None, root: Path | Non
     if shared:
         raise ValueError(f"account {name}: home must be isolated from the project and the "
                          "global login")
-    return Account(name, path, provider, token_env)
+    return Account(name, path, provider, token_env, credential, credential_kind)
 
 
 def resolve(cfg: BridgeConfig, root: Path, name: str | None) -> Account:
@@ -112,24 +118,74 @@ def resolve(cfg: BridgeConfig, root: Path, name: str | None) -> Account:
 
 CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 CLAUDE_TOKEN_PREFIX = "sk-ant-oat"  # what `claude setup-token` prints
+CLAUDE_KEY_ENV = "ANTHROPIC_API_KEY"
+# credential_kind -> (variable its runs get, prefix the value must have). A value of the other
+# kind is never forwarded: a setup-token and an API key bill different sources.
+CREDENTIAL_KINDS = {"oauth_token": (CLAUDE_TOKEN_ENV, CLAUDE_TOKEN_PREFIX),
+                    "api_key": (CLAUDE_KEY_ENV, "sk-ant-api")}
+KEYCHAIN_SERVICE = "agent-bridge"
 
 
-def _claude_token(acc: Account) -> str | None:
-    """The account's token, only if it looks like one: a wrong variable is never forwarded."""
-    token = os.environ.get(acc.token_env or "", "")
-    return token if token.startswith(CLAUDE_TOKEN_PREFIX) else None
+def keychain_account(acc: Account) -> str:
+    """The Keychain item's account field: the auth home, so every project shares one item."""
+    return account_key(acc) if acc.home else f"{acc.provider}:account:{acc.name}"
+
+
+def keychain(*args: str) -> subprocess.CompletedProcess[str] | None:
+    """Run macOS `security` in the bridge's own env, never an account's (an agy account HOME
+    has no keychain). Callers never put its output into an error, an event or a log: it can
+    hold the secret."""
+    try:
+        return subprocess.run(["security", *args], capture_output=True, text=True,
+                              timeout=20, check=False, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):  # no `security` (Linux) or a hung prompt
+        return None
+
+
+def _keychain_token(acc: Account) -> str | None:
+    found = keychain("find-generic-password", "-s", KEYCHAIN_SERVICE,
+                     "-a", keychain_account(acc), "-w")
+    return found.stdout.strip() if found is not None and found.returncode == 0 else None
+
+
+def _raw_secret(acc: Account) -> str:
+    if acc.credential == "keychain":
+        return _keychain_token(acc) or ""
+    return os.environ.get(acc.token_env or "", "")
+
+
+def claude_token(acc: Account) -> str | None:
+    """The account's secret, only if it has its kind's prefix: a wrong value is never forwarded."""
+    secret = _raw_secret(acc)
+    return secret if secret.startswith(CREDENTIAL_KINDS[acc.credential_kind][1]) else None
+
+
+def credential_check(acc: Account) -> dict[str, Any] | None:
+    """Where the account's secret comes from and whether it is usable; never the value.
+    None when the account relies on its home's own CLI login."""
+    if acc.credential == "keychain":
+        reference = f"keychain {KEYCHAIN_SERVICE}/{keychain_account(acc)}"
+    elif acc.token_env:
+        reference = f"env {acc.token_env}"
+    else:
+        return None
+    raw = _raw_secret(acc)
+    return {"reference": reference, "kind": acc.credential_kind, "present": bool(raw),
+            "well_formed": raw.startswith(CREDENTIAL_KINDS[acc.credential_kind][1])}
 
 
 def account_env(acc: Account, base: Mapping[str, str]) -> dict[str, str]:
     env = dict(base)
     if acc.home is not None:
         env[HOME_ENV[acc.provider]] = str(acc.home)
-    if acc.token_env:
-        # Read from the bridge's environment, not `base`: scrubbing removed it there, so no
-        # other account's run (and no verification command) ever sees it.
+    if acc.token_env or acc.credential:
+        # Read from the bridge's environment or the Keychain, not `base`: scrubbing removed it
+        # there, so no other account's run (and no verification command) ever sees it. A key
+        # an `env_allow` let through would win over the token in `claude -p`, so it goes too.
         env.pop(CLAUDE_TOKEN_ENV, None)
-        if token := _claude_token(acc):
-            env[CLAUDE_TOKEN_ENV] = token
+        env.pop(CLAUDE_KEY_ENV, None)
+        if token := claude_token(acc):
+            env[CREDENTIAL_KINDS[acc.credential_kind][0]] = token
     return env
 
 
@@ -157,7 +213,7 @@ def login_status(cfg: BridgeConfig, acc: Account) -> bool | None:
         with contextlib.suppress(OSError):
             return ((acc.home or Path.home()) / AGY_TOKEN).stat().st_size > 0
         return False
-    if acc.token_env and not _claude_token(acc):
+    if (acc.token_env or acc.credential) and not claude_token(acc):
         return False  # its runs would silently fall back to whatever the home holds
     exe = binary(cfg, acc.provider)
     argv = {"openai": [exe, "login", "status", *codex_overrides(acc)],
@@ -179,11 +235,14 @@ def login_status(cfg: BridgeConfig, acc: Account) -> bool | None:
     return result.returncode == 0
 
 
-def login_argv(cfg: BridgeConfig, acc: Account, device_auth: bool = False) -> list[str]:
-    """The interactive login a human runs for this account (inside its home, if it has one)."""
+def login_argv(cfg: BridgeConfig, acc: Account, device_auth: bool = False,
+               api_key: bool = False) -> list[str]:
+    """The interactive login a human runs for this account (inside its home, if it has one).
+    `api_key`: Codex reads the key from stdin (`codex login --with-api-key`)."""
     exe = binary(cfg, acc.provider)
     return {"openai": [exe, "login", *codex_overrides(acc),
-                       *(["--device-auth"] if device_auth else [])],
+                       *(["--device-auth"] if device_auth else []),
+                       *(["--with-api-key"] if api_key else [])],
             "anthropic": [exe, "auth", "login"],
             # agy signs in on its first interactive start; the human exits it afterwards.
             "google": [exe],

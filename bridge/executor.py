@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from . import osutil
-from .accounts import Account, account_env, codex_overrides
+from .accounts import Account, account_env, claude_token, codex_overrides
 from .config import BridgeConfig, state_dir
 from .security import PathError, clean_env, process_started, redact, rule_unsafe
 
@@ -271,6 +271,11 @@ class Adapter:
             raise ValueError(f"sandbox not allowed: {req.sandbox}")
         if not self.available():
             return RunResult("missing_binary", error=f"{self.binary!r} not found on PATH")
+        acc = req.account
+        if (acc.token_env or acc.credential) and claude_token(acc) is None:
+            # Without it the run would silently use whatever login the home holds instead.
+            return RunResult("auth", error=f"account {acc.name}: its {acc.credential_kind} is "
+                                           "missing or has the wrong prefix")
         self.state_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=self.state_dir) as tmpname:
             tmp = Path(tmpname)

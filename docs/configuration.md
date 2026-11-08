@@ -28,7 +28,8 @@ agent-bridge agents                     # resolved roles, agents and availabilit
 ```
 
 `config-init` is meant to be run by a human; the kit's `.claude/settings.json` denies it to
-Claude Code.
+Claude Code. The same holds for `project-account-add`, `project-account-limits` and
+`project-account-remove`: they refuse to run without a terminal.
 
 ```yaml
 version: 1
@@ -182,6 +183,14 @@ An account is one login with its own auth home. Projects declare accounts in
   the global homes, and never shared by two accounts.
 - **Logging in.** A human runs `agent-bridge account-login <name>` for a fresh session in that
   home. For Codex it fails if the global `~/.codex/auth.json` changes during the login.
+  - **Codex with an OpenAI API key.** `agent-bridge account-login <name> --with-api-key` asks
+    for the key at a hidden prompt and pipes it to `codex login --with-api-key` on stdin
+    (codex 0.166 reads it from there), with that account's `CODEX_HOME`. Codex stores it in
+    that home's `auth.json`, as it does its own logins; the bridge keeps no copy. A value not
+    starting with `sk-` is refused before Codex runs. It needs a named `openai` account with
+    its own home, and cannot be combined with `--device-auth`.
+  - An API-key account bills per token and reports no 5-hour or weekly window, so
+    `five_hour_pct` and `weekly_pct` never stop it; use `budget_usd`.
 - **codex-switch.** Homes made with `codex-switch home add` work as Codex accounts. codex-switch
   and claude-switch *profiles* are listed but never used, because they hold copied tokens.
 - **Claude long-lived token (`claude setup-token`).** Instead of a login in `home`, an
@@ -199,6 +208,80 @@ An account is one login with its own auth home. Projects declare accounts in
   - Never write the token into `orchestrator.yaml`. The file lives in the worktree, and agents
     can read the worktree. Claude agents are denied `.ai/orchestrator.yaml`, but Codex agents
     are not.
+- **Adding an account from the CLI.** Instead of editing `orchestrator.yaml`, a human can
+  run:
+
+  ```bash
+  agent-bridge project-account-add claude-thuyseatch --provider anthropic --credential keychain --executor
+  agent-bridge account-set-token claude-thuyseatch
+  ```
+
+  - The command writes `.ai/accounts.yaml`, which the CLI manages and git ignores. It never
+    rewrites `orchestrator.yaml`, and an entry there wins on a name clash.
+  - It declares the account with its own new `0700` home (default
+    `~/.agent-bridge/homes/<name>`, or `--home`), plus an agent `agent-<name>`. Codex and
+    Claude agents get `allow_write`.
+  - With `--executor`, the agent goes first in `roles.executor`, but after a `default:` set in
+    `orchestrator.yaml`.
+  - The merged config is validated, including the home isolation check, before anything is
+    written. `config-check` shows the result.
+  - `agent-bridge project-account-remove <name>` asks you to type the name, then removes the
+    account, its agent and the stored Keychain token. It keeps the home, which may hold a
+    login.
+  - Usage limits per provider window, at creation (`--five-hour-pct 80 --weekly-pct 90`) or
+    later:
+
+    ```bash
+    agent-bridge project-account-limits vydnt --five-hour-pct 80 --weekly-pct 90
+    agent-bridge project-account-limits vydnt --clear   # remove both
+    ```
+
+    Each value is the percent of that window used at which the account stops taking work;
+    these are `limits.five_hour_pct` and `limits.weekly_pct`. Other `limits` keys in the entry
+    are kept.
+  - All three commands are human-only and need a terminal.
+- **An Anthropic Console API key (`credential_kind: api_key`).** With `credential: keychain` or
+  `token_env`, the stored secret can be an API key instead of a setup-token:
+
+  ```bash
+  agent-bridge project-account-add claude-api --provider anthropic --credential keychain --credential-kind api_key
+  agent-bridge account-set-token claude-api   # prompts for the sk-ant-api... key
+  ```
+
+  - Runs get only `ANTHROPIC_API_KEY`, and only for a value starting with `sk-ant-api`. A
+    setup-token in an `api_key` account, or a key in an `oauth_token` account (the default), is
+    never forwarded and reads as logged out: the two bill different sources.
+  - When the named secret is missing or has the wrong prefix, the run stops with PAUSED AUTH
+    instead of using whatever login the home holds. This applies to both kinds.
+  - With `ANTHROPIC_API_KEY` as its only credential (empty `CLAUDE_CONFIG_DIR`), `claude auth
+    status` reports `loggedIn: true`, `authMethod: api_key`, `apiKeySource:
+    ANTHROPIC_API_KEY` (Claude Code, probed 2026-11-08 with a fake key; the CLI does not check
+    the key there). A rejected key shows up on the first run as PAUSED AUTH.
+  - API-key usage is billed per token and does not report the 5-hour and weekly windows, so
+    `five_hour_pct` and `weekly_pct` never stop such an account. Use `budget_usd` instead.
+- **Checking one account.** Both commands are read-only and safe to run from Claude Code:
+  - `agent-bridge account-show <name>` prints the account's `account-list` row, plus where its
+    token comes from (`keychain agent-bridge/<key>` or `env <VAR>`, never the value), the
+    agents that use it and the roles whose `default` is one of them.
+  - `agent-bridge account-verify <name>` checks the CLI login and, for a `token_env` or
+    keychain account, that the secret is present and has its kind's prefix (`sk-ant-oat` or
+    `sk-ant-api`). It exits 1 when the account cannot run.
+- **The same token in the macOS Keychain (`credential: keychain`).** Instead of `token_env`
+  (the two cannot be combined), an `anthropic` account can keep its `setup-token` token in the
+  login Keychain. A human stores it once with `agent-bridge account-set-token <name>`.
+  `security` prompts for the token itself, so it never appears on a command line. Remove it with
+  `--delete`.
+  - The bridge reads the item on every run, so a new token needs no restart of Claude Code.
+  - The item is keyed by the account's home (service `agent-bridge`), so projects that use
+    the same account share it. A missing, locked or wrong-shaped item reads as logged out.
+  - Only `CLAUDE_CODE_OAUTH_TOKEN` reaches that account's runs; a global token or an
+    `env_allow`ed `ANTHROPIC_API_KEY` is removed from them. Under Seatbelt, verification
+    commands cannot reach the Keychain: the `security` binary, the Security services and the
+    keychain files are denied. Without the services deny, a `ctypes` call into
+    Security.framework reached it; this was probed.
+  - Limit: the Keychain keeps the token off disk and out of git. It does not stop unsandboxed
+    code running as you, such as a Claude agent with `allow_bash`, from asking `security`
+    for it. Linux has no Keychain support; use `token_env` there.
 
 ### Machine-wide accounts
 
