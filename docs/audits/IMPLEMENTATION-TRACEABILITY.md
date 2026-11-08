@@ -30,30 +30,30 @@ commit.
 | REL-01 | Medium | The slot flock lived only in the runner, so a killed runner freed the account while its agent kept running; read-only views showed RUNNING forever | The lock fd is inherited by the agent (`pass_fds`) and `release()` unlocks explicitly; `status`/`list` carry `runner_alive` and the dashboard flags `runner_dead` with the resume command, without writing (`bridge/accounts.py`, `bridge/osutil.py`, `bridge/executor.py`, `bridge/runner.py`, `bridge/service.py`, `bridge/progress.py`, `bridge/static/app.js`) | 9f984d6, d3c9e88 | `tests/integration/test_orphan_slot.py`, `tests/integration/test_runner_liveness.py`, `tests/unit/test_progress.py::test_snapshot_dead_runner` |
 | SEC-08 | Low | With a review stage, ignored files the agent changed were only listed | An agent-written ignored file outside `allowed_paths` (tool caches excepted) is a violation in every workflow; ignored files left only by verification stay report-only with a reviewer (`bridge/review.py`, `bridge/runner.py`) | 840bba7 | `tests/integration/test_ignored_files.py` |
 | SEC-07 (untracked part) | Medium | Approval bound only the attempt's own files | Approval is refused when new untracked, non-ignored files appeared since verification, except files later attempts of other tasks recorded and protected files (`bridge/review.py`, `bridge/service.py`, `bridge/state.py`) | d6c925c | `tests/integration/test_approval_binding.py` (BIND-009..013) |
+| SEC-04 (`.ai/orchestrator.yaml` part) | Medium | `protected_dirty` used git status, which cannot see the git-ignored orchestrator config, so a tampered file stayed invisible after the task was BLOCKED | Attempts stopped by a protected-file violation record what each file held (`protected_after`); `health` lists the file in `protected_dirty` (NOT OK) while it still holds that content, and a restore or a human edit clears it (`bridge/review.py`, `bridge/runner.py`, `bridge/service.py`, `bridge/state.py`). Written directly by Claude with the user's approval because no executor had quota left | 2f0a631 | `tests/integration/test_protected_tamper.py` |
 
 ## Verification
 
-- Bridge-run full suite after the last code change (d6c925c, with every change of this pass in
-  the worktree): 689 passed, 114 skipped (macOS; the Seatbelt real-execution tests skip there
+- Full suite after the last code change (2f0a631, run directly because no executor had quota):
+  693 passed, 114 skipped. Before that, the bridge-run suite at d6c925c: 689 passed, 114 skipped (macOS; the Seatbelt real-execution tests skip there
   because the bridge's own checks already run inside Seatbelt).
 - `tests/unit/test_sandbox_seatbelt.py` run outside the nested sandbox: 14 passed.
 - `QA_E2E=1` web suite after the REL-01 dashboard change (d3c9e88): 30 passed, 1 skipped (axe-core
   not installed).
 - `QA_E2E=1 pytest tests/qa` at d6c925c: 105 passed, 1 skipped (axe-core not installed).
 - `docs/audits/evidence/run_audit_repro.sh docs/audits/evidence/test_audit_2026_11_08_security.py`
-  at d6c925c: 8 failed, 7 passed. The reproductions for SEC-01 (forgery), SEC-02, SEC-04 (config),
-  SEC-05, SEC-07 (untracked file), SEC-08 (`test_old_sec03_with_review_stage`) and SEC-09/10 fail,
-  meaning the findings are gone. Of the ones that still pass, three are deferred or documented
-  findings: SEC-04 (`.ai/orchestrator.yaml`), the same-user TTY gate (SEC-03), and a `setsid`
-  child writing after the run (SEC-06). One is a known residual of an earlier audit:
-  `python3 -c` and `npx` remain allowlisted. The other three assert controls that work:
+  at 2f0a631: 9 failed, 6 passed. The reproductions for SEC-01 (forgery), SEC-02, SEC-04 (config
+  and `.ai/orchestrator.yaml`), SEC-05, SEC-07 (untracked file), SEC-08
+  (`test_old_sec03_with_review_stage`) and SEC-09/10 fail, meaning the findings are gone. Of the
+  ones that still pass, two are documented or deferred findings: the same-user TTY gate (SEC-03)
+  and a `setsid` child writing after the run (SEC-06). One is a known residual of an earlier
+  audit: `python3 -c` and `npx` remain allowlisted. The other three assert controls that work:
   web auth, the old REL-01 git-failure path, and the SEC-10 pattern refusals.
 
 ## Not addressed on this branch
 
 | Finding | Reason |
 |---|---|
-| SEC-04 (`.ai/orchestrator.yaml` part) | A tampered, git-ignored config still loads after a BLOCKED task. The fix needs a health problem plus a human-only way to accept an intended edit; deferred because the executor accounts ran out of weekly quota |
 | SEC-03, SEC-12 | Same-user human gate is a documented limitation |
 | SEC-06, SEC-11, SEC-13 | Lower severity; separate changes |
 | AUTH-04 | `*_BASE_URL` is kept on purpose for proxies |

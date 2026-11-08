@@ -612,7 +612,7 @@ origin; `agent-bridge web --read-only` ẩn các thao tác và từ chối chún
 | `not a git repository` hoặc `Target must be a git work tree` | Bridge chỉ chạy trong git repository; chạy `git init` hoặc chuyển thư mục. |
 | `claude mcp list` hiện `agent-bridge: ⏸ Pending approval` | Mở `claude` trong thư mục một lần và trust nó. |
 | Lỗi `config-check` | Thông báo nêu đúng field; sửa `.ai/orchestrator.yaml`. |
-| `health` báo NOT OK | Thiếu adapter CLI hoặc CLI chưa đăng nhập, một file protected khác với `HEAD` (`protected_dirty`), hoặc verification sẽ chạy không bị giới hạn (`verify_unconfined`, xem `verify_sandbox`). `health` liệt kê từng nguyên nhân kèm cách sửa trong `problems`, và dấu QUOTA/AUTH của account trong `warnings`; con người đăng nhập hoặc kiểm tra file đó. |
+| `health` báo NOT OK | Thiếu adapter CLI hoặc CLI chưa đăng nhập, một file protected khác với `HEAD` hoặc vẫn giữ nội dung một task bị dừng đã ghi vào (`protected_dirty`), hoặc verification sẽ chạy không bị giới hạn (`verify_unconfined`, xem `verify_sandbox`). `health` liệt kê từng nguyên nhân kèm cách sửa trong `problems`, và dấu QUOTA/AUTH của account trong `warnings`; con người đăng nhập hoặc kiểm tra file đó. |
 | `no eligible executor agent (…)` | Mọi executor đều bị tắt, bận hoặc không sẵn sàng; lý do được liệt kê theo từng agent. |
 | Task `PAUSED` với `QUOTA` hoặc `AUTH` | Chờ cửa sổ quota reset hoặc sửa login; sau đó chạy `agent-bridge account-clear <name>` nếu dấu vẫn còn, rồi resume. Khi bật quota fallback, resume có thể chuyển task sang account khác. |
 | Task `PAUSED` với `INTERRUPTED` | Runner bị dừng bằng tín hiệu hoặc đã chết; `bridge_resume_task` tiếp tục session, `cancel` huỷ nó. |
