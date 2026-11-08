@@ -21,13 +21,13 @@ commit.
 | FUN-02 | Medium | A cancelled or blocked dependency left dependents in BACKLOG and the workflow in WAITING | Workflow finishes INCOMPLETE with `detail.unreachable` | d5718dc | `tests/integration/test_orchestration.py::test_unreachable_dependencies` |
 | CFG-08 | Medium | Tests inherited `AGENT_BRIDGE_HOME` from the shell | `tests/conftest.py` unsets it | d5718dc | whole suite |
 | UX-01 | High | `syncNode` copies the keydown handler onto the live row, but the handler compared `event.target` with the discarded node | Compare with `event.currentTarget` (`bridge/static/app.js`) | 43311cc, 9dd9a77 | `tests/qa/web/dashboard.cjs` drawer_layout check "Enter on a task row opens the drawer" (fails on the old code) |
-| SEC-05 | Medium | Git stores a symlink as a blob, so writes through a link under an allowed path left no trace | Task creation refuses allowed paths covering a link that leaves the project; an attempt that creates or retargets one gets a scope violation (`bridge/review.py`, `bridge/service.py`, `bridge/runner.py`) | 7decda2 | `tests/integration/test_symlink_scope.py` |
+| SEC-05 | Medium | Git stores a symlink as a blob, so writes through a link under an allowed path left no trace | Task creation refuses allowed paths covering a link that leaves the project; an attempt that creates or retargets one gets a scope violation, also for links in git-ignored paths; coverage follows each pattern's literal prefix (`bridge/review.py`, `bridge/security.py`, `bridge/service.py`, `bridge/runner.py`) | 7decda2, f685ab3 | `tests/integration/test_symlink_scope.py` |
 | SEC-01 (unconfined part, step 1) | High | Without Landlock, `verify_sandbox: auto` ran checks unconfined while `health` stayed OK | `health` reports the `verify_unconfined` problem (NOT OK) until a human sets `verify_sandbox: none`, which is a warning; `ok` is now derived from `problems` (`bridge/service.py`) | 36407e3 | `tests/integration/test_health_diagnostics.py` |
 | AUTH-01 | High | `env_allow` applied to agents and to verification commands alike | Verification commands ignore `env_allow`; agents keep it (`bridge/review.py`) | 36407e3 | `tests/integration/test_verification_env.py::test_verification_ignores_env_allow` |
 
 ## Verification
 
-- Bridge-run full suite after the last code change (36407e3): 629 passed, 114 skipped.
+- Bridge-run full suite after the last code change (f685ab3): 634 passed, 114 skipped.
 - `QA_E2E=1 pytest tests/qa` at 36407e3: 104 passed, 2 skipped.
 - `QA_E2E=1` web suite after the UX-01 fix: 30 passed, 1 skipped; the new keyboard check fails
   with the pre-fix `app.js` and passes with the fix.
