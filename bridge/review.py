@@ -284,6 +284,23 @@ def content_hashes(root: Path, files: list[str]) -> dict[str, str | None]:
     return {f: _hash(root / f) for f in files}
 
 
+def protected_after(root: Path, violations: list[str]) -> dict[str, dict[str, str | None]]:
+    """What a stopped run left in each protected file it changed. `health` keeps reporting a file
+    while it still has this content; a restore or a human edit changes the hash and clears it."""
+    paths = [v[len(PROTECTED_VIOLATION):] for v in violations if v.startswith(PROTECTED_VIOLATION)]
+    return {"protected_after": protected_hashes(root, paths)} if paths else {}
+
+
+def protected_hashes(root: Path, paths: list[str]) -> dict[str, str | None]:
+    """Like content_hashes, but `.git/...` keys (from _git_internals) resolve through git, since
+    `.git` is a file in a linked worktree."""
+    def where(f: str) -> Path:
+        if not f.startswith(".git/"):
+            return root / f
+        return Path(_git(root, "rev-parse", "--path-format=absolute", "--git-path", f[5:]).strip())
+    return {f: _hash(where(f)) for f in paths}
+
+
 def current_head(root: Path) -> str | None:
     return _git(root, "rev-parse", "--verify", "-q", "HEAD", required=False).strip() or None
 

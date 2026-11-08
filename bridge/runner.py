@@ -15,8 +15,8 @@ from .accounts import AccountLock, account_key
 from .executor import REVIEW_SCHEMA, RunRequest, RunResult, build_review_prompt, describe_event
 from .models import ACTIVE, Actor, ReviewDecision, State, leftover_failure, run_failure_state, \
     verdict
-from .review import EvidenceError, content_hashes, current_head, diff, recheck, run_verification, \
-    scope_violations, touches_sensitive
+from .review import EvidenceError, content_hashes, current_head, diff, protected_after, recheck, \
+    run_verification, scope_violations, touches_sensitive
 from .security import process_started, redact
 from .state import LimitExceeded
 
@@ -233,7 +233,8 @@ class TaskRunner:
                                         changes["ignored_files"], root=b.root)
             if leftover:
                 record["verification"] = {"passed": False, "scope_violations": leftover,
-                                          "checks": [], "interrupted": True}
+                                          "checks": [], "interrupted": True,
+                                          **protected_after(b.root, leftover)}
             self.store.finish_attempt(task_id, n, **record)
             if leftover and self.store.get(task_id)["state"] in ACTIVE:
                 self.store.transition(task_id, State.BLOCKED, Actor.BRIDGE,
@@ -291,7 +292,8 @@ class TaskRunner:
                                   "checks": checks, "agent_status": agent_status,
                                   **({"changed_by_verification": later} if later else {}),
                                   **({"skipped": skipped} if skipped else {}),
-                                  **({"interrupted": True} if stopped else {})}
+                                  **({"interrupted": True} if stopped else {}),
+                                  **protected_after(b.root, violations)}
         # What a later approval is bound to: the verified content of every file the attempt touched.
         changes["after_hashes"] = content_hashes(b.root, touched)
         changes["verified_head"] = current_head(b.root)

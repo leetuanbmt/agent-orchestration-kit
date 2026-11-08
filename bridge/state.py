@@ -5,6 +5,7 @@ WAL + BEGIN IMMEDIATE so the MCP server and the CLI can share one database safel
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -17,7 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from . import osutil
-from .models import ACTIVE, TERMINAL, Actor, State, TaskSpec, TransitionError, check_transition
+from .models import ACTIVE, PROTECTED_VIOLATION, TERMINAL, Actor, State, TaskSpec, TransitionError, \
+    check_transition
 from .security import process_started, redact
 
 SCHEMA = """
@@ -746,6 +748,18 @@ class Store:
     def attempts(self, tid: str) -> list[dict[str, Any]]:
         rows = self.db.execute("SELECT * FROM attempts WHERE task_id=? ORDER BY n", (tid,))
         return [r for r in map(_row, rows.fetchall()) if r]
+
+    def protected_left(self) -> list[dict[str, str | None]]:
+        """`protected_after` of every attempt stopped by a protected-file violation."""
+        rows = self.db.execute("SELECT verification FROM attempts WHERE verification LIKE ?",
+                               (f"%{PROTECTED_VIOLATION}%",))
+        out = []
+        for (raw,) in rows.fetchall():
+            with contextlib.suppress(ValueError, TypeError):
+                left = json.loads(raw).get("protected_after")
+                if isinstance(left, dict):
+                    out.append(left)
+        return out
 
     def other_attempt_files_since(self, tid: str, ended_at: float) -> set[str]:
         """Files recorded by other tasks whose attempts started after this attempt ended."""

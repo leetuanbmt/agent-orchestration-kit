@@ -32,7 +32,7 @@ from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .registry import remember_project
 from .review import EvidenceError, content_hashes, current_head, diff, parse_command, protected_dirty, \
-    escaping_symlinks, scope_violations, snapshot, untracked
+    escaping_symlinks, protected_after, protected_hashes, scope_violations, snapshot, untracked
 from .runner import _write_attempt_log_line as _write_attempt_log_line
 from .sandbox import describe as describe_sandbox
 from .runner import TaskRunner
@@ -435,6 +435,14 @@ class Bridge:
             dirty = protected_dirty(self.root, self.cfg)
         except EvidenceError as e:  # cannot tell: do not report the project as fine
             dirty = [f"(git status failed: {redact(str(e), 200)})"]
+        # Git cannot see a git-ignored protected file (.ai/orchestrator.yaml): report every one a
+        # stopped run changed while it still holds what that run left.
+        try:
+            dirty = sorted({*dirty, *(f for left in self.store.protected_left()
+                                      for f, h in left.items()
+                                      if protected_hashes(self.root, [f])[f] == h)})
+        except EvidenceError as e:
+            dirty = [*dirty, f"(git failed: {redact(str(e), 200)})"]
         verify_sandbox = describe_sandbox(self.orch.workflow.verify_sandbox)
 
         def item(code: str, message: str, fix: str) -> dict[str, str]:
@@ -455,7 +463,8 @@ class Bridge:
                                  "protected files differ from HEAD and would be loaded as they "
                                  f"are: {', '.join(dirty)}",
                                  "inspect them (git diff) and restore what you did not change "
-                                 "yourself"))
+                                 "yourself; a file a stopped task changed (see `agent-bridge "
+                                 "result <id>`) stays listed until it is restored or edited"))
         # Worth knowing, but never a reason for `ok` to be false.
         warnings = []
         if storage_notice:
@@ -1097,7 +1106,9 @@ class Bridge:
                     leftover = self._leftover(row, a.get("baseline"))
                     self.store.finish_attempt(row["id"], a["n"], outcome="interrupted", **(
                         {"verification": {"passed": False, "scope_violations": leftover,
-                                          "checks": [], "interrupted": True}} if leftover else {}))
+                                          "checks": [], "interrupted": True,
+                                          **protected_after(self.root, leftover)}}
+                        if leftover else {}))
             if leftover:  # resuming would take these changes as the next attempt's baseline
                 self.store.transition(row["id"], State.BLOCKED, Actor.BRIDGE,
                                       {"reason": "runner died", "killed_orphan": killed,
