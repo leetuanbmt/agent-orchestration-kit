@@ -39,10 +39,14 @@ def test_seatbelt_profile(monkeypatch, tmp_path, mode):
     assert str(link) not in profile
     assert '(literal "/dev/null")' in profile
     assert '(regex #"^/dev/(tty|fd/|stdout|stderr|ptmx|ttys)")' in profile
+    assert '(deny appleevent-send)' in profile
+    assert '(deny lsopen)' in profile
+    assert ('(deny process-exec (literal "/usr/bin/open") (literal "/bin/launchctl")'
+            ' (literal "/usr/bin/osascript"))') in profile
     denies = '(deny network-outbound (remote ip))(deny network-bind (local ip))'
     assert (denies in profile) == (mode == "strict")
     assert sandbox.describe(mode) == (
-        "seatbelt (sandbox-exec): writes confined" + (", TCP denied" if mode == "strict" else "")
+        "seatbelt (sandbox-exec): writes confined, best effort" + (", TCP denied" if mode == "strict" else "")
     )
 
 
@@ -91,6 +95,29 @@ def test_seatbelt_confines_writes(tmp_path):
         [sys.executable, "-c", "raise SystemExit(7)"], [str(root), str(temporary)], "auto"
     ))
     assert result.returncode == 7
+
+
+# @pt.id KIT-SEATBELT-008-launch-services
+# @pt.item Seatbelt denies launch-service executables while allowing ordinary commands
+# @pt.condition auto and strict modes execute open, osascript and true
+# @pt.expected open and osascript fail without launching applications; true succeeds
+# @pt.target bridge.sandbox.wrap
+# @pt.method integration
+# @pt.legacy allow-default permitted launch-service escapes
+@needs_seatbelt
+@pytest.mark.parametrize("mode", ["auto", "strict"])
+def test_seatbelt_denies_launch_services(tmp_path, mode):
+    for argv in (["/usr/bin/open"], ["/usr/bin/osascript", "-e", "return 1"]):
+        result = subprocess.run(
+            sandbox.wrap(argv, [str(tmp_path)], mode),
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode != 0
+    result = subprocess.run(
+        sandbox.wrap(["/usr/bin/true"], [str(tmp_path)], mode),
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0
 
 
 # @pt.id KIT-SEATBELT-004-network

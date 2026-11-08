@@ -94,6 +94,11 @@ def _seatbelt_profile(writable: list[str], mode: Mode) -> str:
     profile = ('(version 1)(allow default)(deny file-write*)(allow file-write* '
                + " ".join(rules)
                + ' (literal "/dev/null") (regex #"^/dev/(tty|fd/|stdout|stderr|ptmx|ttys)"))')
+    # (allow default) keeps toolchains working; these close known launch-service escapes.
+    # ponytail: an allow-default profile is not a full sandbox; upgrade to a deny-default allowlist.
+    profile += ('(deny appleevent-send)(deny lsopen)'
+                '(deny process-exec (literal "/usr/bin/open") (literal "/bin/launchctl")'
+                ' (literal "/usr/bin/osascript"))')
     if mode == "strict":
         profile += '(deny network-outbound (remote ip))(deny network-bind (local ip))'
     return profile
@@ -122,7 +127,7 @@ def describe(mode: Mode) -> str:
         return ("unavailable: checks are refused (strict)" if mode == "strict" else
                 "unavailable on this system: checks run unconfined (auto)")
     if selected == "seatbelt":
-        return "seatbelt (sandbox-exec): writes confined" + (", TCP denied" if mode == "strict" else "")
+        return "seatbelt (sandbox-exec): writes confined, best effort" + (", TCP denied" if mode == "strict" else "")
     abi = landlock_abi()
     return f"landlock ABI {abi}: writes confined" + (", TCP denied" if mode == "strict" and abi >= 4
                                                      else "")
