@@ -58,12 +58,15 @@ def test_human_approve_bound_to_content(make_bridge, repo, monkeypatch):
 
 # @pt.id KIT-SEC-BIND-003-unrelated-edit
 # @pt.item Edits to other files do not block an approval
-# @pt.condition a task in REVIEW; an unrelated file (README.md) changes before approval
+# @pt.condition a task in REVIEW; an unrelated tracked file (README.md) changes before approval
 # @pt.expected the approval goes through to DONE
 # @pt.target Bridge._assert_verified_content
 # @pt.method integration
 # @pt.legacy none
 def test_unrelated_edit_allowed(make_bridge, repo, monkeypatch):
+    (repo / "README.md").write_text("initial documentation\n")
+    git(repo, "add", "README.md")
+    git(repo, "commit", "-qm", "add unrelated tracked file")
     b = make_bridge()
     t = verified_task(b, monkeypatch)
     (repo / "README.md").write_text("other work\n")
@@ -166,3 +169,87 @@ def test_head_lookup_failure(make_bridge, monkeypatch, raises):
     with pytest.raises(TransitionError, match="cannot read HEAD since verification"):
         run(b.review_task(t, "approve", "ok"))
     assert b.store.get(t)["state"] == State.REVIEW
+
+
+# @pt.id KIT-SEC-BIND-009-client-untracked
+# @pt.item Client approval refuses new untracked files after verification
+# @pt.condition src/conftest.py appears after the task reaches REVIEW
+# @pt.expected approval names the file and rework guidance; the task stays REVIEW
+# @pt.target Bridge._assert_verified_content via review_task
+# @pt.method integration
+# @pt.legacy audit SEC-07: unverified untracked files could be approved
+def test_client_approve_refuses_new_untracked(make_bridge, repo, monkeypatch):
+    b = make_bridge()
+    t = verified_task(b, monkeypatch)
+    (repo / "src" / "conftest.py").write_text("x = 3\n")
+    with pytest.raises(TransitionError, match=r"new untracked files since verification: "
+                                              r"src/conftest\.py; send it back"):
+        run(b.review_task(t, "approve", "ok"))
+    assert b.store.get(t)["state"] == State.REVIEW
+
+
+# @pt.id KIT-SEC-BIND-010-human-untracked
+# @pt.item Human approval refuses new untracked files after verification
+# @pt.condition a high-risk task is APPROVED, then src/conftest.py appears
+# @pt.expected approval names the file and restore-or-cancel guidance; the task stays APPROVED
+# @pt.target Bridge._assert_verified_content via human_approve
+# @pt.method integration
+# @pt.legacy audit SEC-07: unverified untracked files could be approved
+def test_human_approve_refuses_new_untracked(make_bridge, repo, monkeypatch):
+    b = make_bridge()
+    t = verified_task(b, monkeypatch, risk_level="high")
+    assert run(b.review_task(t, "approve", "ok"))["state"] == State.APPROVED
+    (repo / "src" / "conftest.py").write_text("x = 3\n")
+    with pytest.raises(TransitionError, match=r"new untracked files since verification: "
+                                              r"src/conftest\.py; restore the verified content, "
+                                              r"or cancel"):
+        b.human_approve(t)
+    assert b.store.get(t)["state"] == State.APPROVED
+
+
+# @pt.id KIT-SEC-BIND-011-existing-untracked
+# @pt.item Pre-existing untracked files do not block approval
+# @pt.condition src/conftest.py exists before the verified attempt starts
+# @pt.expected approval goes through to DONE
+# @pt.target Bridge._assert_verified_content
+# @pt.method integration
+# @pt.legacy none
+def test_preexisting_untracked_allowed(make_bridge, repo, monkeypatch):
+    b = make_bridge()
+    (repo / "src" / "conftest.py").write_text("x = 3\n")
+    t = verified_task(b, monkeypatch)
+    assert "src/conftest.py" in b.store.attempts(t)[-1]["baseline"]["files"]
+    assert run(b.review_task(t, "approve", "ok"))["state"] == State.DONE
+
+
+# @pt.id KIT-SEC-BIND-012-other-attempt-untracked
+# @pt.item Files recorded by later attempts of other tasks do not block approval
+# @pt.condition another task's attempt starts after verification and records src/conftest.py
+# @pt.expected approval of the original task goes through to DONE
+# @pt.target Bridge._assert_verified_content and Store.other_attempt_files_since
+# @pt.method integration
+# @pt.legacy none
+def test_later_other_attempt_untracked_allowed(make_bridge, repo, monkeypatch):
+    b = make_bridge()
+    t = verified_task(b, monkeypatch)
+    other = run(b.create_task(spec(objective="Add src/conftest.py")))["task_id"]
+    b.store.start_attempt(other, 1, "execute")
+    assert b.store.attempts(other)[-1]["started_at"] > b.store.attempts(t)[-1]["ended_at"]
+    (repo / "src" / "conftest.py").write_text("x = 3\n")
+    b.store.finish_attempt(other, 1, changes={"files": ["src/conftest.py"]})
+    assert run(b.review_task(t, "approve", "ok"))["state"] == State.DONE
+
+
+# @pt.id KIT-SEC-BIND-013-protected-untracked
+# @pt.item New human-owned protected files do not block client approval
+# @pt.condition .ai/config.json is created after the verified attempt reaches REVIEW
+# @pt.expected client approval goes through to DONE
+# @pt.target Bridge._assert_verified_content via review_task
+# @pt.method integration
+# @pt.legacy none
+def test_new_protected_untracked_allowed(make_bridge, repo, monkeypatch):
+    b = make_bridge()
+    t = verified_task(b, monkeypatch)
+    (repo / ".ai").mkdir(exist_ok=True)
+    (repo / ".ai" / "config.json").write_text("{}\n")
+    assert run(b.review_task(t, "approve", "ok"))["state"] == State.DONE

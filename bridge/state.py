@@ -747,6 +747,15 @@ class Store:
         rows = self.db.execute("SELECT * FROM attempts WHERE task_id=? ORDER BY n", (tid,))
         return [r for r in map(_row, rows.fetchall()) if r]
 
+    def other_attempt_files_since(self, tid: str, ended_at: float) -> set[str]:
+        """Files recorded by other tasks whose attempts started after this attempt ended."""
+        rows = self.db.execute(
+            "SELECT changes FROM attempts WHERE task_id != ? AND started_at > ?",
+            (tid, ended_at),
+        )
+        return {path for row in map(_row, rows.fetchall()) if row
+                for path in (row.get("changes") or {}).get("files", [])}
+
     def events(self, tid: str, limit: int = 50) -> list[dict[str, Any]]:
         rows = self.db.execute(
             "SELECT * FROM events WHERE task_id=? ORDER BY id DESC LIMIT ?", (tid, limit)

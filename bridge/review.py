@@ -65,6 +65,19 @@ def _hash(p: Path) -> str | None:
     return h.hexdigest()
 
 
+def untracked(root: Path) -> set[str]:
+    """Non-ignored untracked files in the worktree."""
+    out = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    paths = set()
+    parts = iter(out.split("\0"))
+    for entry in parts:
+        if entry.startswith("?? "):
+            paths.add(entry[3:])
+        elif entry and entry[0] in "RC":
+            next(parts, None)
+    return paths
+
+
 def _dirty(root: Path) -> set[str]:
     out = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
     paths, parts = set(), out.split("\0")
