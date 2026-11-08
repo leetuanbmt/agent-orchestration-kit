@@ -586,6 +586,12 @@ const scenarios = {
     await page.waitForFunction(() => document.getElementById('drawer').hidden, null, { timeout: 4000 }).catch(() => {});
     check('main is not inert after Escape', await page.evaluate(() => !document.querySelector('main').inert));
     check('focus returns to the task row', await page.evaluate(() => !!document.activeElement?.closest('#task-rows')));
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => !document.getElementById('drawer').hidden &&
+      document.getElementById('drawer-title').textContent.includes('Set x to 2'), null, { timeout: 8000 })
+      .then(() => check('Enter on a task row opens the drawer', true), e => check('Enter on a task row opens the drawer', false, e));
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.getElementById('drawer').hidden, null, { timeout: 4000 }).catch(() => {});
   },
 
   // On a phone each task is a compact block: every field, including the next step, is on screen.
@@ -761,7 +767,6 @@ const scenarios = {
           await page.locator('#finished-cards .card').count());
     check('every card badge has a glyph', await page.evaluate(() => [...document.querySelectorAll('#board-view .card .badge')]
       .every(b => b.firstElementChild?.matches('.glyph[aria-hidden="true"]'))));
-    await page.waitForTimeout(3500);
     await card.focus();
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => !document.getElementById('drawer').hidden &&
