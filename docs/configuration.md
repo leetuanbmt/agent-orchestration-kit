@@ -183,6 +183,14 @@ An account is one login with its own auth home. Projects declare accounts in
   the global homes, and never shared by two accounts.
 - **Logging in.** A human runs `agent-bridge account-login <name>` for a fresh session in that
   home. For Codex it fails if the global `~/.codex/auth.json` changes during the login.
+  - **Codex with an OpenAI API key.** `agent-bridge account-login <name> --with-api-key` asks
+    for the key at a hidden prompt and pipes it to `codex login --with-api-key` on stdin
+    (codex 0.166 reads it from there), with that account's `CODEX_HOME`. Codex stores it in
+    that home's `auth.json`, as it does its own logins; the bridge keeps no copy. A value not
+    starting with `sk-` is refused before Codex runs. It needs a named `openai` account with
+    its own home, and cannot be combined with `--device-auth`.
+  - An API-key account bills per token and reports no 5-hour or weekly window, so
+    `five_hour_pct` and `weekly_pct` never stop it; use `budget_usd`.
 - **codex-switch.** Homes made with `codex-switch home add` work as Codex accounts. codex-switch
   and claude-switch *profiles* are listed but never used, because they hold copied tokens.
 - **Claude long-lived token (`claude setup-token`).** Instead of a login in `home`, an

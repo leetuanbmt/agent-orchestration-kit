@@ -235,11 +235,14 @@ def login_status(cfg: BridgeConfig, acc: Account) -> bool | None:
     return result.returncode == 0
 
 
-def login_argv(cfg: BridgeConfig, acc: Account, device_auth: bool = False) -> list[str]:
-    """The interactive login a human runs for this account (inside its home, if it has one)."""
+def login_argv(cfg: BridgeConfig, acc: Account, device_auth: bool = False,
+               api_key: bool = False) -> list[str]:
+    """The interactive login a human runs for this account (inside its home, if it has one).
+    `api_key`: Codex reads the key from stdin (`codex login --with-api-key`)."""
     exe = binary(cfg, acc.provider)
     return {"openai": [exe, "login", *codex_overrides(acc),
-                       *(["--device-auth"] if device_auth else [])],
+                       *(["--device-auth"] if device_auth else []),
+                       *(["--with-api-key"] if api_key else [])],
             "anthropic": [exe, "auth", "login"],
             # agy signs in on its first interactive start; the human exits it afterwards.
             "google": [exe],

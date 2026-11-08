@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import getpass
 import json
 import os
 import shutil
@@ -89,8 +90,16 @@ def _pick(args: argparse.Namespace, known: dict[str, str]) -> str:
     return pick_account(args.name, getattr(args, "provider", None), known)
 
 
-def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
+def _login(cfg: Any, acc: Any, device_auth: bool, api_key: bool = False) -> Any:
     """Run the provider's own login inside the account's home; refuse if the global one moved."""
+    key = None
+    if api_key:
+        if acc.provider != "openai" or acc.home is None:
+            raise ValueError("--with-api-key is for an openai account with its own home")
+        # Typed here and piped to codex: never on a command line, in the env or in a log.
+        key = getpass.getpass("OpenAI API key (not echoed): ").strip()
+        if not key.startswith("sk-"):
+            raise ValueError("that is not an OpenAI API key (sk-...); nothing was changed")
     if acc.home is not None:
         acc.home.mkdir(mode=0o700, parents=True, exist_ok=True)
     markers = {"openai": lambda: global_auth_fingerprint(),
@@ -102,8 +111,8 @@ def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
               file=sys.stderr)
     before = marker() if marker else None
     try:
-        subprocess.run(login_argv(cfg, acc, device_auth), env=account_env(acc, os.environ),
-                       check=False)
+        subprocess.run(login_argv(cfg, acc, device_auth, api_key), env=account_env(acc, os.environ),
+                       check=False, input=key, text=True)
     finally:
         if marker and marker() != before:
             print("ERROR: global auth was modified", file=sys.stderr)
@@ -440,7 +449,7 @@ async def _run(args: argparse.Namespace) -> Any:
         if acc.home is None and acc.provider != "opencode":
             raise ValueError("account-login requires a configured named account (with its own "
                              "home)")
-        return _login(cfg, acc, args.device_auth)
+        return _login(cfg, acc, args.device_auth, getattr(args, "with_api_key", False))
     readonly = args.cmd in {"health", "status", "result", "list", "agents", "workflow-status",
                             "usage", "account-show", "account-verify"}
     if args.cmd == "status" and args.wait > 0:
@@ -547,7 +556,10 @@ def main(argv: list[str] | None = None) -> None:
     clear.add_argument("name")
     login = sub.add_parser("account-login", help="HUMAN ONLY: log in an isolated account")
     login.add_argument("name")
-    login.add_argument("--device-auth", action="store_true")
+    how = login.add_mutually_exclusive_group()
+    how.add_argument("--device-auth", action="store_true")
+    how.add_argument("--with-api-key", action="store_true",
+                     help="openai: log Codex in with an API key, typed at a hidden prompt")
     add = sub.add_parser("account-add", help="HUMAN ONLY: create a machine-wide account and "
                                              "log in (fresh login in its own home)")
     add.add_argument("name")
