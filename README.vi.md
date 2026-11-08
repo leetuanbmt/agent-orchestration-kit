@@ -416,7 +416,7 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   file protected thì chặn, và khi workflow không có stage `review` thì mọi thay đổi ngoài
   `allowed_paths` đều là vi phạm (trừ cache của công cụ).
 - **Verification.** Bridge tự chạy lại, chỉ dùng argv (không toán tử shell, không dùng đường dẫn
-  làm chương trình), file thực thi phải nằm trong allowlist, có timeout. Trên Linux có Landlock,
+  làm chương trình), file thực thi phải nằm trong allowlist, có timeout. Dưới Landlock (Linux) hoặc Seatbelt (macOS),
   lệnh kiểm tra chỉ ghi được vào worktree, một `TMPDIR` riêng và `workflow.verify_writable`
   (`workflow.verify_sandbox`: mặc định `auto`, `strict` chặn thêm TCP, `none` để tắt); sau đó
   worktree được diff lại và những gì lệnh kiểm tra thay đổi được xét như thay đổi của agent. Không
@@ -481,12 +481,15 @@ quyền bên trong bridge.
 - Deny rule trong `.claude/settings.json` chỉ định hướng cho Claude Code, không phải ranh giới bảo
   mật. Việc kiểm tra terminal interactive cho lệnh chỉ dành cho con người có thể bị vượt qua nếu
   agent tự cấp một pseudo-terminal.
-- Lệnh verification chỉ bị giới hạn ở nơi có Landlock (Linux 5.13+); ở nơi khác chúng chạy với
-  quyền của bạn, trừ khi `verify_sandbox: strict` từ chối chạy, và `health` báo NOT OK
-  (`verify_unconfined`) cho tới khi con người chấp nhận bằng `verify_sandbox: none`. Ngay cả khi bị giới hạn chúng vẫn
-  đọc được file của bạn, và ở chế độ `auto` vẫn có mạng.
-- File bị git-ignore được so bằng kích thước và mtime, không phải nội dung; khi có reviewer, file
-  ignore bị thay đổi được liệt kê cho reviewer thay vì bị từ chối.
+- Lệnh verification bị giới hạn bằng Landlock (Linux 5.13+) hoặc Seatbelt (macOS). Profile trên
+  macOS chỉ ở mức best effort: nó giới hạn việc ghi và chặn các đường thoát đã biết qua launch
+  services, nhưng cho phép mọi thứ khác. Khi không có cả hai, lệnh chạy với quyền của bạn, trừ khi
+  `verify_sandbox: strict` từ chối chạy, và `health` báo NOT OK (`verify_unconfined`) cho tới khi
+  con người chấp nhận bằng `verify_sandbox: none`. Ngay cả khi bị giới hạn chúng vẫn đọc được file
+  của bạn, và ở chế độ `auto` vẫn có mạng.
+- File bị git-ignore được so bằng kích thước và mtime, không phải nội dung. Agent thay đổi file
+  ignore nằm ngoài `allowed_paths` là vi phạm (trừ cache của công cụ); file ignore chỉ do lệnh
+  verification để lại thì được liệt kê cho reviewer thay vì bị từ chối.
 - Codex và Claude vẫn ghi file session của riêng chúng (`~/.codex/sessions`, `~/.claude.json`).
 - Các file trong `.ai/` ngoài `config.json` bị git-ignore và Codex ghi được; hãy coi chúng là bản
   sao tiện dụng, không phải đầu vào đáng tin cậy.

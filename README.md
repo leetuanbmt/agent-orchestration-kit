@@ -414,7 +414,7 @@ untrusted code.
   and without a `review` stage any change outside `allowed_paths` is a violation (tool caches
   excepted).
 - **Verification.** Re-run by the bridge with argv lists only (no shell operators, no paths as
-  the program), allowlisted executables and a timeout. On Linux with Landlock the checks may
+  the program), allowlisted executables and a timeout. Under Landlock (Linux) or Seatbelt (macOS) the checks may
   write only to the worktree, a private `TMPDIR` and `workflow.verify_writable`
   (`workflow.verify_sandbox`: `auto` by default, `strict` also cuts TCP, `none`); the worktree is
   diffed again afterwards and what the checks changed is judged like the agent's changes. Nothing
@@ -480,12 +480,15 @@ verification sandbox), not on a permission check inside the bridge.
 - Deny rules in `.claude/settings.json` guide Claude Code; they are not a security boundary. The
   interactive-terminal check for human-only commands can be defeated by an agent that allocates
   a pseudo-terminal.
-- Verification commands are confined only where Landlock exists (Linux 5.13+); elsewhere they run
-  with your permissions unless `verify_sandbox: strict` refuses them, and `health` stays NOT OK
-  (`verify_unconfined`) until a human accepts that with `verify_sandbox: none`. Even confined they can read
-  your files, and under `auto` they keep the network.
-- Git-ignored files are compared by size and mtime, not content; with a reviewer, changed ignored
-  files are listed for the reviewer rather than refused.
+- Verification commands are confined by Landlock (Linux 5.13+) or Seatbelt (macOS). The macOS
+  profile is best effort: it confines writes and blocks the known launch-service escapes, but it
+  allows everything else. Without either, checks run with your permissions unless
+  `verify_sandbox: strict` refuses them, and `health` stays NOT OK (`verify_unconfined`) until a
+  human accepts that with `verify_sandbox: none`. Even confined they can read your files, and
+  under `auto` they keep the network.
+- Git-ignored files are compared by size and mtime, not content. An agent's change to an ignored
+  file outside `allowed_paths` is a violation (tool caches excepted); ignored files left only by
+  verification commands are listed for the reviewer rather than refused.
 - Codex and Claude still write their own session files (`~/.codex/sessions`, `~/.claude.json`).
 - Files under `.ai/` other than `config.json` are git-ignored and writable by Codex; treat them
   as convenience copies, not trusted input.

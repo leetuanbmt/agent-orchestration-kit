@@ -25,26 +25,38 @@ commit.
 | SEC-01 (unconfined part, step 1) | High | Without Landlock, `verify_sandbox: auto` ran checks unconfined while `health` stayed OK | `health` reports the `verify_unconfined` problem (NOT OK) until a human sets `verify_sandbox: none`, which is a warning; `ok` is now derived from `problems` (`bridge/service.py`) | 36407e3 | `tests/integration/test_health_diagnostics.py` |
 | AUTH-01 | High | `env_allow` applied to agents and to verification commands alike | Verification commands ignore `env_allow`; agents keep it (`bridge/review.py`) | 36407e3 | `tests/integration/test_verification_env.py::test_verification_ignores_env_allow` |
 | UX-03 | Medium | The CLI list, the TUI and "Needs you" silently showed only the newest 200 tasks | CLI and TUI report N of M; the TUI looks up an exact task id and builds Needs you from a per-state query; `health` counts tasks with one query (`bridge/state.py`, `bridge/service.py`, `bridge/cli.py`, `bridge/render.py`, `bridge/tui.py`) | b408f25 | `tests/integration/test_task_list_limits.py` |
+| SEC-01 (unconfined part, step 2) | High | macOS had no verification sandbox | Seatbelt (`sandbox-exec`) profile confines writes to the worktree, TMPDIR and `verify_writable`; strict also denies TCP; AppleEvents, LaunchServices and `open`/`launchctl`/`osascript` are denied; `health` calls it best effort. macOS process start times come from libproc because setuid `ps` cannot run inside the sandbox (`bridge/sandbox.py`, `bridge/security.py`) | a0a2700, 9bc95d6 | `tests/unit/test_sandbox_seatbelt.py` |
+| UX-02 | Medium | The dashboard showed quota only from the bridge's own DB, so Codex rollout limits never appeared | The overview reads the newest `rate_limits` from each openai account's rollouts (30 s cache) when newer than the DB row (`bridge/progress.py`) | 6da250e | `tests/unit/test_progress_quota.py` |
+| REL-01 | Medium | The slot flock lived only in the runner, so a killed runner freed the account while its agent kept running; read-only views showed RUNNING forever | The lock fd is inherited by the agent (`pass_fds`) and `release()` unlocks explicitly; `status`/`list` carry `runner_alive` and the dashboard flags `runner_dead` with the resume command, without writing (`bridge/accounts.py`, `bridge/osutil.py`, `bridge/executor.py`, `bridge/runner.py`, `bridge/service.py`, `bridge/progress.py`, `bridge/static/app.js`) | 9f984d6, d3c9e88 | `tests/integration/test_orphan_slot.py`, `tests/integration/test_runner_liveness.py`, `tests/unit/test_progress.py::test_snapshot_dead_runner` |
+| SEC-08 | Low | With a review stage, ignored files the agent changed were only listed | An agent-written ignored file outside `allowed_paths` (tool caches excepted) is a violation in every workflow; ignored files left only by verification stay report-only with a reviewer (`bridge/review.py`, `bridge/runner.py`) | 840bba7 | `tests/integration/test_ignored_files.py` |
+| SEC-07 (untracked part) | Medium | Approval bound only the attempt's own files | Approval is refused when new untracked, non-ignored files appeared since verification, except files later attempts of other tasks recorded and protected files (`bridge/review.py`, `bridge/service.py`, `bridge/state.py`) | d6c925c | `tests/integration/test_approval_binding.py` (BIND-009..013) |
 
 ## Verification
 
-- Bridge-run full suite after the last code change (814e5c9): 640 passed, 114 skipped.
-- `QA_E2E=1 pytest tests/qa` at 86baae8: 104 passed, 2 skipped.
-- `QA_E2E=1` web suite after the UX-01 fix: 30 passed, 1 skipped; the new keyboard check fails
-  with the pre-fix `app.js` and passes with the fix.
-- `docs/audits/evidence/run_audit_repro.sh docs/audits/evidence/test_audit_2026_11_08_security.py`:
-  the reproductions for SEC-01 (forgery), SEC-02, SEC-04 (config), SEC-05, SEC-07 (HEAD) and SEC-09/10 now
-  fail, meaning the findings are gone; the others still pass (still present, see below).
+- Bridge-run full suite after the last code change (d6c925c, with every change of this pass in
+  the worktree): 689 passed, 114 skipped (macOS; the Seatbelt real-execution tests skip there
+  because the bridge's own checks already run inside Seatbelt).
+- `tests/unit/test_sandbox_seatbelt.py` run outside the nested sandbox: 14 passed.
+- `QA_E2E=1` web suite after the REL-01 dashboard change (d3c9e88): 30 passed, 1 skipped (axe-core
+  not installed).
+- `QA_E2E=1 pytest tests/qa` at d6c925c: 105 passed, 1 skipped (axe-core not installed).
+- `docs/audits/evidence/run_audit_repro.sh docs/audits/evidence/test_audit_2026_11_08_security.py`
+  at d6c925c: 8 failed, 7 passed. The reproductions for SEC-01 (forgery), SEC-02, SEC-04 (config),
+  SEC-05, SEC-07 (untracked file), SEC-08 (`test_old_sec03_with_review_stage`) and SEC-09/10 fail,
+  meaning the findings are gone. Of the ones that still pass, three are deferred or documented
+  findings: SEC-04 (`.ai/orchestrator.yaml`), the same-user TTY gate (SEC-03), and a `setsid`
+  child writing after the run (SEC-06). One is a known residual of an earlier audit:
+  `python3 -c` and `npx` remain allowlisted. The other three assert controls that work:
+  web auth, the old REL-01 git-failure path, and the SEC-10 pattern refusals.
 
 ## Not addressed on this branch
 
 | Finding | Reason |
 |---|---|
-| SEC-01 (step 2: confinement on macOS) | Needs a `sandbox-exec` profile or another confinement and a probe; step 1 makes the gap visible in `health` |
-| SEC-04 (`.ai/orchestrator.yaml` part), SEC-07 (untracked files), SEC-08 | Approval binding beyond HEAD needs a whole-worktree snapshot that ignores other tasks' changes |
+| SEC-04 (`.ai/orchestrator.yaml` part) | A tampered, git-ignored config still loads after a BLOCKED task. The fix needs a health problem plus a human-only way to accept an intended edit; deferred because the executor accounts ran out of weekly quota |
 | SEC-03, SEC-12 | Same-user human gate is a documented limitation |
 | SEC-06, SEC-11, SEC-13 | Lower severity; separate changes |
 | AUTH-04 | `*_BASE_URL` is kept on purpose for proxies |
-| PERF-01, PERF-02 | Need a benchmark before changing the snapshot cache |
-| UX-02, REL-01, BILL-01 | Design decisions (the dashboard never reads account homes) or larger changes |
+| PERF-01, PERF-02 | Need a before/after benchmark (`bench_web.py`) and a git-topology cache that leaves runner liveness out; deferred for executor quota |
+| BILL-01 | Labelling `total_cost_usd` as an estimate and warning on `budget_usd` with subscription accounts; deferred for executor quota |
 | Remaining Medium/Low findings | Out of scope for this pass; see `08-improvement-roadmap.md` |

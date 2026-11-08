@@ -122,13 +122,16 @@ are listed in the result).
 
 ### Verification sandbox
 
-Verification commands run code the executor wrote. On Linux with Landlock (kernel 5.13+) the
-bridge confines them; `agent-bridge health` shows what applies here (`verify_sandbox`).
+Verification commands run code the executor wrote. The bridge confines them with Landlock on
+Linux (kernel 5.13+) and with Seatbelt (`sandbox-exec`) on macOS; `agent-bridge health` shows
+what applies here (`verify_sandbox`). The macOS profile allows everything except writes outside
+the writable paths, AppleEvents, LaunchServices and running `open`, `launchctl` or `osascript`.
+It is best-effort confinement, not a full sandbox.
 
 | `workflow.verify_sandbox` | Effect |
 |---|---|
-| `auto` (default) | A check may write only to the worktree, a private `TMPDIR` (removed afterwards) and `verify_writable`; reads and the network are not restricted. Without Landlock (macOS, Windows, old kernels) checks run unconfined and `health` reports the `verify_unconfined` problem (NOT OK) until a human sets `none`. |
-| `strict` | As `auto`, and TCP connect/bind are denied (Landlock ABI 4+, kernel 6.7+). Without Landlock checks are refused rather than run unconfined. |
+| `auto` (default) | A check may write only to the worktree, a private `TMPDIR` (removed afterwards) and `verify_writable`; reads and the network are not restricted. Without either (Windows, old Linux kernels, or a bridge that already runs inside a sandbox) checks run unconfined and `health` reports the `verify_unconfined` problem (NOT OK) until a human sets `none`. |
+| `strict` | As `auto`, and TCP connect/bind are denied (Landlock ABI 4+, kernel 6.7+, or Seatbelt). Without a sandbox, checks are refused rather than run unconfined. |
 | `none` | No confinement, accepted by a human; `health` keeps a `verify_unconfined` warning. |
 
 Test runners that write caches outside the project need them in `verify_writable`, for example
