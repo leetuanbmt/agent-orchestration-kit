@@ -1007,14 +1007,33 @@ class Bridge:
                             now + delay + random.uniform(0, 1), slot["deadline"]))
                 else:
                     slots.pop(tid, None)
-            states = {t["id"]: t["state"] for t in self.store.workflow_tasks(wid)}
+            rows = self.store.workflow_tasks(wid)
+            states = {t["id"]: t["state"] for t in rows}
+            unreachable: dict[str, str] = {}
+            while True:
+                added = False
+                for task in rows:
+                    tid = task["id"]
+                    if states[tid] != State.BACKLOG or tid in unreachable:
+                        continue
+                    for dependency in task["spec"]["depends_on"]:
+                        if (states.get(dependency) in {State.CANCELLED, State.BLOCKED}
+                                or dependency in unreachable):
+                            unreachable[tid] = dependency
+                            added = True
+                            break
+                if not added:
+                    break
             if states and all(s == State.DONE for s in states.values()):
                 final = "DONE"
-            elif all(s in TERMINAL for s in states.values()):
+            elif all(s in TERMINAL or tid in unreachable for tid, s in states.items()):
                 final = "INCOMPLETE"
             else:
                 final = "WAITING"  # a review, a human approval or an account needs attention
-            self.store.set_workflow(wid, final, {"tasks": states, "waiting": waiting})
+            detail = {"tasks": states, "waiting": waiting}
+            if unreachable:
+                detail["unreachable"] = unreachable
+            self.store.set_workflow(wid, final, detail)
         except Exception as e:
             self.store.set_workflow(wid, "WAITING", {"error": redact(repr(e), 2000)})
         finally:

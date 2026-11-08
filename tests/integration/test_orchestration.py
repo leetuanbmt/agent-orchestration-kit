@@ -466,6 +466,38 @@ def test_bounded_rework(make_orch, fake_codex, fake_claude, monkeypatch):
     assert "src/app.py still wrong" in calls(fake_codex)[-1]["prompt"]
 
 
+# @pt.id KIT-FLOW-unreachable-dependencies
+# @pt.item Cancelled or blocked dependencies make remaining workflow tasks unreachable
+# @pt.condition A two- or three-task chain has a CANCELLED or BLOCKED root
+# @pt.expected INCOMPLETE names each unreachable task and its blocking dependency; dependents stay BACKLOG
+# @pt.target Bridge._drive
+# @pt.method integration
+# @pt.legacy WAITING with no actionable waiting detail
+@pytest.mark.parametrize("length", [2, 3])
+@pytest.mark.parametrize("root_state", [State.CANCELLED, State.BLOCKED])
+def test_unreachable_dependencies(make_orch, fake_codex, fake_claude, monkeypatch,
+                                  length, root_state):
+    monkeypatch.setenv("FAKE_CODEX_WRITE", WRITE)
+    monkeypatch.setenv("FAKE_CLAUDE_PLAN", json.dumps([
+        plan_task(objective=f"Task {i}", depends_on=[i - 1] if i else [])
+        for i in range(length)
+    ]))
+    monkeypatch.setenv("FAKE_CLAUDE_DECISION", "rework:Try again")
+    b = make_orch(CONFIG_A.replace("[plan, execute, test, review]}",
+                                   "[plan, execute, test, review], max_rework: 1}"))
+    planned = run(b.plan("Set x to 2", wait=True))
+    task_ids = [t["task_id"] for t in planned["tasks"]]
+    if root_state == State.CANCELLED:
+        run(b.cancel_task(task_ids[0], "Cancel prerequisite"))
+    wf = run(b.run_workflow(planned["workflow_id"], wait=True))
+    assert wf["state"] == "INCOMPLETE"
+    assert wf["detail"]["unreachable"] == {
+        task_ids[i]: task_ids[i - 1] for i in range(1, length)
+    }
+    assert b.store.get(task_ids[0])["state"] == root_state
+    assert all(b.store.get(tid)["state"] == State.BACKLOG for tid in task_ids[1:])
+
+
 # @pt.id KIT-REVIEW-002-reviewer-failure
 # @pt.item Reviewer agent crash
 # @pt.condition The Claude reviewer run crashes after a verified execution

@@ -24,6 +24,7 @@ def isolated_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("CODEX_HOME", raising=False)
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("AGENT_BRIDGE_HOME", raising=False)
     # The suite may itself run inside an agent the bridge started.
     monkeypatch.delenv(AGENT_ENV, raising=False)
 
