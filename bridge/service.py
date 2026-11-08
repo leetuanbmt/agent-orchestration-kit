@@ -462,10 +462,16 @@ class Bridge:
                        else storage_notice)
             warnings.append(item("storage", message, storage_fix or storage_notice))
         if "unavailable" in verify_sandbox:
-            warnings.append(item("verify_unconfined", f"verification sandbox: {verify_sandbox}",
+            problems.append(item("verify_unconfined", f"verification sandbox: {verify_sandbox}",
                                  "confine verification commands by running the bridge on a "
                                  "Linux kernel with Landlock, or have a human set "
-                                 "workflow.verify_sandbox in .ai/orchestrator.yaml"))
+                                 "workflow.verify_sandbox: none in .ai/orchestrator.yaml "
+                                 "to accept unconfined checks"))
+        elif self.orch.workflow.verify_sandbox == "none":
+            warnings.append(item("verify_unconfined", "verification checks run unconfined by choice",
+                                 "run the bridge on a Linux kernel with Landlock and set "
+                                 "workflow.verify_sandbox: auto in .ai/orchestrator.yaml "
+                                 "to confine verification commands"))
         for name in self.orch.accounts:
             try:
                 key = account_key(self._account(name))
@@ -506,8 +512,7 @@ class Bridge:
             "limits": limits,
             "active_tasks": active,
             "task_counts": counts,
-            "ok": all(a["path"] for a in adapters.values())
-                  and ("codex-cli" not in used or codex.get("logged_in", False)) and not dirty,
+            "ok": not problems,
             "problems": problems,
             "warnings": warnings,
         }

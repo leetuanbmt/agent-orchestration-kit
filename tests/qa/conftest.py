@@ -99,7 +99,7 @@ class Sandbox:
     # ---- evidence ------------------------------------------------------------------------
 
     def db(self) -> sqlite3.Connection:
-        status = self.ok("health")
+        status = self.cli("health").json
         conn = sqlite3.connect(f"file:{status['database']}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         return conn

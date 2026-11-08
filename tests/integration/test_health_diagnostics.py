@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import pytest
 
-from bridge import cli
+from bridge import cli, sandbox
 from bridge.models import Actor
 from tests.conftest import git, run
 from tests.integration.test_account_limits import FIVE_HOUR, config, seed
 from tests.integration.test_limit_failover import mark_quota
 
 PATH_WITHOUT_FAKES = "/usr/bin:/bin"
+
+
+@pytest.fixture(autouse=True)
+def available_landlock(monkeypatch):
+    monkeypatch.setattr(sandbox, "landlock_abi", lambda: 5)
 
 
 def _health(b) -> dict:
@@ -36,6 +41,46 @@ def test_healthy_has_no_problems(make_bridge):
     h = _health(make_bridge())
     assert h["ok"] is True and h["problems"] == []
     assert not [c for c in _codes(h["warnings"]) if c.startswith("account_")]
+    assert "verify_unconfined" not in _codes(h["warnings"])
+
+
+# @pt.id KIT-HEALTH-DIAG-8
+# @pt.item Unavailable verification confinement is a health problem
+# @pt.condition auto or strict mode with no Landlock available
+# @pt.expected ok is false with verify_unconfined and a fix naming both human options
+# @pt.target bridge.service.Bridge.health
+# @pt.method integration
+# @pt.legacy unavailable confinement was only a warning
+@pytest.mark.parametrize("mode", ["auto", "strict"])
+def test_unavailable_sandbox_is_problem(make_bridge, monkeypatch, mode):
+    monkeypatch.setattr(sandbox, "landlock_abi", lambda: 0)
+    b = make_bridge()
+    b.orch.workflow.verify_sandbox = mode
+    h = _health(b)
+    assert h["ok"] is False
+    assert _codes(h["problems"]) == ["verify_unconfined"]
+    problem, = h["problems"]
+    assert problem["message"] == f"verification sandbox: {sandbox.describe(mode)}"
+    assert "Linux kernel with Landlock" in problem["fix"]
+    assert "workflow.verify_sandbox: none in .ai/orchestrator.yaml" in problem["fix"]
+    assert "verify_unconfined" not in _codes(h["warnings"])
+
+
+# @pt.id KIT-HEALTH-DIAG-9
+# @pt.item Explicitly accepted unconfined verification is a warning
+# @pt.condition none mode with no Landlock available
+# @pt.expected ok stays true and verify_unconfined warns that checks run unconfined by choice
+# @pt.target bridge.service.Bridge.health
+# @pt.method integration
+# @pt.legacy none mode did not explain unconfined verification
+def test_unconfined_by_choice_is_warning(make_bridge, monkeypatch):
+    monkeypatch.setattr(sandbox, "landlock_abi", lambda: 0)
+    b = make_bridge()
+    b.orch.workflow.verify_sandbox = "none"
+    h = _health(b)
+    assert h["ok"] is True and h["problems"] == []
+    warning, = [e for e in h["warnings"] if e["code"] == "verify_unconfined"]
+    assert "checks run unconfined by choice" in warning["message"]
 
 
 # @pt.id KIT-HEALTH-DIAG-2

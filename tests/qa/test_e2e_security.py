@@ -34,7 +34,7 @@ def test_secrets_redacted_in_stored_output(sandbox: Sandbox) -> None:
         "python3 -c \"print(open('src/fixture.txt').read())\""])
     sandbox.ok("execute", task)
     stored = json.dumps(sandbox.ok("result", task))
-    database = Path(sandbox.ok("health")["database"]).read_bytes()
+    database = Path(sandbox.cli("health").json["database"]).read_bytes()
     assert "[REDACTED]" in stored
     for raw in (SECRETS["OPENAI_API_KEY"], SECRETS["GITHUB_TOKEN"], "b3BlbnNzaC1rZXktdjEAAAAABG5vbmU"):
         assert raw not in stored and raw.encode() not in database, raw
@@ -67,7 +67,7 @@ def test_verification_env_scrubbed(sandbox: Sandbox) -> None:
 def test_state_outside_worktree_and_private(sandbox: Sandbox) -> None:
     task = sandbox.create()
     sandbox.ok("execute", task)
-    health = sandbox.ok("health")
+    health = sandbox.cli("health").json
     database, state = Path(health["database"]), Path(health["state_dir"])
     assert sandbox.home / ".agent-bridge" in database.parents
     assert sandbox.root not in database.parents
@@ -150,7 +150,7 @@ def test_init_denies_human_only_commands(sandbox: Sandbox) -> None:
 # @pt.method e2e
 # @pt.legacy none
 def test_verification_cannot_write_outside(sandbox: Sandbox) -> None:
-    if "unavailable" in sandbox.ok("health")["verify_sandbox"]:
+    if "unavailable" in sandbox.cli("health").json["verify_sandbox"]:
         pytest.skip("no Landlock on this kernel: verify_sandbox auto runs checks unconfined")
     target = sandbox.home / "written-by-a-check"
     task = sandbox.create(verification_commands=[

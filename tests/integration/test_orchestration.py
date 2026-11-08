@@ -601,7 +601,8 @@ def test_client_planner(make_bridge, make_orch):
 # @pt.target Bridge.list_agents, Bridge.health
 # @pt.method integration
 # @pt.legacy none
-def test_agents_health(make_orch, fake_claude):
+def test_agents_health(make_orch, fake_claude, monkeypatch):
+    monkeypatch.setattr("bridge.service.describe_sandbox", lambda mode: "landlock ABI 5: writes confined")
     b = make_orch(CONFIG_A)
     agents = {a["agent"]: a for a in b.list_agents()["agents"]}
     assert agents["claude"]["roles"] == ["planner", "reviewer"] and not agents["claude"]["write"]

@@ -349,7 +349,7 @@ async def _verify(cmds: list[str], root: Path, cfg: BridgeConfig,
                   writable: list[str], tmp: str, results: list[dict[str, Any]]) -> None:
     # No .pyc litter from the bridge's own checks in the next attempt's baseline; temp files go
     # to a private directory removed afterwards (the only temp location a confined check has).
-    env = {**clean_env(os.environ, cfg.env_deny, cfg.env_allow), "PYTHONDONTWRITEBYTECODE": "1",
+    env = {**clean_env(os.environ, cfg.env_deny, []), "PYTHONDONTWRITEBYTECODE": "1",
            AGENT_ENV: "1", "TMPDIR": tmp, "TMP": tmp, "TEMP": tmp}
     loop = asyncio.get_running_loop()
     for cmd in cmds:
