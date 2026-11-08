@@ -101,7 +101,7 @@ def run_action(roots, pid, tid, body, runner=None, starter=None):
         allowed = state not in TERMINAL
     if not allowed:
         return 409, {"error": f"cannot {action} a task in state {state}", "state": state}
-    argv = [sys.executable, "-m", "bridge", action, tid, *args]
+    argv = [sys.executable, "-P", "-m", "bridge", action, tid, *args]
     if action in STARTABLE:
         try:
             starter(argv, root)
