@@ -28,7 +28,8 @@ agent-bridge agents                     # resolved roles, agents and availabilit
 ```
 
 `config-init` is meant to be run by a human; the kit's `.claude/settings.json` denies it to
-Claude Code.
+Claude Code. The same holds for `project-account-add`, `project-account-limits` and
+`project-account-remove`: they refuse to run without a terminal.
 
 ```yaml
 version: 1
