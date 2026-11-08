@@ -23,6 +23,23 @@ _STAGES = {"BACKLOG": "queue", "READY": "queue", "RUNNING": "build", "REWORK": "
 _ORDER = ["needs", "blocked", "failed", "paused", "review_wait"]
 _CACHE = {}
 _CACHE_LOCK = threading.Lock()
+# ponytail: Codex rollout reads have a 30 s cache ceiling per home.
+_QUOTA_CACHE = {}
+_QUOTA_CACHE_LOCK = threading.Lock()
+
+
+def _rollout_quota(home):
+    with _QUOTA_CACHE_LOCK:
+        now = time.monotonic()
+        cached = _QUOTA_CACHE.get(home)
+        if cached is not None and now - cached[0] < 30:
+            return cached[1]
+        try:
+            limits = quota.read_quota(home)
+        except Exception:
+            limits = None
+        _QUOTA_CACHE[home] = (now, limits)
+        return limits
 
 
 def project_id(root: str) -> str:
@@ -297,7 +314,7 @@ def _apply_effective_state(entry, now):
         entry["state"], entry["error"], entry["lifted"] = "available", None, lifted
 
 
-def _merge_accounts(merged, pid, data, tasks, orch, now):
+def _merge_accounts(merged, pid, data, tasks, orch, now, root=None):
     profiles, agents = _config_accounts(orch)
     names = list(profiles)
     names += [r.get("name") for r in data["accounts"]]
@@ -355,6 +372,24 @@ def _merge_accounts(merged, pid, data, tasks, orch, now):
                 entry["remaining_pct"] = quota.remaining_pct(limits, now)
             except (TypeError, ValueError, AttributeError):
                 entry["windows"], entry["remaining_pct"] = [], None
+    for name, (provider, _) in profiles.items():
+        if provider != "openai":
+            continue
+        try:
+            profile = orch.accounts[name]
+            account = accounts.resolve_profile(name, provider, profile.home, root)
+            limits = _rollout_quota(quota.codex_home_for(account))
+            ts = limits.get("observed_at") if isinstance(limits, dict) else None
+            entry = merged[name]
+            if not quota.numeric(ts) or (entry["_quota_ts"] is not None
+                                          and ts <= entry["_quota_ts"]):
+                continue
+            windows = quota.window_usage(limits, now)
+            remaining = quota.remaining_pct(limits, now)
+        except Exception:
+            continue
+        entry.update(_quota_ts=ts, _limits=limits, observed_at=ts,
+                     windows=windows, remaining_pct=remaining)
     for task in tasks:
         if task["state"] in {"RUNNING", "VERIFYING"} and task["account"] in merged:
             merged[task["account"]]["running"] += 1
@@ -416,7 +451,7 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
         tasks = _tasks(data)
         loaded = _config(root)
         project["fallback"] = _fallback(loaded[1])
-        _merge_accounts(merged_accounts, pid, data, tasks, loaded[1], now)
+        _merge_accounts(merged_accounts, pid, data, tasks, loaded[1], now, path)
         result["switches"].extend(_switches(data, pid, now))
         result["tasks"].extend({"pid": pid,
                                 "reason": pause_reason(t["failure"]) if t["state"] == "PAUSED" else None,
