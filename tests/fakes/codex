@@ -5,6 +5,7 @@ FAKE_CODEX_SCENARIO: comma-separated scenarios, one per invocation (last one rep
   ok | blocked | quota | auth | network | crash | hang | commit | outside | nojson
 FAKE_CODEX_WRITE: "path=content;path2=content" (or "@file" holding that) written on ok runs;
                   "!path" deletes path.
+FAKE_CODEX_SYMLINK: "link=target;link2=target2" creates links on ok, non-read-only runs.
 FAKE_CODEX_DIR:   scratch dir for the call counter, argv/prompt log and the hang child's pid.
 FAKE_CODEX_DECISION: "decision:notes" a reviewer run returns (default "approve:looks good").
 FAKE_CODEX_PLAN:  JSON list of tasks a planner run returns (default: one task).
@@ -78,6 +79,11 @@ def write_files():
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
+    if scenario == "ok":
+        for pair in filter(None, os.environ.get("FAKE_CODEX_SYMLINK", "").split(";")):
+            link, _, target = pair.partition("=")
+            Path(link).parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(target, link)
 
 
 def schema_keys():

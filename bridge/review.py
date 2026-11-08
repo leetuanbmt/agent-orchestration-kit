@@ -213,14 +213,31 @@ IGNORED_NOISE = [*VERIFICATION_NOISE, ".mypy_cache/**", "**/.mypy_cache/**", ".r
                  "**/.ruff_cache/**", "node_modules/.cache/**", ".coverage", "**/.coverage"]
 
 
+def escaping_symlinks(root: Path, patterns: list[str]) -> list[str]:
+    """Tracked and non-ignored untracked links covered by patterns that escape root."""
+    tracked = _git(root, "ls-files", "-s", "-z")
+    links = {entry.split("\t", 1)[1] for entry in tracked.split("\0")
+             if entry.startswith("120000 ")}
+    links.update(path for path in _git(root, "ls-files", "-o", "--exclude-standard", "-z")
+                 .split("\0") if path and (root / path).is_symlink())
+    resolved_root = root.resolve()
+    return sorted(link for link in links
+                  if (matches(link, patterns) or matches(link + "/x", patterns))
+                  and (root / link).is_symlink()
+                  and not (root / link).resolve().is_relative_to(resolved_root))
+
+
 def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig,
                      head_changed: bool, ignored: list[str] | None = None, *,
-                     enforce_ignored: bool = False) -> list[str]:
+                     enforce_ignored: bool = False, root: Path | None = None) -> list[str]:
     """Violations among changed files. Changed git-ignored files are violations when they are
     protected, and also when outside allowed_paths if `enforce_ignored` (no reviewer will read
     the evidence); otherwise they are only reported."""
     v = []
     for f in changed:
+        if (root is not None and (root / f).is_symlink()
+                and not (root / f).resolve().is_relative_to(root.resolve())):
+            v.append(f"symlink escapes the project: {f}")
         if matches(f, cfg.protected_paths):
             v.append(f"{PROTECTED_VIOLATION}{f}")
         elif matches(f, spec.get("excluded_paths", [])):

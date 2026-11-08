@@ -32,7 +32,7 @@ from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .registry import remember_project
 from .review import EvidenceError, content_hashes, current_head, diff, parse_command, protected_dirty, \
-    scope_violations, snapshot
+    escaping_symlinks, scope_violations, snapshot
 from .runner import _write_attempt_log_line as _write_attempt_log_line
 from .sandbox import describe as describe_sandbox
 from .runner import TaskRunner
@@ -544,6 +544,8 @@ class Bridge:
         try:
             s.allowed_paths = [validate_pattern(p, self.root, self.cfg.protected_paths)
                                for p in s.allowed_paths]
+            if links := escaping_symlinks(self.root, s.allowed_paths):
+                raise PathError(f"symlink escapes the project: {links[0]}")
             s.excluded_paths = [validate_pattern(p, self.root, []) for p in s.excluded_paths]
         except PathError as e:
             raise ValueError(str(e)) from e
@@ -1049,7 +1051,8 @@ class Bridge:
             changes = diff(self.root, baseline, self.cfg.protected_paths)
         except EvidenceError:
             return []
-        return scope_violations(changes["files"], row["spec"], self.cfg, changes["head_changed"])
+        return scope_violations(changes["files"], row["spec"], self.cfg,
+                                changes["head_changed"], root=self.root)
 
     @staticmethod
     def _runner_alive(row: dict[str, Any]) -> bool:
