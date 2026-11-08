@@ -7,7 +7,8 @@ import json
 import pytest
 
 from bridge.models import State, TransitionError
-from tests.conftest import run, spec
+from bridge.review import EvidenceError, current_head
+from tests.conftest import git, run, spec
 
 
 def verified_task(b, monkeypatch, **extra) -> str:
@@ -85,3 +86,83 @@ def test_old_attempt_without_hashes(make_bridge, repo, monkeypatch):
         c.execute("UPDATE attempts SET changes=? WHERE task_id=?", (json.dumps(old), t))
     assert run(b.review_task(t, "approve", "ok"))["state"] == State.DONE
     assert b.store.count_events(t, "approval_unbound") >= 1
+
+
+# @pt.id KIT-SEC-BIND-005-human-head
+# @pt.item Human approval binds to the verified HEAD
+# @pt.condition a high-risk task is APPROVED, then an empty commit moves HEAD
+# @pt.expected approval names both SHAs and remediation; the task stays APPROVED
+# @pt.target Bridge._assert_verified_content via human_approve
+# @pt.method integration
+# @pt.legacy audit SEC-07: a new commit could be approved without verification
+def test_human_approve_bound_to_head(make_bridge, repo, monkeypatch):
+    b = make_bridge()
+    t = verified_task(b, monkeypatch, risk_level="high")
+    assert run(b.review_task(t, "approve", "ok"))["state"] == State.APPROVED
+    verified_head = b.store.attempts(t)[-1]["changes"]["verified_head"]
+    git(repo, "commit", "--allow-empty", "-qm", "move HEAD")
+    head = current_head(repo)
+    assert head is not None
+    with pytest.raises(TransitionError, match="HEAD changed since verification") as exc:
+        b.human_approve(t)
+    assert verified_head[:8] in str(exc.value)
+    assert head[:8] in str(exc.value)
+    assert "restore the verified HEAD, or cancel" in str(exc.value)
+    assert b.store.get(t)["state"] == State.APPROVED
+
+
+# @pt.id KIT-SEC-BIND-006-client-head
+# @pt.item Client approval binds to the verified HEAD
+# @pt.condition a task is in REVIEW, then an empty commit moves HEAD
+# @pt.expected approval is refused with rework guidance; the task stays REVIEW
+# @pt.target Bridge._assert_verified_content via review_task
+# @pt.method integration
+# @pt.legacy audit SEC-07: a new commit could be approved without verification
+def test_client_approve_bound_to_head(make_bridge, repo, monkeypatch):
+    b = make_bridge()
+    t = verified_task(b, monkeypatch)
+    git(repo, "commit", "--allow-empty", "-qm", "move HEAD")
+    with pytest.raises(TransitionError, match="HEAD changed since verification.*send it back"):
+        run(b.review_task(t, "approve", "ok"))
+    assert b.store.get(t)["state"] == State.REVIEW
+
+
+# @pt.id KIT-SEC-BIND-007-old-head
+# @pt.item Attempts verified before HEAD binding keep working
+# @pt.condition the attempt lacks verified_head and an empty commit moves HEAD
+# @pt.expected approval goes through to DONE
+# @pt.target Bridge._assert_verified_content
+# @pt.method integration
+# @pt.legacy none
+def test_old_attempt_without_verified_head(make_bridge, repo, monkeypatch):
+    b = make_bridge()
+    t = verified_task(b, monkeypatch)
+    changes = b.store.attempts(t)[-1]["changes"]
+    del changes["verified_head"]
+    with b.store.tx() as c:
+        c.execute("UPDATE attempts SET changes=? WHERE task_id=?", (json.dumps(changes), t))
+    git(repo, "commit", "--allow-empty", "-qm", "move HEAD")
+    assert run(b.review_task(t, "approve", "ok"))["state"] == State.DONE
+
+
+# @pt.id KIT-SEC-BIND-008-head-failure
+# @pt.item HEAD lookup failures refuse approval
+# @pt.condition a verified task is in REVIEW and git cannot return HEAD
+# @pt.expected approval raises TransitionError and the task stays REVIEW
+# @pt.target Bridge._assert_verified_content
+# @pt.method integration
+# @pt.legacy none
+@pytest.mark.parametrize("raises", [False, True])
+def test_head_lookup_failure(make_bridge, monkeypatch, raises):
+    b = make_bridge()
+    t = verified_task(b, monkeypatch)
+
+    def failed_head(root):
+        if raises:
+            raise EvidenceError("git unavailable")
+        return None
+
+    monkeypatch.setattr("bridge.service.current_head", failed_head)
+    with pytest.raises(TransitionError, match="cannot read HEAD since verification"):
+        run(b.review_task(t, "approve", "ok"))
+    assert b.store.get(t)["state"] == State.REVIEW

@@ -31,7 +31,7 @@ from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, Orchestrato
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .registry import remember_project
-from .review import EvidenceError, content_hashes, diff, parse_command, protected_dirty, \
+from .review import EvidenceError, content_hashes, current_head, diff, parse_command, protected_dirty, \
     scope_violations, snapshot
 from .runner import _write_attempt_log_line as _write_attempt_log_line
 from .sandbox import describe as describe_sandbox
@@ -731,8 +731,24 @@ class Bridge:
         self._assert_verified_content(task_id, last)
 
     def _assert_verified_content(self, task_id: str, last: dict[str, Any]) -> None:
-        """Approval and closing apply to what was verified: every file the attempt touched must
-        still have its verified content. Other files (other tasks' work) do not matter."""
+        """Approval and closing bind to the verified HEAD and touched files' content."""
+        verified_head = (last.get("changes") or {}).get("verified_head")
+        if verified_head:
+            state = self.store.get(task_id)["state"]
+            fix = ("send it back (review --decision rework) and resume it to verify again"
+                   if state == State.REVIEW else
+                   "restore the verified HEAD, or cancel the task and create a new one")
+            try:
+                head = current_head(self.root)
+            except (OSError, subprocess.SubprocessError, EvidenceError) as exc:
+                raise TransitionError(f"{task_id}: cannot read HEAD since verification "
+                                      f"({verified_head[:8]}); {fix}") from exc
+            if not head:
+                raise TransitionError(f"{task_id}: cannot read HEAD since verification "
+                                      f"({verified_head[:8]}); {fix}")
+            if head != verified_head:
+                raise TransitionError(f"{task_id}: HEAD changed since verification: "
+                                      f"{verified_head[:8]} -> {head[:8]}; {fix}")
         bound = (last.get("changes") or {}).get("after_hashes")
         if bound is None:  # verified before approvals were bound to content
             self.store.log(task_id, Actor.BRIDGE, "approval_unbound",
