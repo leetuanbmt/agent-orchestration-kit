@@ -42,6 +42,10 @@ def repo(tmp_path: Path) -> Path:
     (root / ".gitignore").write_text(".env\n")
     (root / ".env").write_text("SECRET_TOKEN=abc\n")
     git(root, "init", "-q")
+    # No background gc/maintenance after commits: it races tests that copy the repo
+    # (a vanished .git/objects/maintenance.lock failed copytree on CI).
+    git(root, "config", "gc.auto", "0")
+    git(root, "config", "maintenance.auto", "false")
     git(root, "add", "-A")
     git(root, "commit", "-qm", "init")
     return root.resolve()
