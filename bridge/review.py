@@ -228,7 +228,7 @@ def escaping_symlinks(root: Path, patterns: list[str]) -> list[str]:
     return sorted(link for link in links | ignored_links
                   if any(matches(link, [pattern])
                          or (prefix and (link == prefix or link.startswith(prefix + "/")))
-                         or (not prefix and link in links)
+                         or (not prefix and (link in links or (root / link).resolve().is_dir()))
                          for pattern, prefix in prefixes)
                   and (root / link).is_symlink()
                   and not (root / link).resolve().is_relative_to(resolved_root))

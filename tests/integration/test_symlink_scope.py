@@ -103,8 +103,8 @@ def test_ignored_escape_under_prefix_rejects_creation(make_bridge, repo, tmp_pat
 
 
 # @pt.id KIT-SEC-SYMLINK-006-ignored-empty-prefix
-# @pt.item Empty-prefix globs do not cover unrelated ignored escaping links
-# @pt.condition Ignored .venv/py escapes root and only **/*.py is allowed
+# @pt.item Empty-prefix globs do not cover unrelated ignored escaping file links
+# @pt.condition Ignored .venv/py points to a file outside root and only **/*.py is allowed
 # @pt.expected Task creation succeeds
 # @pt.target bridge.review.escaping_symlinks
 # @pt.method integration
@@ -114,10 +114,29 @@ def test_ignored_escape_without_prefix_allows_creation(make_bridge, repo, tmp_pa
     git(repo, "add", ".gitignore")
     git(repo, "commit", "-qm", "Ignore virtual environment")
     outside = tmp_path / "outside"
-    outside.mkdir()
+    outside.write_text("python executable\n")
     (repo / ".venv").mkdir()
-    (repo / ".venv/py").symlink_to(outside, target_is_directory=True)
+    (repo / ".venv/py").symlink_to(outside)
     assert run(make_bridge().create_task(spec(allowed_paths=["**/*.py"])))["task_id"]
+
+
+# @pt.id KIT-SEC-SYMLINK-008-ignored-directory-empty-prefix
+# @pt.item Empty-prefix globs cover ignored escaping directory links
+# @pt.condition Ignored .venv/lib/x points to a directory outside root and **/*.py is allowed
+# @pt.expected Creation refuses the task and names .venv/lib/x
+# @pt.target bridge.review.escaping_symlinks
+# @pt.method integration
+# @pt.legacy false
+def test_ignored_directory_escape_without_prefix_rejects_creation(make_bridge, repo, tmp_path):
+    (repo / ".gitignore").write_text(".venv/\n")
+    git(repo, "add", ".gitignore")
+    git(repo, "commit", "-qm", "Ignore virtual environment")
+    outside = tmp_path / "outside_dir"
+    outside.mkdir()
+    (repo / ".venv/lib").mkdir(parents=True)
+    (repo / ".venv/lib/x").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match=r"symlink.*\.venv/lib/x"):
+        run(make_bridge().create_task(spec(allowed_paths=["**/*.py"])))
 
 
 # @pt.id KIT-SEC-SYMLINK-007-ignored-attempt
