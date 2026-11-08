@@ -320,7 +320,7 @@ function totals(members) {
 function activate(row, action) {
   attr(row, 'tabindex', '0'); row.onclick = action;
   row.onkeydown = event => {
-    if (event.target === row && ['Enter', ' '].includes(event.key)) { event.preventDefault(); action(); }
+    if (event.target === event.currentTarget && ['Enter', ' '].includes(event.key)) { event.preventDefault(); action(); }
   };
 }
 function timeCell(ts) {
