@@ -93,14 +93,15 @@ CREATE TABLE IF NOT EXISTS account_usage (
     state TEXT NOT NULL,            -- reserved | settled
     reserved_usd REAL NOT NULL DEFAULT 0,
     cost_usd REAL,
-    source TEXT,                    -- actual | estimated | unavailable
+    source TEXT,                    -- actual | reported | estimated | unavailable
     owner_pid INTEGER,
     owner_started TEXT,
     gated INTEGER NOT NULL DEFAULT 0  -- 1: charged against a budget (unknown cost blocks it)
 );
 CREATE INDEX IF NOT EXISTS idx_account_usage_key_ts ON account_usage(key, ts);
 """
-USAGE_SOURCES = {"actual", "estimated", "unavailable"}
+# actual: a known 0 (nothing ran); reported: the CLI's own list-price figure.
+USAGE_SOURCES = {"actual", "reported", "estimated", "unavailable"}
 USAGE_RETENTION = 40 * 86400  # seconds; ledger rows older than this are pruned
 
 
@@ -474,7 +475,7 @@ class Store:
                 " COALESCE(SUM(CASE WHEN state='settled' THEN cost_usd END), 0) AS spent,"
                 " COALESCE(SUM(CASE WHEN state='reserved' THEN reserved_usd END), 0) AS reserved,"
                 " COALESCE(SUM(state='settled' AND cost_usd IS NULL AND gated=1), 0) AS unknown,"
-                " COALESCE(MAX(state='settled' AND source='estimated'), 0) AS estimated,"
+                " COALESCE(MAX(state='settled' AND source IN ('estimated', 'reported')), 0) AS estimated,"
                 " COUNT(*) AS runs"
                 " FROM account_usage WHERE key=? AND ts>=?", (key, start)).fetchall()[0]
             out[period] = {"spent": float(r["spent"]), "reserved": float(r["reserved"]),

@@ -105,14 +105,22 @@ def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
 
 
 def _limit_warnings(orch: orchestrator.OrchestratorConfig) -> list[str]:
-    """Budgets that fail closed on every run whose cost is unknown."""
-    return [f"accounts.{name}.limits: budget_usd without pricing or reserve_usd: a run whose CLI "
-            "reports no cost (Codex) or that fails before reporting blocks the budget until the "
-            "period resets"
-            for name, profile in sorted(orch.accounts.items())
-            if (limits := profile.limits) is not None and limits.enabled
-            and limits.budget_usd is not None and limits.pricing is None
-            and limits.reserve_usd == 0]
+    """Budgets that fail closed on every run whose cost is unknown, and budgets on logins whose
+    costs are only list-price estimates."""
+    out = []
+    for name, profile in sorted(orch.accounts.items()):
+        limits = profile.limits
+        if limits is None or not limits.enabled or limits.budget_usd is None:
+            continue
+        if limits.pricing is None and limits.reserve_usd == 0:
+            out.append(f"accounts.{name}.limits: budget_usd without pricing or reserve_usd: a run "
+                       "whose CLI reports no cost (Codex) or that fails before reporting blocks "
+                       "the budget until the period resets")
+        if profile.provider in ("anthropic", "openai"):
+            out.append(f"accounts.{name}.limits: budget_usd counts list-price estimates (the "
+                       "CLI's total_cost_usd or your pricing), not your bill; on a subscription "
+                       "login (Pro, Max, ChatGPT) they are not charges, so use the *_pct limits")
+    return out
 
 
 def _read_spec(path: str) -> dict[str, Any]:

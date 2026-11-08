@@ -295,7 +295,8 @@ reset time.
 
 | Source | When |
 |---|---|
-| `actual` | The CLI reported a cost (Claude's `total_cost_usd`, opencode's per-step `cost`). |
+| `reported` | The CLI reported a cost (Claude's `total_cost_usd`, opencode's per-step `cost`). It is the CLI's own list-price estimate, not your bill: on a subscription login (Pro, Max, ChatGPT) it is not a charge, and `config-check` warns when such an account has `budget_usd`. |
+| `actual` | A run that never started, charged 0. |
 | `estimated` | Tokens times your `pricing`; or the `reserve_usd` charged for a run whose cost stayed unknown; or a run the provider refused (AUTH / QUOTA with no usage), charged 0. |
 | `unavailable` | No cost, no tokens and no pricing. |
 

@@ -191,7 +191,7 @@ def test_network_retries_are_charged(make_orch, fake_claude, monkeypatch):
     assert run(b.execute_task(t, wait=True))["state"] == "DONE"
     rows = _task_rows(b, t)
     assert [(r["state"], r["cost_usd"], r["source"]) for r in rows] == \
-        [("settled", 0.25, "actual")] * 2
+        [("settled", 0.25, "reported")] * 2
     assert len(events(b, t, "retry")) == 1 and len(events(b, t, "usage_recorded")) == 2
     assert events(b, t, "limit_blocked") == []
     assert len(log(fake_claude)) == 2
@@ -326,15 +326,18 @@ def test_config_check_warnings(tmp_path, monkeypatch):
 
     out = check("{budget_usd: {day: 1.0}}")
     assert out["ok"] is True and out["accounts"] == ["cl1", "cl2"]
+    estimate = ("budget_usd counts list-price estimates (the CLI's total_cost_usd or your "
+                "pricing), not your bill; on a subscription login (Pro, Max, ChatGPT) they are "
+                "not charges, so use the *_pct limits")
     assert out["warnings"] == [
         "accounts.cl1.limits: budget_usd without pricing or reserve_usd: a run whose CLI "
         "reports no cost (Codex) or that fails before reporting blocks the budget until the "
-        "period resets"]
+        "period resets", f"accounts.cl1.limits: {estimate}"]
 
     out = check("{budget_usd: {day: 1.0}, reserve_usd: 0.5}",
                 "{budget_usd: {day: 1.0}, pricing: {input_per_mtok: 1, output_per_mtok: 1}}")
-    assert "warnings" not in out
-    assert set(out) == {"ok", "source", "stages", "accounts", "agents", "roles"}
+    assert out["warnings"] == [f"accounts.cl1.limits: {estimate}", f"accounts.cl2.limits: {estimate}"]
+    assert set(out) == {"ok", "source", "stages", "accounts", "agents", "roles", "warnings"}
     out = check("{enabled: false, budget_usd: {day: 1.0}}", "{five_hour_pct: 80}")
     assert "warnings" not in out
 
