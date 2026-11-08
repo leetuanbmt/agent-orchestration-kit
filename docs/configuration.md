@@ -199,6 +199,38 @@ An account is one login with its own auth home. Projects declare accounts in
   - Never write the token into `orchestrator.yaml`. The file lives in the worktree, and agents
     can read the worktree. Claude agents are denied `.ai/orchestrator.yaml`, but Codex agents
     are not.
+- **Adding an account from the CLI.** Instead of editing `orchestrator.yaml`, a human can
+  run:
+
+  ```bash
+  agent-bridge project-account-add claude-thuyseatch --provider anthropic --credential keychain --executor
+  agent-bridge account-set-token claude-thuyseatch
+  ```
+
+  - The command writes `.ai/accounts.yaml`, which the CLI manages and git ignores. It never
+    rewrites `orchestrator.yaml`, and an entry there wins on a name clash.
+  - It declares the account with its own new `0700` home (default
+    `~/.agent-bridge/homes/<name>`, or `--home`), plus an agent `agent-<name>`. Codex and
+    Claude agents get `allow_write`.
+  - With `--executor`, the agent goes first in `roles.executor`, but after a `default:` set in
+    `orchestrator.yaml`.
+  - The merged config is validated, including the home isolation check, before anything is
+    written. `config-check` shows the result.
+  - `agent-bridge project-account-remove <name>` asks you to type the name, then removes the
+    account, its agent and the stored Keychain token. It keeps the home, which may hold a
+    login.
+  - Usage limits per provider window, at creation (`--five-hour-pct 80 --weekly-pct 90`) or
+    later:
+
+    ```bash
+    agent-bridge project-account-limits vydnt --five-hour-pct 80 --weekly-pct 90
+    agent-bridge project-account-limits vydnt --clear   # remove both
+    ```
+
+    Each value is the percent of that window used at which the account stops taking work;
+    these are `limits.five_hour_pct` and `limits.weekly_pct`. Other `limits` keys in the entry
+    are kept.
+  - All three commands are human-only and need a terminal.
 - **The same token in the macOS Keychain (`credential: keychain`).** Instead of `token_env`
   (the two cannot be combined), an `anthropic` account can keep its `setup-token` token in the
   login Keychain. A human stores it once with `agent-bridge account-set-token <name>`.
