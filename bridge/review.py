@@ -18,6 +18,7 @@ from typing import Any, TypedDict
 
 from . import osutil, sandbox
 from .config import BridgeConfig
+from .executor import AGENT_ENV
 from .models import PROTECTED_VIOLATION
 from .security import clean_env, matches, redact
 
@@ -332,7 +333,7 @@ async def _verify(cmds: list[str], root: Path, cfg: BridgeConfig,
     # No .pyc litter from the bridge's own checks in the next attempt's baseline; temp files go
     # to a private directory removed afterwards (the only temp location a confined check has).
     env = {**clean_env(os.environ, cfg.env_deny, cfg.env_allow), "PYTHONDONTWRITEBYTECODE": "1",
-           "TMPDIR": tmp, "TMP": tmp, "TEMP": tmp}
+           AGENT_ENV: "1", "TMPDIR": tmp, "TMP": tmp, "TEMP": tmp}
     loop = asyncio.get_running_loop()
     for cmd in cmds:
         if should_cancel and should_cancel():

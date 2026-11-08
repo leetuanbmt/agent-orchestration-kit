@@ -114,10 +114,22 @@ _SECRET_RES = [
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
     re.compile(r"\b(sk|rk|pk)-[A-Za-z0-9_\-]{16,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
+    re.compile(r"\b(?:sk_live_|sk_test_|rk_live_)[A-Za-z0-9]{24,}"),
+    re.compile(r"\bAIza[A-Za-z0-9_\-]{35,}"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}"),
+    re.compile(r"\bnpm_[A-Za-z0-9]{36,}"),
     re.compile(r"\bxox[abpr]-[A-Za-z0-9\-]{10,}"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{5,}"),
     re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._\-]{12,}"),
+    re.compile(
+        r'(?i)(?P<prefix>"[A-Z0-9_]*(?:api[_-]?key|token|secret|password|passwd)"\s*:\s*")'
+        r'(?:\\.|[^"\\])*(?P<suffix>")'
+    ),
+    re.compile(
+        r"(?i)(?P<prefix>\b[a-z][a-z0-9+.-]*://[^\s/:@]+:)"
+        r"[^\s/@]*(?P<suffix>@)"
+    ),
     re.compile(
         r"(?i)\b([A-Z0-9_]*(?:api[_-]?key|token|secret|password|passwd))\b(\s*[:=]\s*)"
         r"(\"[^\"]*\"|'[^']*'|[^\s,;]+)"
@@ -130,7 +142,9 @@ def redact(text: str | None, limit: int = 4000) -> str:
     if not text:
         return ""
     for rx in _SECRET_RES:
-        if rx.groups >= 3:
+        if "prefix" in rx.groupindex:
+            text = rx.sub(lambda m: f"{m.group('prefix')}[REDACTED]{m.group('suffix')}", text)
+        elif rx.groups >= 3:
             text = rx.sub(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED]", text)
         elif rx.groups == 1 and rx.pattern.startswith("(?i)\\b(bearer)"):
             text = rx.sub(lambda m: f"{m.group(1)} [REDACTED]", text)
@@ -142,7 +156,7 @@ def redact(text: str | None, limit: int = 4000) -> str:
 # Credential carriers stripped from agent and check environments whatever env_deny says; an
 # explicit env_allow entry still lets one through on purpose.
 ALWAYS_DENY_ENV = ["SSH_AUTH_SOCK", "*_DSN", "*DATABASE_URL*", "*CREDENTIALS*", "KUBECONFIG",
-                   "DOCKER_AUTH_CONFIG"]
+                   "DOCKER_AUTH_CONFIG", "*SECRET*", "*_KEY", "*_PAT", "NETRC", "*_AUTH"]
 
 
 def clean_env(env: Mapping[str, str], deny: Iterable[str], allow: Iterable[str]) -> dict[str, str]:

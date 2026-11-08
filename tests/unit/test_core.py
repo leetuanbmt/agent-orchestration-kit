@@ -136,8 +136,8 @@ def test_glob_semantics() -> None:
 
 # @pt.id KIT-UNIT-006-redaction
 # @pt.item Secret redaction in logs and evidence
-# @pt.condition OpenAI key, GitHub token, bearer header, key=value password, private key block
-# @pt.expected none of the secret values survive
+# @pt.condition provider tokens, bearer header, key=value and JSON credentials, URL password, private key block
+# @pt.expected secret values are masked while JSON keys and quotes and URL user/host survive
 # @pt.target bridge.security.redact
 # @pt.method unit
 # @pt.legacy none (new kit)
@@ -149,12 +149,22 @@ def test_redact_masks_credentials() -> None:
     for secret in ("sk-abcdefghijkl", "ghp_abcdefghij", "abc.def.ghijklmnop", "hunter2hunter",
                    "MIIE"):
         assert secret not in out
+    for key, secret in (("password", "hunter2hunter2"), ("access_token", "b" * 40),
+                        ("refresh_token", "rt_" + "a" * 40)):
+        assert redact(f'{{"{key}": "{secret}"}}') == f'{{"{key}": "[REDACTED]"}}'
+    for secret in ("sk_live_" + "a" * 24, "sk_test_" + "a" * 24,
+                   "rk_live_" + "a" * 24, "AIza" + "a" * 35,
+                   "github_pat_" + "a" * 40, "npm_" + "a" * 36):
+        assert redact(secret) == "[REDACTED]"
+    assert redact("https://user:s3cr3tpass@example.com/x") == \
+        "https://user:[REDACTED]@example.com/x"
+    assert redact("password=hunter2hunter") == "password=[REDACTED]"
     assert redact("x" * 10, limit=4) == "…xxxx"
 
 
 # @pt.id KIT-UNIT-007-env-scrub
 # @pt.item Environment passed to Codex and verification commands
-# @pt.condition env holds API keys/tokens plus PATH/HOME
+# @pt.condition default or empty deny list with credential carriers and ordinary routing/git variables
 # @pt.expected credential-shaped vars dropped unless explicitly allowed
 # @pt.target bridge.security.clean_env
 # @pt.method unit
@@ -164,6 +174,15 @@ def test_clean_env() -> None:
     cfg = BridgeConfig()
     assert clean_env(env, cfg.env_deny, []) == {"PATH": "/bin", "HOME": "/h"}
     assert "GH_TOKEN" in clean_env(env, cfg.env_deny, ["GH_TOKEN"])
+    safe = {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com",
+            "PATH": "/bin", "HOME": "/h", "ANTHROPIC_BASE_URL": "https://proxy.example.com"}
+    credentials = dict.fromkeys(
+        ["SECRET_KEY", "STRIPE_KEY", "NETRC", "PYPI_PAT", "NPM_CONFIG__AUTH", "SENTRY_AUTH",
+         "app_secret_value", "stripe_key", "pypi_pat", "netrc", "sentry_auth"], "test-value")
+    for deny in (cfg.env_deny, []):
+        assert clean_env({**safe, **credentials}, deny, []) == safe
+        assert clean_env({**safe, **credentials}, deny, ["SECRET_KEY"]) == \
+            {**safe, "SECRET_KEY": "test-value"}
 
 
 # @pt.id KIT-UNIT-008-argv-fresh-and-resume
