@@ -53,7 +53,7 @@ workflow:
 | Section | Keys |
 |---|---|
 | `version` | Must be `1`. |
-| `accounts.<id>` | `provider`: `openai`, `anthropic`, `google` or `opencode`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode accepts no `home`). `max_concurrency`: 1–8, default 1. `limits`: optional per-account limits, see [Per-account limits](#per-account-limits-opt-in). |
+| `accounts.<id>` | `provider`: `openai`, `anthropic`, `google` or `opencode`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode accepts no `home`). `max_concurrency`: 1–8, default 1. `token_env` (anthropic only): the name of a variable holding a `claude setup-token` token, see [Accounts](#accounts). `limits`: optional per-account limits, see [Per-account limits](#per-account-limits-opt-in). |
 | `agents.<id>` | `adapter`: `codex-cli`, `claude-cli`, `client`, `opencode-cli` or `agy-cli`. `account` (required except for `client`), optional `provider` (must match the adapter), `model`, `capabilities` (subset of `[read, write]`), `allow_write` (default true for `codex-cli`, false otherwise), `allow_bash` (`claude-cli` only), `timeout_s` (≥ 30), `enabled` (default true). |
 | `roles.<name>` | An agent id, or `{agents: [...], default: <agent>, strategy: ordered \| explicit \| quota, requires: read \| write}`. `default` is tried first; the other agents are fallbacks in list order. `quota` picks the eligible agent whose account has the most remaining quota (unknown quota last, ties in list order). `default` cannot be combined with `strategy: explicit` or `quota`. |
 | `routing.slot_wait_s` | 0–86400, default 1800. How long `bridge_run_workflow` keeps retrying, with backoff from 5 s to 60 s, a task whose account slots (or the worktree's writer slot) are held by another bridge process. `0` ends the workflow `WAITING` at once, as before. |
@@ -184,6 +184,21 @@ An account is one login with its own auth home. Projects declare accounts in
   home. For Codex it fails if the global `~/.codex/auth.json` changes during the login.
 - **codex-switch.** Homes made with `codex-switch home add` work as Codex accounts. codex-switch
   and claude-switch *profiles* are listed but never used, because they hold copied tokens.
+- **Claude long-lived token (`claude setup-token`).** Instead of a login in `home`, an
+  `anthropic` account can name an environment variable that holds the token:
+  `token_env: PRINTLESS_TOKEN`. The bridge reads that variable from its own environment and
+  passes it as `CLAUDE_CODE_OAUTH_TOKEN` to that account's runs only. Other accounts, and
+  verification commands, never see it.
+  - The name must end in `_TOKEN`, so the built-in `*_TOKEN` scrub keeps it away from every
+    other process.
+  - It must not be `CLAUDE_CODE_OAUTH_TOKEN` itself, because a global value would reach every
+    run.
+  - Export the variable in the shell that starts Claude Code (the MCP server inherits it) or
+    runs `agent-bridge`.
+  - While the variable is unset, the account reads as logged out.
+  - Never write the token into `orchestrator.yaml`. The file lives in the worktree, and agents
+    can read the worktree. Claude agents are denied `.ai/orchestrator.yaml`, but Codex agents
+    are not.
 
 ### Machine-wide accounts
 

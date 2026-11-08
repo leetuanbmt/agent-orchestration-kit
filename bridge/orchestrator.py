@@ -109,12 +109,21 @@ class AccountProfile(BaseModel):
     home: str | None = None
     max_concurrency: int = Field(1, ge=1, le=8)
     limits: AccountLimits | None = None
+    # The NAME of an environment variable holding a `claude setup-token` token, never the token:
+    # this file sits in the worktree, where agents can read it. The _TOKEN suffix keeps it under
+    # the built-in *_TOKEN scrub, so no agent or verification command inherits it.
+    token_env: str | None = Field(None, pattern=r"^[A-Za-z][A-Za-z0-9_]{0,57}_TOKEN$")
 
     @model_validator(mode="after")
     def _known_provider(self) -> AccountProfile:
         if self.provider not in PROVIDERS:
             raise ValueError(f"unsupported provider {self.provider!r}; supported: "
                              f"{sorted(PROVIDERS)}")
+        if self.token_env and self.provider != "anthropic":
+            raise ValueError("token_env is for anthropic accounts (claude setup-token)")
+        if self.token_env and self.token_env.upper() == "CLAUDE_CODE_OAUTH_TOKEN":
+            raise ValueError("token_env must name an account-specific variable, not "
+                             "CLAUDE_CODE_OAUTH_TOKEN itself: that one would reach every run")
         if self.home and self.provider in GLOBAL_ONLY_PROVIDERS:
             raise ValueError(f"{self.provider} accounts use the global login (no home); "
                              "log in with: opencode auth login")

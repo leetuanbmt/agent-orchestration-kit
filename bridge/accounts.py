@@ -63,16 +63,20 @@ class Account:
     name: str
     home: Path | None  # None = the provider's inherited global login, used read-only
     provider: str = "openai"
+    # Name of a variable in the bridge's own environment holding this account's Claude token
+    # (`claude setup-token`); passed to its runs only, as CLAUDE_CODE_OAUTH_TOKEN.
+    token_env: str | None = None
 
     @property
     def codex_home(self) -> Path | None:
         return self.home
 
 
-def resolve_profile(name: str, provider: str, home: str | None, root: Path | None) -> Account:
+def resolve_profile(name: str, provider: str, home: str | None, root: Path | None,
+                    token_env: str | None = None) -> Account:
     """`root` is the project the account is used from; None when registering it machine-wide."""
     if home is None:
-        return Account(name, None, provider)
+        return Account(name, None, provider, token_env)
     path = Path(home).expanduser()
     if not path.is_absolute():
         raise ValueError(f"account {name}: home must be absolute")
@@ -89,7 +93,7 @@ def resolve_profile(name: str, provider: str, home: str | None, root: Path | Non
     if shared:
         raise ValueError(f"account {name}: home must be isolated from the project and the "
                          "global login")
-    return Account(name, path, provider)
+    return Account(name, path, provider, token_env)
 
 
 def resolve(cfg: BridgeConfig, root: Path, name: str | None) -> Account:
@@ -106,10 +110,19 @@ def resolve(cfg: BridgeConfig, root: Path, name: str | None) -> Account:
                          if "isolated" in str(e) else "codex_home must be absolute") from e
 
 
+CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
+
+
 def account_env(acc: Account, base: Mapping[str, str]) -> dict[str, str]:
     env = dict(base)
     if acc.home is not None:
         env[HOME_ENV[acc.provider]] = str(acc.home)
+    if acc.token_env:
+        # Read from the bridge's environment, not `base`: scrubbing removed it there, so no
+        # other account's run (and no verification command) ever sees it.
+        env.pop(CLAUDE_TOKEN_ENV, None)
+        if token := os.environ.get(acc.token_env):
+            env[CLAUDE_TOKEN_ENV] = token
     return env
 
 
@@ -137,6 +150,8 @@ def login_status(cfg: BridgeConfig, acc: Account) -> bool | None:
         with contextlib.suppress(OSError):
             return ((acc.home or Path.home()) / AGY_TOKEN).stat().st_size > 0
         return False
+    if acc.token_env and not os.environ.get(acc.token_env):
+        return False  # its runs would silently fall back to whatever the home holds
     exe = binary(cfg, acc.provider)
     argv = {"openai": [exe, "login", "status", *codex_overrides(acc)],
             "anthropic": [exe, "auth", "status"],

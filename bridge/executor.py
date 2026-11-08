@@ -98,7 +98,7 @@ KILL_GRACE_S = 5.0
 POLL_S = 1.0
 _CLAUDE_READ_TOOLS = ["Read", "Glob", "Grep"]
 # Read denies the kit settings do not hold: the global Claude login and the project's secret files.
-_CLAUDE_SECRET_READS = ["Read(~/.claude/.credentials.json)", *(
+_CLAUDE_SECRET_READS = ["Read(~/.claude/.credentials.json)", "Read(./.ai/orchestrator.yaml)", *(
     f"Read(./{p})" for p in (".env", ".env.*", "**/.env", "**/.env.*",
                              "*.pem", "*.key", "**/*.pem", "**/*.key"))]
 # Path-scoped rules: under dontAsk, Edit/Write outside these patterns are refused (verified by
