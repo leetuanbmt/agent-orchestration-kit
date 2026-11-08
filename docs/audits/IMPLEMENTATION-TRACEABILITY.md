@@ -34,27 +34,29 @@ commit, unless its row says it was written directly by Claude while no executor 
 | BILL-01 | Medium | A CLI-reported `total_cost_usd` was stored as if it were the bill, and `budget_usd` gated subscription logins on list prices | CLI-reported costs are recorded with source `reported` and counted as estimates; `config-check` warns when `budget_usd` is set on an anthropic or openai account (`bridge/quota.py`, `bridge/state.py`, `bridge/cli.py`). Written directly by Claude (no executor quota) | 0201379 | `tests/unit/test_usage_ledger.py`, `tests/integration/test_limit_hardening.py`, `tests/unit/test_quota_limits.py` |
 | AUTH-02 | Medium | One global `CLAUDE_CODE_OAUTH_TOKEN` overrode every Claude account's login | An anthropic account may name its own `token_env` (`AGENT_BRIDGE_CLAUDE_<NAME>_TOKEN`); only that account's runs get it, and only when it looks like a `setup-token` value; a missing or wrong value reads as logged out; Claude agents cannot read `.ai/orchestrator.yaml` (`bridge/accounts.py`, `bridge/orchestrator.py`, `bridge/service.py`, `bridge/executor.py`). Written directly by Claude (no executor quota) | a5903ae, 22a0ece | `tests/unit/test_account_tokens.py` |
 | CI flake | - | `test_reassign` failed on CI when background git maintenance removed `maintenance.lock` during a copy | The repo fixture turns off `gc.auto` and `maintenance.auto` (`tests/conftest.py`) | 76769ea | CI green on 76769ea and a5903ae |
-| PERF-01, PERF-02 | Medium | Every dashboard request ran `git worktree list` and `git rev-parse` for every project | Worktree lists, store paths and the project list are cached for 10 s; task rows keep their mtime cache and runner liveness is never cached (`bridge/progress.py`). In-process measurement on this machine (49 projects, 252 tasks): `snapshot` 36 → 0 `subprocess.run` per request, p50 800 → 81 ms; `task_detail` 10 → 0, p50 192 → 14 ms. Written directly by Claude (no executor quota) | (this commit) | `tests/unit/test_progress.py::test_topology_cached_liveness_not` |
-| TEST-03 | Medium | The keyboard e2e pressed Enter before any poll had re-rendered the rows | Both Enter checks wait for an `/api/overview` response first; with the UX-01 bug put back, "Enter on a task row opens the drawer" fails | (this commit) | `tests/qa/web/dashboard.cjs` |
-| TEST-04 | Medium | Sandbox claims rested on one-off probes; nothing flagged a newer CLI | `health` warns `cli_unprobed` when codex or claude is newer than `PROBED_VERSIONS` (`bridge/service.py`, `docs/REPORT.md`). The probes themselves still need a human run with real accounts | (this commit) | `tests/integration/test_health_diagnostics.py::test_unprobed_cli_is_warning` |
+| PERF-01, PERF-02 | Medium | Every dashboard request ran `git worktree list` and `git rev-parse` for every project | Worktree lists, store paths and the project list are cached for 10 s; task rows keep their mtime cache and runner liveness is never cached (`bridge/progress.py`). In-process measurement on this machine (49 projects, 252 tasks): `snapshot` 36 → 0 `subprocess.run` per request, p50 800 → 81 ms; `task_detail` 10 → 0, p50 192 → 14 ms. Written directly by Claude (no executor quota) | b5ff913 | `tests/unit/test_progress.py::test_topology_cached_liveness_not` |
+| TEST-03 | Medium | The keyboard e2e pressed Enter before any poll had re-rendered the rows | Both Enter checks wait for an `/api/overview` response first; with the UX-01 bug put back, "Enter on a task row opens the drawer" fails | b5ff913 | `tests/qa/web/dashboard.cjs` |
+| TEST-04 | Medium | Sandbox claims rested on one-off probes; nothing flagged a newer CLI | `health` warns `cli_unprobed` when codex or claude is newer than `PROBED_VERSIONS` (`bridge/service.py`, `docs/REPORT.md`). The probes themselves still need a human run with real accounts | b5ff913 | `tests/integration/test_health_diagnostics.py::test_unprobed_cli_is_warning` |
 | TEST-01 | Medium | Confirmed findings had no regression test | Every row in this table names the test that fails without its fix; the audit repro covers the original reproductions | - | this table, `docs/audits/evidence/` |
-| FUN-03 | Low | `execute` wrote a route (agent, account, event) onto a task before checking it was READY | `execute_task` refuses a non-READY task first (`bridge/service.py`). Written directly by Claude | (P2 commit) | `tests/integration/test_orchestration.py::test_execute_terminal_task_is_not_routed` |
-| FUN-05 | Low | The first slot retry ignored a `slot_wait_s` below 5 s | The first retry is capped by the deadline (`bridge/service.py`). Written directly by Claude | (P2 commit) | `tests/integration/test_slot_wait.py::test_slot_wait_expires` |
-| CFG-04 | Low | `config-check` passed account homes that routing later refused | `config-check` runs the same isolation check and exits 1 with `errors` (`bridge/cli.py`). Written directly by Claude | (P2 commit) | `tests/integration/test_limit_hardening.py::test_config_check_rejects_shared_homes` |
-| CFG-06 | Low | A broken registry entry was reported against `.ai/orchestrator.yaml` | Errors in an account that only the registry declares name `accounts.json` (`bridge/orchestrator.py`). Written directly by Claude | (P2 commit) | `tests/unit/test_orchestrator.py::test_registry_error_names_registry_file` |
-| TEST-02 | Low | A hung test could hold a CI job for GitHub's 6-hour default | Both CI jobs have `timeout-minutes: 30` (`.github/workflows/ci.yml`) | (P2 commit) | CI |
+| FUN-03 | Low | `execute` wrote a route (agent, account, event) onto a task before checking it was READY | `execute_task` refuses a non-READY task first (`bridge/service.py`). Written directly by Claude | b5ff913 | `tests/integration/test_orchestration.py::test_execute_terminal_task_is_not_routed` |
+| FUN-05 | Low | The first slot retry ignored a `slot_wait_s` below 5 s | The first retry is capped by the deadline (`bridge/service.py`). Written directly by Claude | b5ff913 | `tests/integration/test_slot_wait.py::test_slot_wait_expires` |
+| CFG-04 | Low | `config-check` passed account homes that routing later refused | `config-check` runs the same isolation check and exits 1 with `errors` (`bridge/cli.py`). Written directly by Claude | b5ff913 | `tests/integration/test_limit_hardening.py::test_config_check_rejects_shared_homes` |
+| CFG-06 | Low | A broken registry entry was reported against `.ai/orchestrator.yaml` | Errors in an account that only the registry declares name `accounts.json` (`bridge/orchestrator.py`). Written directly by Claude | b5ff913 | `tests/unit/test_orchestrator.py::test_registry_error_names_registry_file` |
+| TEST-02 | Low | A hung test could hold a CI job for GitHub's 6-hour default | Both CI jobs have `timeout-minutes: 30` (`.github/workflows/ci.yml`) | b5ff913 | CI |
 
 ## Verification
 
-- Full suite after the last code change (2f0a631, run directly because no executor had quota):
-  693 passed, 114 skipped. Before that, the bridge-run suite at d6c925c: 689 passed, 114 skipped (macOS; the Seatbelt real-execution tests skip there
+- Full suite after the last code change (b5ff913, run directly because no executor had quota):
+  702 passed, 114 skipped, then the one failure (`test_config_init`, whose HOME was the project
+  itself, which the new CFG-04 check refuses) fixed and `tests/integration/test_setup.py` rerun:
+  17 passed. At 2f0a631: 693 passed, 114 skipped. Before that, the bridge-run suite at d6c925c: 689 passed, 114 skipped (macOS; the Seatbelt real-execution tests skip there
   because the bridge's own checks already run inside Seatbelt).
 - `tests/unit/test_sandbox_seatbelt.py` run outside the nested sandbox: 14 passed.
 - `QA_E2E=1` web suite after the REL-01 dashboard change (d3c9e88): 30 passed, 1 skipped (axe-core
   not installed).
-- `QA_E2E=1 pytest tests/qa` at d6c925c: 105 passed, 1 skipped (axe-core not installed).
+- `QA_E2E=1 pytest tests/qa` at b5ff913: 105 passed, 1 skipped (axe-core not installed). Same at d6c925c.
 - `docs/audits/evidence/run_audit_repro.sh docs/audits/evidence/test_audit_2026_11_08_security.py`
-  at 2f0a631: 9 failed, 6 passed. The reproductions for SEC-01 (forgery), SEC-02, SEC-04 (config
+  at b5ff913: 9 failed, 6 passed (same as at 2f0a631). The reproductions for SEC-01 (forgery), SEC-02, SEC-04 (config
   and `.ai/orchestrator.yaml`), SEC-05, SEC-07 (untracked file), SEC-08
   (`test_old_sec03_with_review_stage`) and SEC-09/10 fail, meaning the findings are gone. Of the
   ones that still pass, two are documented or deferred findings: the same-user TTY gate (SEC-03)
@@ -69,4 +71,12 @@ commit, unless its row says it was written directly by Claude while no executor 
 | SEC-03, SEC-12 | Same-user human gate is a documented limitation |
 | SEC-06, SEC-11, SEC-13 | Lower severity; separate changes |
 | AUTH-04 | `*_BASE_URL` is kept on purpose for proxies |
-| Remaining Medium/Low findings | Out of scope for this pass; see `08-improvement-roadmap.md` |
+| AUTH-05 | Hypothesis: whether Codex's seatbelt lets an agent read another account's home needs a probe with the real CLI and a real account; no executor quota to run it |
+| SEC-06 | `setsid` children that outlive the run are a known limit of process-group kill; tracking them needs per-platform process accounting |
+| REL-04, REL-05 | Corrupt or read-only DB handling needs a diagnosis design (`quick_check`, read-only open path), not a small patch |
+| FUN-04, FUN-06, ARC-02, REL-06 | Workflow ownership across processes and slot waiting for `plan` change the driver; separate change |
+| CFG-03, CFG-05, CFG-07 | Legacy-key warnings, `AGENT_BRIDGE_HOME` moving the registry, and an effective-config view are features |
+| PERF-03, PERF-04, ARC-03 | Cache eviction, extra indexes and schema versioning: improvements with no measured user impact at the current scale |
+| UX-04..UX-12 | Terminology and layout improvements; separate UX pass |
+| ARC-01, ARC-04, TEST-05 | Refactors; done when the code is touched for other reasons |
+| AUTH-03, AUTH-06..08, BILL-02, BILL-03 | Policy and features (apiKeyHelper, API adapters, subscription terms); project-level account management is planned separately (`docs/plans/`) |
