@@ -436,10 +436,11 @@ untrusted code.
   `claude`, `opencode` or `agy` process.
 - **Environment and output.** Credential-shaped variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`,
   `*PASSWORD*`, `AWS_*`, and always `SSH_AUTH_SOCK`, `*_DSN`, `*DATABASE_URL*`, `*CREDENTIALS*`,
-  `KUBECONFIG`, `DOCKER_AUTH_CONFIG`) are removed before an agent or verification command starts.
-  Stored output passes through secret redaction.
-- **Recursion guard.** Every agent process gets `AGENT_BRIDGE_AGENT=1`; the server, the CLI and
-  the `Bridge` Python API refuse to start under it.
+  `KUBECONFIG`, `DOCKER_AUTH_CONFIG`, `*SECRET*`, `*_KEY`, `*_PAT`, `NETRC`, `*_AUTH`) are removed
+  before an agent or verification command starts. A project's `env_deny` adds to the defaults; it
+  cannot remove them. Stored output passes through secret redaction.
+- **Recursion guard.** Every agent process and every verification command gets
+  `AGENT_BRIDGE_AGENT=1`; the server, the CLI and the `Bridge` Python API refuse to start under it.
 - **Audit.** Every transition, attempt, routing decision, review, account change and workflow
   state is an event in `bridge.db`.
 

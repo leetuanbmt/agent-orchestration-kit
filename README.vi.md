@@ -437,10 +437,11 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   sau, chỉ khi PID là process `codex`, `claude`, `opencode` hoặc `agy`.
 - **Environment và output.** Biến có dạng credential (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`,
   `*PASSWORD*`, `AWS_*`, và luôn luôn `SSH_AUTH_SOCK`, `*_DSN`, `*DATABASE_URL*`, `*CREDENTIALS*`,
-  `KUBECONFIG`, `DOCKER_AUTH_CONFIG`) bị xoá trước khi agent hoặc lệnh verification chạy. Output
-  được lưu đều đi qua bước che secret.
-- **Chống đệ quy.** Mọi process agent nhận `AGENT_BRIDGE_AGENT=1`; server, CLI và Python API
-  `Bridge` đều từ chối khởi động khi có biến này.
+  `KUBECONFIG`, `DOCKER_AUTH_CONFIG`, `*SECRET*`, `*_KEY`, `*_PAT`, `NETRC`, `*_AUTH`) bị xoá trước
+  khi agent hoặc lệnh verification chạy. `env_deny` của project được cộng thêm vào mặc định, không
+  thể bỏ chúng. Output được lưu đều đi qua bước che secret.
+- **Chống đệ quy.** Mọi process agent và mọi lệnh verification nhận `AGENT_BRIDGE_AGENT=1`; server,
+  CLI và Python API `Bridge` đều từ chối khởi động khi có biến này.
 - **Audit.** Mọi lần chuyển trạng thái, attempt, quyết định định tuyến, review, thay đổi account
   và trạng thái workflow đều là một event trong `bridge.db`.
 
