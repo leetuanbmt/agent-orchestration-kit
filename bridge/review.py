@@ -20,7 +20,7 @@ from . import osutil, sandbox
 from .config import BridgeConfig
 from .executor import AGENT_ENV
 from .models import PROTECTED_VIOLATION
-from .security import clean_env, matches, redact
+from .security import clean_env, literal_prefix, matches, redact
 
 
 class EvidenceError(RuntimeError):
@@ -214,15 +214,22 @@ IGNORED_NOISE = [*VERIFICATION_NOISE, ".mypy_cache/**", "**/.mypy_cache/**", ".r
 
 
 def escaping_symlinks(root: Path, patterns: list[str]) -> list[str]:
-    """Tracked and non-ignored untracked links covered by patterns that escape root."""
+    """Links covered by patterns that escape root; ignored links need explicit coverage."""
     tracked = _git(root, "ls-files", "-s", "-z")
     links = {entry.split("\t", 1)[1] for entry in tracked.split("\0")
              if entry.startswith("120000 ")}
     links.update(path for path in _git(root, "ls-files", "-o", "--exclude-standard", "-z")
                  .split("\0") if path and (root / path).is_symlink())
+    ignored_links = {path for path in
+                     _git(root, "ls-files", "-o", "-i", "--exclude-standard", "-z").split("\0")
+                     if path and (root / path).is_symlink()}
+    prefixes = [(pattern, literal_prefix(pattern)) for pattern in patterns]
     resolved_root = root.resolve()
-    return sorted(link for link in links
-                  if (matches(link, patterns) or matches(link + "/x", patterns))
+    return sorted(link for link in links | ignored_links
+                  if any(matches(link, [pattern])
+                         or (prefix and (link == prefix or link.startswith(prefix + "/")))
+                         or (not prefix and link in links)
+                         for pattern, prefix in prefixes)
                   and (root / link).is_symlink()
                   and not (root / link).resolve().is_relative_to(resolved_root))
 
@@ -231,8 +238,8 @@ def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig
                      head_changed: bool, ignored: list[str] | None = None, *,
                      enforce_ignored: bool = False, root: Path | None = None) -> list[str]:
     """Violations among changed files. Changed git-ignored files are violations when they are
-    protected, and also when outside allowed_paths if `enforce_ignored` (no reviewer will read
-    the evidence); otherwise they are only reported."""
+    protected or escaping symlinks, and also when outside allowed_paths if `enforce_ignored`
+    (no reviewer will read the evidence); otherwise they are only reported."""
     v = []
     for f in changed:
         if (root is not None and (root / f).is_symlink()
@@ -245,6 +252,9 @@ def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig
         elif not matches(f, spec["allowed_paths"]):
             v.append(f"outside allowed paths: {f}")
     for f in ignored or []:
+        if (root is not None and (root / f).is_symlink()
+                and not (root / f).resolve().is_relative_to(root.resolve())):
+            v.append(f"symlink escapes the project: {f}")
         if matches(f, cfg.protected_paths):
             v.append(f"{PROTECTED_VIOLATION}{f}")
         elif (enforce_ignored and not matches(f, IGNORED_NOISE)

@@ -74,6 +74,16 @@ def matches(path: str, patterns: Iterable[str]) -> bool:
     return any(_pattern_regex(p).fullmatch(path) for p in patterns)
 
 
+def literal_prefix(pattern: str) -> str:
+    """The leading path segments before the first glob segment, or an empty string."""
+    literal = []
+    for part in PurePosixPath(pattern).parts:
+        if GLOB_CHARS & set(part):
+            break
+        literal.append(part)
+    return "/".join(literal)
+
+
 def validate_pattern(pattern: str, root: Path, protected: Iterable[str]) -> str:
     """Accept a project-relative path/glob that stays inside root and is not protected."""
     p = pattern.strip()
@@ -86,12 +96,7 @@ def validate_pattern(pattern: str, root: Path, protected: Iterable[str]) -> str:
     if ".." in pure.parts:
         raise PathError(f"path traversal rejected: {pattern!r}")
     # Resolve the literal prefix so a symlinked directory cannot point outside the project.
-    literal = []
-    for part in pure.parts:
-        if GLOB_CHARS & set(part):
-            break
-        literal.append(part)
-    resolved = root.joinpath(*literal).resolve()
+    resolved = (root / literal_prefix(p)).resolve()
     if resolved != root and root not in resolved.parents:
         raise PathError(f"path escapes the project (symlink?): {pattern!r}")
     norm = str(pure)
