@@ -127,9 +127,9 @@ bridge confines them; `agent-bridge health` shows what applies here (`verify_san
 
 | `workflow.verify_sandbox` | Effect |
 |---|---|
-| `auto` (default) | A check may write only to the worktree, a private `TMPDIR` (removed afterwards) and `verify_writable`; reads and the network are not restricted. Without Landlock (macOS, Windows, old kernels) checks run unconfined. |
+| `auto` (default) | A check may write only to the worktree, a private `TMPDIR` (removed afterwards) and `verify_writable`; reads and the network are not restricted. Without Landlock (macOS, Windows, old kernels) checks run unconfined and `health` reports the `verify_unconfined` problem (NOT OK) until a human sets `none`. |
 | `strict` | As `auto`, and TCP connect/bind are denied (Landlock ABI 4+, kernel 6.7+). Without Landlock checks are refused rather than run unconfined. |
-| `none` | No confinement. |
+| `none` | No confinement, accepted by a human; `health` keeps a `verify_unconfined` warning. |
 
 Test runners that write caches outside the project need them in `verify_writable`, for example
 `verify_writable: [~/.cache/uv]` for `uv run pytest` or `[~/.npm]` for `npm test`; the check's
@@ -157,7 +157,7 @@ keys are rejected. The full file with every default is `config.example.json`;
 | `verify_allowlist` | `pytest`, `uv`, `python`, `python3`, `ruff`, `mypy`, `make`, `npm`, `npx`, `pnpm`, `yarn`, `node`, `go`, `cargo`, `git`, `true`, `false` | Executables a verification command may start. |
 | `protected_paths` | `.env*`, `*.pem`, `*.key`, `.git/**`, `.ai/**`, `.mcp.json`, `.claude/settings*.json` | Never writable by a task and never allowed in `allowed_paths`. A project value adds to these defaults; it cannot remove them. |
 | `sensitive_paths` | migrations, `auth/`, `deploy/`, `.github/workflows/`, `*secret*`, `*credential*`, `Dockerfile` | A change under these requires human approval before `DONE`. |
-| `env_deny` / `env_allow` | `*_API_KEY`, `*_TOKEN`, `*_SECRET*`, `*PASSWORD*`, `AWS_*` / none | Variables removed from agent and verification environments. A project `env_deny` adds to the defaults; it cannot remove them. |
+| `env_deny` / `env_allow` | `*_API_KEY`, `*_TOKEN`, `*_SECRET*`, `*PASSWORD*`, `AWS_*` / none | Variables removed from agent and verification environments. A project `env_deny` adds to the defaults; it cannot remove them. `env_allow` re-allows a denied variable for agent processes only, never for verification commands. |
 | `lock_dir` | `$AGENT_BRIDGE_HOME/locks` | Cross-process account slot locks, shared by every project on the machine. |
 | `accounts` / `default_account` / `auto_switch` | — | Legacy setup only. With `orchestrator.yaml`, setting `accounts` or an enabled `auto_switch` is an error. |
 

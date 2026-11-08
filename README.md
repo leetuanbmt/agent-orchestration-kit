@@ -481,7 +481,8 @@ verification sandbox), not on a permission check inside the bridge.
   interactive-terminal check for human-only commands can be defeated by an agent that allocates
   a pseudo-terminal.
 - Verification commands are confined only where Landlock exists (Linux 5.13+); elsewhere they run
-  with your permissions unless `verify_sandbox: strict` refuses them. Even confined they can read
+  with your permissions unless `verify_sandbox: strict` refuses them, and `health` stays NOT OK
+  (`verify_unconfined`) until a human accepts that with `verify_sandbox: none`. Even confined they can read
   your files, and under `auto` they keep the network.
 - Git-ignored files are compared by size and mtime, not content; with a reviewer, changed ignored
   files are listed for the reviewer rather than refused.
@@ -608,7 +609,7 @@ and rejects other `Host` headers. The threat model is in
 | `not a git repository` or `Target must be a git work tree` | The bridge only runs inside a git repository; run `git init` or change directory. |
 | `claude mcp list` shows `agent-bridge: ⏸ Pending approval` | Open `claude` in the folder once and trust it. |
 | `config-check` error | The message names the field; fix `.ai/orchestrator.yaml`. |
-| `health` reports NOT OK | An adapter CLI is missing or not logged in, or a protected file differs from `HEAD` (`protected_dirty`). `health` lists each cause with its fix under `problems`, and account QUOTA/AUTH marks under `warnings`; a human logs in or reviews that file. |
+| `health` reports NOT OK | An adapter CLI is missing or not logged in, a protected file differs from `HEAD` (`protected_dirty`), or verification would run unconfined (`verify_unconfined`, see `verify_sandbox`). `health` lists each cause with its fix under `problems`, and account QUOTA/AUTH marks under `warnings`; a human logs in or reviews that file. |
 | `no eligible executor agent (…)` | Every executor is disabled, busy or unavailable; the reasons are listed per agent. |
 | Task `PAUSED` with `QUOTA` or `AUTH` | Wait for the quota window to reset, or fix the login; then `agent-bridge account-clear <name>` if the mark remains, and resume. With quota fallback enabled, resume may move the task to another account. |
 | Task `PAUSED` with `INTERRUPTED` | The runner was stopped by a signal or died; `bridge_resume_task` continues the session, `cancel` drops it. |
