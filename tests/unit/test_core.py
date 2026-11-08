@@ -303,6 +303,41 @@ def test_kill_stale_needs_matching_start_time() -> None:
         proc.wait()
 
 
+# @pt.id KIT-UNIT-021-kill-stale-escalation
+# @pt.item Orphan cleanup escalates when SIGTERM is ignored
+# @pt.condition a process in its own group installs a SIGTERM ignore handler
+# @pt.expected kill_stale returns True and SIGKILL ends the process after the grace period
+# @pt.target bridge.executor.kill_stale
+# @pt.method unit
+# @pt.legacy kill_stale only sent SIGTERM
+def test_kill_stale_escalates_to_sigkill() -> None:
+    import signal
+    import subprocess
+    import sys
+    from bridge import osutil
+    from bridge.executor import kill_stale, process_started
+
+    if osutil.WINDOWS:
+        pytest.skip("requires POSIX process groups and SIGTERM")
+    proc = subprocess.Popen(
+        [sys.executable, "-c",
+         "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+         "print('ready', flush=True); time.sleep(60)"],
+        start_new_session=True, stdout=subprocess.PIPE, text=True)
+    try:
+        assert proc.stdout is not None
+        assert proc.stdout.readline().strip() == "ready"
+        started = process_started(proc.pid)
+        assert started
+        assert kill_stale(proc.pid, started, grace=0.5)
+        assert proc.wait(timeout=5) == -signal.SIGKILL
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)
+        if proc.stdout is not None:
+            proc.stdout.close()
+
+
 # @pt.id KIT-UNIT-012-run-failure-state
 # @pt.item Where a run that did not finish cleanly goes
 # @pt.condition each environment outcome, then timeout/crash with budget left and with the budget spent

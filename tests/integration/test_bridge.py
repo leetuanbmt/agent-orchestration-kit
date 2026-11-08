@@ -331,11 +331,15 @@ def test_concurrent_execution_conflict_and_cancel(make_bridge, fake_codex, monke
 # @pt.method integration
 # @pt.legacy none (new kit)
 def test_recovery_after_runner_death(make_bridge, fake_codex, repo, monkeypatch) -> None:
+    _recover_after_runner_death(make_bridge, fake_codex, repo, monkeypatch, max_attempts=3)
+
+
+def _recover_after_runner_death(make_bridge, fake_codex, repo, monkeypatch, max_attempts):
     import signal
     import sys
     monkeypatch.setenv("FAKE_CODEX_SCENARIO", "hang")
     b = make_bridge()
-    t = run(b.create_task(spec()))["task_id"]
+    t = run(b.create_task(spec(max_attempts=max_attempts)))["task_id"]
     import json
     path = repo / ".ai" / "config.json"
     config = json.loads(path.read_text()) if path.exists() else {}
@@ -357,15 +361,36 @@ def test_recovery_after_runner_death(make_bridge, fake_codex, repo, monkeypatch)
     runner.send_signal(signal.SIGKILL)
     runner.wait()
     assert b.store.get(t)["state"] == State.RUNNING
+    assert b.store.get(t)["attempts"] == 1
     fresh = make_bridge()
     assert fresh.recover() == [t]
     row = fresh.store.get(t)
     assert row["state"] == State.PAUSED and row["failure"].startswith("INTERRUPTED")
+    assert row["attempts"] == 0
     assert row["session_id"] and row["spec"]["objective"].startswith("Set x")
     assert fresh.store.attempts(t)[0]["outcome"] == "interrupted"
     time.sleep(0.5)
     with pytest.raises(ProcessLookupError):
         os.kill(codex_pid, 0)
+    return fresh, t
+
+
+# @pt.id KIT-INT-012-recovery-attempt-refund
+# @pt.item Interrupted recovery preserves the single-attempt budget
+# @pt.condition a runner dies with max_attempts=1; recover parks the task and the client resumes
+# @pt.expected attempts is refunded to zero and a new agent invocation reaches REVIEW
+# @pt.target bridge.service.Bridge.recover, Bridge.resume_task
+# @pt.method integration
+# @pt.legacy recovery consumed the interrupted attempt
+def test_recovery_refunds_attempt_and_resumes(make_bridge, fake_codex, repo, monkeypatch) -> None:
+    fresh, t = _recover_after_runner_death(
+        make_bridge, fake_codex, repo, monkeypatch, max_attempts=1)
+    previous_calls = len(calls(fake_codex))
+    monkeypatch.setenv("FAKE_CODEX_SCENARIO", "ok")
+    monkeypatch.setenv("FAKE_CODEX_WRITE", WRITE_OK)
+    assert run(fresh.resume_task(t, wait=True))["state"] == State.REVIEW
+    assert len(calls(fake_codex)) == previous_calls + 1
+    assert fresh.store.get(t)["attempts"] == 1
 
 
 # @pt.id KIT-INT-013-persistence

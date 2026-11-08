@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -668,13 +669,19 @@ async def kill_group(proc: asyncio.subprocess.Process) -> None:
             continue
 
 
-def kill_stale(pid: int | None, started: str | None) -> bool:
+def kill_stale(pid: int | None, started: str | None, grace: float = 5.0) -> bool:
     """Kill a leftover agent process group from a dead runner. The start time recorded at launch
     must match, so a pid the OS has since reused for another process is never touched."""
     if not pid or not started or process_started(pid) != started:
         return False
     with contextlib.suppress(ProcessLookupError, PermissionError):
         osutil.kill_group(pid, force=False)
+    deadline = time.monotonic() + grace
+    while osutil.group_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if osutil.group_alive(pid):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            osutil.kill_group(pid, force=True)
     return True
 
 

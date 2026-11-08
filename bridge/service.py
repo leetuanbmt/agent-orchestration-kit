@@ -770,7 +770,7 @@ class Bridge:
                                     failure=f"CANCELLED: {reason}"[:500])
         owner = row["runner_pid"]
         if owner != os.getpid() and not self._runner_alive(row):
-            kill_stale(row["codex_pid"], row["codex_started"])  # orphan from a dead runner
+            await asyncio.to_thread(kill_stale, row["codex_pid"], row["codex_started"])
         elif running:
             # The runner (this process or another one, e.g. a CLI `execute`) polls the state,
             # kills its agent or verification process group within ~1 s, then releases the
@@ -1047,7 +1047,8 @@ class Bridge:
             else:
                 self.store.transition(row["id"], State.PAUSED, Actor.BRIDGE,
                                       {"reason": "runner died", "killed_orphan": killed},
-                                      failure="INTERRUPTED: runner process exited during execution")
+                                      failure="INTERRUPTED: runner process exited during execution",
+                                      attempts=max(row["attempts"] - 1, 0))
             recovered.append(row["id"])
         for wf in self.store.workflows_in("PLANNING", "RUNNING"):
             owner = wf["runner_pid"]
