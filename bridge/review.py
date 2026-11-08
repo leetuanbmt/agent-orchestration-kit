@@ -236,10 +236,10 @@ def escaping_symlinks(root: Path, patterns: list[str]) -> list[str]:
 
 def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig,
                      head_changed: bool, ignored: list[str] | None = None, *,
-                     enforce_ignored: bool = False, root: Path | None = None) -> list[str]:
-    """Violations among changed files. Changed git-ignored files are violations when they are
-    protected or escaping symlinks, and also when outside allowed_paths if `enforce_ignored`
-    (no reviewer will read the evidence); otherwise they are only reported."""
+                     enforce_ignored: bool = False, root: Path | None = None,
+                     verification_ignored: list[str] | None = None) -> list[str]:
+    """Agent ignored changes gate scope; verification-only ignored changes gate when enforced.
+    Protected paths and escaping symlinks always gate, regardless of their source."""
     v = []
     for f in changed:
         if (root is not None and (root / f).is_symlink()
@@ -257,7 +257,8 @@ def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig
             v.append(f"symlink escapes the project: {f}")
         if matches(f, cfg.protected_paths):
             v.append(f"{PROTECTED_VIOLATION}{f}")
-        elif (enforce_ignored and not matches(f, IGNORED_NOISE)
+        elif ((enforce_ignored or f not in (verification_ignored or []))
+              and not matches(f, IGNORED_NOISE)
               and not matches(f, spec["allowed_paths"])):
             v.append(f"ignored file changed outside allowed paths: {f}")
     if head_changed:

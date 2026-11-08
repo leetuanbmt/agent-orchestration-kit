@@ -224,13 +224,13 @@ class TaskRunner:
                       final=res.final or {"raw": res.final_text[-3000:]}, usage=res.usage,
                       stderr_tail=res.stderr_tail, changes=changes)
 
-        # Without a review stage nobody reads the evidence, so ignored-file changes must gate.
+        # Verification-only ignored changes must gate when nobody reviews the evidence.
         enforce = "review" not in b.orch.workflow.stages
         if res.outcome != "ok":
             # An attempt that ends early is never verified, and whatever it changed becomes the
             # next attempt's baseline: changes out of scope must stop the task now.
             leftover = scope_violations(changes["files"], spec, b.cfg, changes["head_changed"],
-                                        changes["ignored_files"], enforce_ignored=enforce, root=b.root)
+                                        changes["ignored_files"], root=b.root)
             if leftover:
                 record["verification"] = {"passed": False, "scope_violations": leftover,
                                           "checks": [], "interrupted": True}
@@ -257,7 +257,7 @@ class TaskRunner:
 
         self.store.transition(task_id, State.VERIFYING, Actor.BRIDGE, {"attempt": n})
         violations = scope_violations(changes["files"], spec, b.cfg, changes["head_changed"],
-                                      changes["ignored_files"], enforce_ignored=enforce, root=b.root)
+                                      changes["ignored_files"], root=b.root)
         agent_status = (res.final or {}).get("status", "unknown")
         # Checks cannot change the outcome of a run that gave up without touching anything, and
         # can take many minutes.
@@ -283,7 +283,9 @@ class TaskRunner:
             final = recheck(b.root, before, changes, b.cfg)
             touched, later = final["files"], final["changed_by_verification"]
             violations = scope_violations(touched, spec, b.cfg, final["head_changed"],
-                                          final["ignored_files"], enforce_ignored=enforce, root=b.root)
+                                          final["ignored_files"], enforce_ignored=enforce, root=b.root,
+                                          verification_ignored=[f for f in final["ignored_files"]
+                                                                if f not in changes["ignored_files"]])
         passed, dst, failure = verdict(violations, checks, agent_status, stopped, used, max_att)
         record["verification"] = {"passed": passed, "scope_violations": violations,
                                   "checks": checks, "agent_status": agent_status,
