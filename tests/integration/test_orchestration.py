@@ -466,6 +466,38 @@ def test_bounded_rework(make_orch, fake_codex, fake_claude, monkeypatch):
     assert "src/app.py still wrong" in calls(fake_codex)[-1]["prompt"]
 
 
+# @pt.id KIT-FLOW-unreachable-dependencies
+# @pt.item Cancelled or blocked dependencies make remaining workflow tasks unreachable
+# @pt.condition A two- or three-task chain has a CANCELLED or BLOCKED root
+# @pt.expected INCOMPLETE names each unreachable task and its blocking dependency; dependents stay BACKLOG
+# @pt.target Bridge._drive
+# @pt.method integration
+# @pt.legacy WAITING with no actionable waiting detail
+@pytest.mark.parametrize("length", [2, 3])
+@pytest.mark.parametrize("root_state", [State.CANCELLED, State.BLOCKED])
+def test_unreachable_dependencies(make_orch, fake_codex, fake_claude, monkeypatch,
+                                  length, root_state):
+    monkeypatch.setenv("FAKE_CODEX_WRITE", WRITE)
+    monkeypatch.setenv("FAKE_CLAUDE_PLAN", json.dumps([
+        plan_task(objective=f"Task {i}", depends_on=[i - 1] if i else [])
+        for i in range(length)
+    ]))
+    monkeypatch.setenv("FAKE_CLAUDE_DECISION", "rework:Try again")
+    b = make_orch(CONFIG_A.replace("[plan, execute, test, review]}",
+                                   "[plan, execute, test, review], max_rework: 1}"))
+    planned = run(b.plan("Set x to 2", wait=True))
+    task_ids = [t["task_id"] for t in planned["tasks"]]
+    if root_state == State.CANCELLED:
+        run(b.cancel_task(task_ids[0], "Cancel prerequisite"))
+    wf = run(b.run_workflow(planned["workflow_id"], wait=True))
+    assert wf["state"] == "INCOMPLETE"
+    assert wf["detail"]["unreachable"] == {
+        task_ids[i]: task_ids[i - 1] for i in range(1, length)
+    }
+    assert b.store.get(task_ids[0])["state"] == root_state
+    assert all(b.store.get(tid)["state"] == State.BACKLOG for tid in task_ids[1:])
+
+
 # @pt.id KIT-REVIEW-002-reviewer-failure
 # @pt.item Reviewer agent crash
 # @pt.condition The Claude reviewer run crashes after a verified execution
@@ -569,7 +601,8 @@ def test_client_planner(make_bridge, make_orch):
 # @pt.target Bridge.list_agents, Bridge.health
 # @pt.method integration
 # @pt.legacy none
-def test_agents_health(make_orch, fake_claude):
+def test_agents_health(make_orch, fake_claude, monkeypatch):
+    monkeypatch.setattr("bridge.service.describe_sandbox", lambda mode: "landlock ABI 5: writes confined")
     b = make_orch(CONFIG_A)
     agents = {a["agent"]: a for a in b.list_agents()["agents"]}
     assert agents["claude"]["roles"] == ["planner", "reviewer"] and not agents["claude"]["write"]
@@ -618,3 +651,22 @@ def test_schema_upgrade(tmp_path):
     db.close()
     row = Store(path).get("T0001")
     assert row["account"] == "a" and row["agent"] is None and row["workflow_id"] is None
+
+
+# @pt.id KIT-AUDIT-FUN-03
+# @pt.item execute refuses a task that is not READY before routing it
+# @pt.condition an unpinned task is cancelled, then executed
+# @pt.expected TransitionError naming the state; no agent or account written and no agent_routed event
+# @pt.target bridge.service.Bridge.execute_task
+# @pt.method integration
+# @pt.legacy audit FUN-03: a terminal task was routed (agent, account and event written) before the state check
+def test_execute_terminal_task_is_not_routed(make_orch, fake_codex, fake_claude):
+    from bridge.models import TransitionError
+    b = make_orch(CONFIG_A)
+    tid = run(b.create_task(spec()))["task_id"]
+    run(b.cancel_task(tid, "not needed"))
+    with pytest.raises(TransitionError, match="CANCELLED; execute needs READY"):
+        run(b.execute_task(tid))
+    row = b.store.get(tid)
+    assert (row["agent"], row["account"]) == (None, None)
+    assert events(b, tid, "agent_routed") == []

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from bridge import progress
 from bridge.config import BridgeConfig
 from bridge.executor import AGENT_ENV
 from bridge.orchestrator import parse
@@ -24,8 +25,11 @@ def isolated_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("CODEX_HOME", raising=False)
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("AGENT_BRIDGE_HOME", raising=False)
     # The suite may itself run inside an agent the bridge started.
     monkeypatch.delenv(AGENT_ENV, raising=False)
+    # The dashboard caches git topology for seconds; every test starts from a fresh repo layout.
+    monkeypatch.setattr(progress, "_TOPOLOGY", {})
 
 
 def git(root: Path, *args: str) -> None:
@@ -41,6 +45,10 @@ def repo(tmp_path: Path) -> Path:
     (root / ".gitignore").write_text(".env\n")
     (root / ".env").write_text("SECRET_TOKEN=abc\n")
     git(root, "init", "-q")
+    # No background gc/maintenance after commits: it races tests that copy the repo
+    # (a vanished .git/objects/maintenance.lock failed copytree on CI).
+    git(root, "config", "gc.auto", "0")
+    git(root, "config", "maintenance.auto", "false")
     git(root, "add", "-A")
     git(root, "commit", "-qm", "init")
     return root.resolve()

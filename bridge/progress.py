@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -12,7 +13,7 @@ import time
 from pathlib import Path
 
 from . import accounts, config, install, orchestrator, quota, registry, storage
-from .security import redact
+from .security import redact, runner_alive
 from .executor import describe_event
 
 TASK_ID = re.compile(r"^T\d{4,}$")
@@ -20,9 +21,56 @@ WORKFLOW_ID = re.compile(r"^W\d{4,}$")
 _STAGES = {"BACKLOG": "queue", "READY": "queue", "RUNNING": "build", "REWORK": "build",
            "VERIFYING": "check", "REVIEW": "review", "APPROVED": "review", "DONE": "done",
            "CANCELLED": None}
-_ORDER = ["needs", "blocked", "failed", "paused", "review_wait"]
+_ORDER = ["needs", "runner_dead", "blocked", "failed", "paused", "review_wait"]
 _CACHE = {}
 _CACHE_LOCK = threading.Lock()
+# ponytail: Codex rollout reads have a 30 s cache ceiling per home.
+_QUOTA_CACHE = {}
+_QUOTA_CACHE_LOCK = threading.Lock()
+
+
+def _rollout_quota(home):
+    with _QUOTA_CACHE_LOCK:
+        now = time.monotonic()
+        cached = _QUOTA_CACHE.get(home)
+        if cached is not None and now - cached[0] < 30:
+            return cached[1]
+        try:
+            limits = quota.read_quota(home)
+        except Exception:
+            limits = None
+        _QUOTA_CACHE[home] = (now, limits)
+        return limits
+
+
+# ponytail: git topology (worktree lists, store paths) is cached for 10 s, so a new worktree or a
+# moved store shows up that much later. Task rows have their own mtime cache and runner liveness
+# is never cached.
+_TOPOLOGY_TTL = 10.0
+_TOPOLOGY = {}
+_TOPOLOGY_LOCK = threading.Lock()
+
+
+def _topology(key, compute):
+    now = time.monotonic()
+    with _TOPOLOGY_LOCK:
+        hit = _TOPOLOGY.get(key)
+        if hit is not None and now - hit[0] < _TOPOLOGY_TTL:
+            return hit[1]
+    value = compute()  # errors are not cached
+    with _TOPOLOGY_LOCK:
+        _TOPOLOGY[key] = (now, value)
+    return value
+
+
+def _store(root):
+    return _topology(("store", str(root)), lambda: storage.find_store(root))
+
+
+def _worktree_list(root):
+    return _topology(("worktrees", root), lambda: subprocess.run(
+        ["git", "-C", root, "worktree", "list", "--porcelain"],
+        capture_output=True, text=True, check=False).stdout)
 
 
 def project_id(root: str) -> str:
@@ -30,6 +78,10 @@ def project_id(root: str) -> str:
 
 
 def discover_roots(here: Path | None = None) -> list[str]:
+    return list(_topology(("roots", str(here)), lambda: _discover_roots(here)))
+
+
+def _discover_roots(here):
     roots = dict.fromkeys(registry.with_worktrees(
         [*accounts.known_projects(), *([str(here)] if here else [])]))
     try:
@@ -77,7 +129,7 @@ def _json(value):
 
 def _read(root):
     try:
-        path = storage.find_store(root)
+        path = _store(root)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise FileNotFoundError(root) from exc
     path = path.resolve()
@@ -114,7 +166,7 @@ def _read(root):
 
 
 def _latest_attempt(root, tid):
-    path = storage.find_store(root).resolve()
+    path = _store(root).resolve()
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     try:
@@ -163,6 +215,11 @@ def _tasks(data):
                 "updated_at": row.get("updated_at", 0), "agent": row.get("agent"),
                 "account": row.get("account"), "workflow_id": row.get("workflow_id")}
         task["command"] = _command(tid, task["state"], task["needs_human"])
+        if (task["state"] in {"RUNNING", "VERIFYING"}
+                and row.get("runner_pid") != os.getpid()
+                and not runner_alive(row.get("runner_pid"), row.get("runner_started"))):
+            task["exception"] = "runner_dead"
+            task["command"] = f"agent-bridge resume {tid}"
         result.append(task)
     return result
 
@@ -297,7 +354,7 @@ def _apply_effective_state(entry, now):
         entry["state"], entry["error"], entry["lifted"] = "available", None, lifted
 
 
-def _merge_accounts(merged, pid, data, tasks, orch, now):
+def _merge_accounts(merged, pid, data, tasks, orch, now, root=None):
     profiles, agents = _config_accounts(orch)
     names = list(profiles)
     names += [r.get("name") for r in data["accounts"]]
@@ -355,6 +412,24 @@ def _merge_accounts(merged, pid, data, tasks, orch, now):
                 entry["remaining_pct"] = quota.remaining_pct(limits, now)
             except (TypeError, ValueError, AttributeError):
                 entry["windows"], entry["remaining_pct"] = [], None
+    for name, (provider, _) in profiles.items():
+        if provider != "openai":
+            continue
+        try:
+            profile = orch.accounts[name]
+            account = accounts.resolve_profile(name, provider, profile.home, root)
+            limits = _rollout_quota(quota.codex_home_for(account))
+            ts = limits.get("observed_at") if isinstance(limits, dict) else None
+            entry = merged[name]
+            if not quota.numeric(ts) or (entry["_quota_ts"] is not None
+                                          and ts <= entry["_quota_ts"]):
+                continue
+            windows = quota.window_usage(limits, now)
+            remaining = quota.remaining_pct(limits, now)
+        except Exception:
+            continue
+        entry.update(_quota_ts=ts, _limits=limits, observed_at=ts,
+                     windows=windows, remaining_pct=remaining)
     for task in tasks:
         if task["state"] in {"RUNNING", "VERIFYING"} and task["account"] in merged:
             merged[task["account"]]["running"] += 1
@@ -416,7 +491,7 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
         tasks = _tasks(data)
         loaded = _config(root)
         project["fallback"] = _fallback(loaded[1])
-        _merge_accounts(merged_accounts, pid, data, tasks, loaded[1], now)
+        _merge_accounts(merged_accounts, pid, data, tasks, loaded[1], now, path)
         result["switches"].extend(_switches(data, pid, now))
         result["tasks"].extend({"pid": pid,
                                 "reason": pause_reason(t["failure"]) if t["state"] == "PAUSED" else None,
@@ -428,12 +503,11 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
         project["percent"] = percent(project["counts"])
         trees = []
         if not project["root_missing"]:
-            out = subprocess.run(["git", "-C", root, "worktree", "list", "--porcelain"],
-                                 capture_output=True, text=True, check=False)
-            trees = list(dict.fromkeys(line.removeprefix("worktree ") for line in out.stdout.splitlines()
+            listing = _worktree_list(root)
+            trees = list(dict.fromkeys(line.removeprefix("worktree ") for line in listing.splitlines()
                                        if line.startswith("worktree ")))
             current_tree = None
-            for line in out.stdout.splitlines():
+            for line in listing.splitlines():
                 if line.startswith("worktree "):
                     current_tree = line.removeprefix("worktree ")
                 elif not line:
@@ -530,7 +604,7 @@ def task_log(pid, tid, n, offset=0, roots=None):
     entries = []
     truncated = False
     try:
-        path = storage.find_store(root).parent / "logs" / f"{tid}-{n}.jsonl"
+        path = _store(root).parent / "logs" / f"{tid}-{n}.jsonl"
         with path.open("rb") as log:
             size = log.seek(0, 2)
             start = offset

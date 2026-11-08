@@ -64,7 +64,7 @@ def test_no_limits_records_cost(make_orch, fake_claude, monkeypatch):
     first = task(b, "Set x to 2")
     assert run(b.execute_task(first, wait=True))["state"] == "DONE"
     recorded, = events(b, first, "usage_recorded")
-    assert recorded["detail"] == {"account": "cl1", "cost_usd": 0.25, "source": "actual"}
+    assert recorded["detail"] == {"account": "cl1", "cost_usd": 0.25, "source": "reported"}
 
     monkeypatch.delenv("FAKE_CLAUDE_COST")
     second = task(b, "Set x to 2 again")
@@ -188,7 +188,7 @@ def test_daily_budget(make_orch, fake_claude, monkeypatch):
     first = task(b, "Set x to 2")
     assert run(b.execute_task(first, wait=True))["state"] == "DONE"
     recorded, = events(b, first, "usage_recorded")
-    assert recorded["detail"] == {"account": "cl1", "cost_usd": 0.6, "source": "actual"}
+    assert recorded["detail"] == {"account": "cl1", "cost_usd": 0.6, "source": "reported"}
 
     second = task(b, "Set x to 2 again", agent="claude1")
     with pytest.raises(ValueError, match="account cl1 over its configured limit: budget_usd.day"):
@@ -196,7 +196,7 @@ def test_daily_budget(make_orch, fake_claude, monkeypatch):
     assert b.store.get(second)["attempts"] == 0
     day = day_spend(b, "cl1")
     assert day["spent"] == pytest.approx(0.6) and day["reserved"] == 0
-    assert day["runs"] == 1 and day["unknown"] == 0 and day["estimated"] is False
+    assert day["runs"] == 1 and day["unknown"] == 0 and day["estimated"] is True  # CLI figure: an estimate (BILL-01)
     assert len(log(fake_claude)) == 1
 
 

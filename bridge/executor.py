@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -97,7 +98,7 @@ KILL_GRACE_S = 5.0
 POLL_S = 1.0
 _CLAUDE_READ_TOOLS = ["Read", "Glob", "Grep"]
 # Read denies the kit settings do not hold: the global Claude login and the project's secret files.
-_CLAUDE_SECRET_READS = ["Read(~/.claude/.credentials.json)", *(
+_CLAUDE_SECRET_READS = ["Read(~/.claude/.credentials.json)", "Read(./.ai/orchestrator.yaml)", *(
     f"Read(./{p})" for p in (".env", ".env.*", "**/.env", "**/.env.*",
                              "*.pem", "*.key", "**/*.pem", "**/*.key"))]
 # Path-scoped rules: under dontAsk, Edit/Write outside these patterns are refused (verified by
@@ -194,6 +195,7 @@ class RunRequest:
     deny_paths: list[str] = field(default_factory=list)
     # Directories the agent's read tools must not open: every configured account's auth home.
     read_deny: list[Path] = field(default_factory=list)
+    keep_fds: tuple[int, ...] = ()
 
 
 @dataclass
@@ -279,6 +281,9 @@ class Adapter:
             env[AGENT_ENV] = "1"
             proc = await asyncio.create_subprocess_exec(
                 *argv, cwd=self.root, env=env, **osutil.GROUP_KWARGS,
+                # ponytail: an agent can LOCK_UN its inherited fd and give up its slot;
+                # accepted quota overuse, no worse than before descriptor inheritance.
+                **({"pass_fds": req.keep_fds} if not osutil.WINDOWS else {}),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024,
             )
@@ -668,13 +673,19 @@ async def kill_group(proc: asyncio.subprocess.Process) -> None:
             continue
 
 
-def kill_stale(pid: int | None, started: str | None) -> bool:
+def kill_stale(pid: int | None, started: str | None, grace: float = 5.0) -> bool:
     """Kill a leftover agent process group from a dead runner. The start time recorded at launch
     must match, so a pid the OS has since reused for another process is never touched."""
     if not pid or not started or process_started(pid) != started:
         return False
     with contextlib.suppress(ProcessLookupError, PermissionError):
         osutil.kill_group(pid, force=False)
+    deadline = time.monotonic() + grace
+    while osutil.group_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if osutil.group_alive(pid):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            osutil.kill_group(pid, force=True)
     return True
 
 

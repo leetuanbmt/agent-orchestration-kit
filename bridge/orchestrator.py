@@ -15,6 +15,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .accounts import load_registry
+from .registry import registry_dir
 from .config import AI_DIR, BridgeConfig
 
 ORCHESTRATOR_FILE = "orchestrator.yaml"
@@ -109,12 +110,19 @@ class AccountProfile(BaseModel):
     home: str | None = None
     max_concurrency: int = Field(1, ge=1, le=8)
     limits: AccountLimits | None = None
+    # The NAME of an environment variable holding a `claude setup-token` token, never the token:
+    # this file sits in the worktree, where agents can read it. Its own namespace keeps a
+    # tampered file from pointing at another secret (GITHUB_TOKEN); the _TOKEN suffix keeps it
+    # under the built-in *_TOKEN scrub, so no agent or verification command inherits it.
+    token_env: str | None = Field(None, pattern=r"^AGENT_BRIDGE_CLAUDE_[A-Z0-9_]{1,40}_TOKEN$")
 
     @model_validator(mode="after")
     def _known_provider(self) -> AccountProfile:
         if self.provider not in PROVIDERS:
             raise ValueError(f"unsupported provider {self.provider!r}; supported: "
                              f"{sorted(PROVIDERS)}")
+        if self.token_env and self.provider != "anthropic":
+            raise ValueError("token_env is for anthropic accounts (claude setup-token)")
         if self.home and self.provider in GLOBAL_ONLY_PROVIDERS:
             raise ValueError(f"{self.provider} accounts use the global login (no home); "
                              "log in with: opencode auth login")
@@ -388,16 +396,24 @@ def parse(text: str, source: str = ORCHESTRATOR_FILE,
         raise ValueError(f"{source}: invalid YAML: {e}") from e
     if not isinstance(data, dict):
         raise ValueError(f"{source}: expected a mapping at the top level")
+    inherited = set()
     if registry:
         # Registry accounts are usable by name; the project's own declarations win.
+        inherited = set(registry) - set(data.get("accounts") or {})
         data["accounts"] = {**registry, **(data.get("accounts") or {})}
     try:
         return OrchestratorConfig.model_validate({**data, "source": source})
     except ValidationError as e:
-        problems = "; ".join(
-            f"{'.'.join(str(p) for p in err['loc']) or '<root>'}: {err['msg']}"
-            for err in e.errors())
-        raise ValueError(f"{source}: {problems}") from e
+        problems: dict[str, list[str]] = {}
+        for err in e.errors():
+            loc = err["loc"]
+            # An error in a machine-wide account belongs to the registry file, not this one.
+            where = (str(registry_dir() / "accounts.json")
+                     if len(loc) > 1 and loc[0] == "accounts" and loc[1] in inherited else source)
+            problems.setdefault(where, []).append(
+                f"{'.'.join(str(p) for p in loc) or '<root>'}: {err['msg']}")
+        raise ValueError("; ".join(f"{where}: {'; '.join(found)}"
+                                   for where, found in problems.items())) from e
 
 
 def load(root: Path, cfg: BridgeConfig) -> OrchestratorConfig:

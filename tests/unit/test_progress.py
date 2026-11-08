@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import sqlite3
 import subprocess
 import time
@@ -7,9 +8,69 @@ from types import SimpleNamespace
 
 import pytest
 
-from bridge import progress
+from bridge import progress, registry
 from bridge.models import Actor, State, TaskSpec
+from bridge.security import process_started
 from bridge.state import Store
+
+
+# @pt.id T0120-progress-runner-dead
+# @pt.item Read-only runner liveness
+# @pt.condition Active tasks have dead, missing, or current-process runner PIDs
+# @pt.expected Dead runners need resume while state and stage stay unchanged
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy none
+@pytest.mark.parametrize("state,stage", [("RUNNING", "build"), ("VERIFYING", "check")])
+def test_snapshot_dead_runner(repo, store, state, stage):
+    dead = add(store, state)
+    missing = add(store, state)
+    owned = add(store, state)
+    store.update(dead, runner_pid=2_147_483_647, runner_started="dead runner")
+    store.update(owned, runner_pid=os.getpid(), runner_started="different start")
+    before = store.db.total_changes
+    rows = store.list()
+    snap = progress.snapshot([str(repo)], now=1000)
+    attention = {task["task_id"]: task for task in snap["attention"]}
+    for tid in (dead, missing):
+        assert attention[tid]["kind"] == "runner_dead"
+        assert attention[tid]["command"] == f"agent-bridge resume {tid}"
+        detail = progress.task_detail(progress.project_id(str(repo)), tid, [str(repo)])
+        assert (detail["state"], detail["stage"]) == (state, stage)
+    assert owned not in attention
+    assert {task["task_id"] for task in snap["running"]} == {dead, missing, owned}
+    assert store.list() == rows
+    assert store.db.total_changes == before
+
+
+# @pt.id PERF-01-topology-cache
+# @pt.item Dashboard requests reuse git topology but never cached liveness
+# @pt.condition two snapshots and a task detail within the TTL; the runner dies between them; then the TTL passes
+# @pt.expected no git subprocess after the first request, the dead runner still shows at once, and git runs again after the TTL
+# @pt.target bridge.progress.snapshot, task_detail
+# @pt.method unit
+# @pt.legacy audit PERF-01/02: three git calls per project on every request
+def test_topology_cached_liveness_not(repo, store, monkeypatch):
+    registry.remember_project(repo)
+    tid = add(store, "RUNNING")
+    store.update(tid, runner_pid=os.getpid(), runner_started=process_started(os.getpid()))
+    calls = []
+    real = subprocess.run
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a) or real(*a, **k))
+    clock = [100.0]
+    monkeypatch.setattr(progress.time, "monotonic", lambda: clock[0])
+    pid = progress.project_id(str(repo))
+    progress.snapshot()
+    first = len(calls)
+    assert first > 0
+    store.update(tid, runner_pid=2_147_483_647, runner_started="dead runner")
+    snap = progress.snapshot()
+    assert progress.task_detail(pid, tid) is not None
+    assert len(calls) == first  # topology came from the cache
+    assert {t["task_id"]: t["kind"] for t in snap["attention"]}[tid] == "runner_dead"
+    clock[0] += progress._TOPOLOGY_TTL + 1
+    progress.snapshot()
+    assert len(calls) > first
 
 
 # @pt.id T0048-log-cursor

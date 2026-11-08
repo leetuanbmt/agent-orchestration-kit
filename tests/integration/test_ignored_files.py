@@ -1,4 +1,4 @@
-"""Changes under git-ignored paths are visible, and gate when nobody reviews (audit SEC-03)."""
+"""Ignored agent changes gate scope; reviewed verification artifacts remain report-only."""
 
 from __future__ import annotations
 
@@ -38,17 +38,60 @@ def test_ignored_write_gates_without_review(repo, fake_codex, monkeypatch):
 # @pt.id KIT-SEC-IGN-002-reviewed
 # @pt.item An ignored-path write in a workflow with a reviewer
 # @pt.condition the default workflow (client reviewer); the agent writes build/out.js
-# @pt.expected it is listed in changes.ignored_files for the reviewer but is not a violation; the task reaches REVIEW
+# @pt.expected it is listed in changes.ignored_files and is a scope violation; the task reaches REWORK
 # @pt.target bridge.review.diff, TaskRunner._run_inner
 # @pt.method integration
-# @pt.legacy the write was invisible to the reviewer
-def test_ignored_write_reported_with_review(make_bridge, repo, monkeypatch):
+# @pt.legacy SEC-08: reviewed workflows only reported agent ignored writes
+def test_ignored_write_gates_with_review(make_bridge, repo, monkeypatch):
     ignore_build(repo)
     monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n;build/out.js=1")
     b = make_bridge()
     t = run(b.create_task(spec()))["task_id"]
+    assert run(b.execute_task(t, wait=True))["state"] == State.REWORK
+    a = b.store.attempts(t)[-1]
+    assert a["changes"]["ignored_files"] == ["build/out.js"]
+    assert a["verification"]["scope_violations"] == [
+        "ignored file changed outside allowed paths: build/out.js"]
+
+
+# @pt.id KIT-SEC-IGN-004-reviewed-allowed
+# @pt.item An allowed ignored-path write with a reviewer
+# @pt.condition the agent writes build/out.js; build/** is allowed in the reviewed workflow
+# @pt.expected the ignored write is reported without scope violations; the task reaches REVIEW
+# @pt.target bridge.review.scope_violations, TaskRunner._run_inner
+# @pt.method integration
+# @pt.legacy none
+def test_allowed_ignored_write_with_review(make_bridge, repo, monkeypatch):
+    ignore_build(repo)
+    monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n;build/out.js=1")
+    b = make_bridge()
+    t = run(b.create_task(spec(allowed_paths=["src/**", "build/**"])))["task_id"]
     assert run(b.execute_task(t, wait=True))["state"] == State.REVIEW
-    assert b.store.attempts(t)[-1]["changes"]["ignored_files"] == ["build/out.js"]
+    a = b.store.attempts(t)[-1]
+    assert a["changes"]["ignored_files"] == ["build/out.js"]
+    assert a["verification"]["scope_violations"] == []
+
+
+# @pt.id KIT-SEC-IGN-005-reviewed-verification
+# @pt.item An ignored non-noise artifact created only by verification with a reviewer
+# @pt.condition the agent changes src/app.py; a verification command creates build/report.txt
+# @pt.expected the artifact is reported in changed_by_verification without scope violations; the task reaches REVIEW
+# @pt.target bridge.review.recheck, bridge.review.scope_violations, TaskRunner._run_inner
+# @pt.method integration
+# @pt.legacy SEC-08: verification artifacts must remain report-only with review
+def test_verification_ignored_write_reported_with_review(make_bridge, repo, monkeypatch):
+    ignore_build(repo)
+    monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n")
+    b = make_bridge()
+    command = ('python3 -c "from pathlib import Path; Path(\'build\').mkdir(); '
+               'Path(\'build/report.txt\').write_text(\'report\')"')
+    t = run(b.create_task(spec(verification_commands=[command])))["task_id"]
+    assert run(b.execute_task(t, wait=True))["state"] == State.REVIEW
+    a = b.store.attempts(t)[-1]
+    assert a["changes"]["ignored_files"] == []
+    assert a["verification"]["changed_by_verification"] == ["build/report.txt"]
+    assert a["verification"]["scope_violations"] == []
+    assert (repo / "build/report.txt").read_text() == "report"
 
 
 # @pt.id KIT-SEC-IGN-003-protected-ignored

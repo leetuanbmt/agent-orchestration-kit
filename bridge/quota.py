@@ -174,9 +174,10 @@ def estimate_cost(usage: dict | None, pricing: TokenPricing | None) -> float | N
 
 def run_cost(cost_usd: object, usage: dict | None,
              pricing: TokenPricing | None) -> tuple[float | None, str]:
-    """A run's cost and its source: provider-reported, estimated from tokens, or unknown."""
+    """A run's cost and its source: CLI-reported, estimated from tokens, or unknown. A CLI's
+    figure (Claude's total_cost_usd) is its own list-price estimate, not a bill: `reported`."""
     if numeric(cost_usd) and cost_usd >= 0:
-        return float(cost_usd), "actual"
+        return float(cost_usd), "reported"
     estimate = estimate_cost(usage, pricing)
     if estimate is not None:
         return estimate, "estimated"

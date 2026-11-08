@@ -59,7 +59,7 @@ def test_review_approve(env):
     fakes = Fakes(stdout='{"state": "DONE"}')
     status, body = act(env, {"action": "review", "decision": "approve", "notes": "ok"}, fakes)
     assert status == 200 and body == {"ok": True, "action": "review", "result": {"state": "DONE"}}
-    assert fakes.runs == [([sys.executable, "-m", "bridge", "review", "T0001", "--decision", "approve",
+    assert fakes.runs == [([sys.executable, "-P", "-m", "bridge", "review", "T0001", "--decision", "approve",
                             "--notes", "ok"], str(env))]
     assert not fakes.starts
 
@@ -105,7 +105,36 @@ def test_cancel(env):
     fakes = Fakes(stdout="done")
     status, body = act(env, {"action": "cancel", "reason": "no longer needed"}, fakes)
     assert status == 200 and body["result"] is None
-    assert fakes.runs[0][0][3:] == ["cancel", "T0001", "--reason", "no longer needed"]
+    assert fakes.runs[0][0] == [sys.executable, "-P", "-m", "bridge", "cancel", "T0001",
+                                "--reason", "no longer needed"]
+
+
+# @pt.id T0099-worktree-package
+# @pt.item Web actions use the installed kit
+# @pt.condition A project contains a bridge package whose entry point writes a marker
+# @pt.expected Cancel succeeds through the installed kit and the marker is absent
+# @pt.target bridge.webactions.run_action
+# @pt.method integration
+# @pt.legacy none
+def test_worktree_bridge_package_is_not_executed(env):
+    package = env / "bridge"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    marker = env / "shadow-executed"
+    (package / "__main__.py").write_text(
+        "from pathlib import Path\nPath('shadow-executed').write_text('executed')\n")
+
+    status, _ = webactions.run_action(
+        [str(env)], progress.project_id(str(env)), "T0001",
+        {"action": "cancel", "reason": "security regression"})
+
+    assert not marker.exists()
+    assert status == 200
+    store = Store(env / ".git/agent-bridge/bridge.db")
+    try:
+        assert store.get("T0001")["state"] == "CANCELLED"
+    finally:
+        store.db.close()
 
 
 # @pt.id T0082-start
@@ -122,7 +151,8 @@ def test_execute_and_resume(env):
     set_state(env, "REWORK")
     assert act(env, {"action": "resume", "feedback": "try again"}, fakes)[0] == 202
     assert act(env, {"action": "resume"}, fakes)[0] == 202
-    assert [argv[3:] for argv, _ in fakes.starts] == [
+    assert all(argv[:4] == [sys.executable, "-P", "-m", "bridge"] for argv, _ in fakes.starts)
+    assert [argv[4:] for argv, _ in fakes.starts] == [
         ["execute", "T0001"], ["resume", "T0001", "--feedback", "try again"], ["resume", "T0001"]]
     for state in ("FAILED", "PAUSED"):
         set_state(env, state)
@@ -346,7 +376,7 @@ def test_review_decisions(env, decision):
     fakes = Fakes(stdout='{"ok": true}')
     status, result = act(env, {"action": "review", "decision": decision, "notes": "Reviewed"}, fakes)
     assert status == 200 and result["result"] == {"ok": True}
-    assert fakes.runs[0][0][5:] == ["--decision", decision, "--notes", "Reviewed"]
+    assert fakes.runs[0][0][6:] == ["--decision", decision, "--notes", "Reviewed"]
 
 
 def test_server_environment_does_not_gate_caller(env, monkeypatch):

@@ -105,14 +105,22 @@ def _login(cfg: Any, acc: Any, device_auth: bool) -> Any:
 
 
 def _limit_warnings(orch: orchestrator.OrchestratorConfig) -> list[str]:
-    """Budgets that fail closed on every run whose cost is unknown."""
-    return [f"accounts.{name}.limits: budget_usd without pricing or reserve_usd: a run whose CLI "
-            "reports no cost (Codex) or that fails before reporting blocks the budget until the "
-            "period resets"
-            for name, profile in sorted(orch.accounts.items())
-            if (limits := profile.limits) is not None and limits.enabled
-            and limits.budget_usd is not None and limits.pricing is None
-            and limits.reserve_usd == 0]
+    """Budgets that fail closed on every run whose cost is unknown, and budgets on logins whose
+    costs are only list-price estimates."""
+    out = []
+    for name, profile in sorted(orch.accounts.items()):
+        limits = profile.limits
+        if limits is None or not limits.enabled or limits.budget_usd is None:
+            continue
+        if limits.pricing is None and limits.reserve_usd == 0:
+            out.append(f"accounts.{name}.limits: budget_usd without pricing or reserve_usd: a run "
+                       "whose CLI reports no cost (Codex) or that fails before reporting blocks "
+                       "the budget until the period resets")
+        if profile.provider in ("anthropic", "openai"):
+            out.append(f"accounts.{name}.limits: budget_usd counts list-price estimates (the "
+                       "CLI's total_cost_usd or your pricing), not your bill; on a subscription "
+                       "login (Pro, Max, ChatGPT) they are not charges, so use the *_pct limits")
+    return out
 
 
 def _read_spec(path: str) -> dict[str, Any]:
@@ -178,6 +186,14 @@ async def _run(args: argparse.Namespace) -> Any:
             "roles": {r: orch.role(r).agents for r in orch.roles}}
         if warnings := _limit_warnings(orch):
             out["warnings"] = warnings
+        errors = []
+        for name in sorted(orch.accounts):
+            try:  # the same isolation check routing applies, so a bad home fails here first
+                resolve_account(orch, load_config(root), root, name)
+            except ValueError as e:
+                errors.append(str(e))
+        if errors:
+            out |= {"ok": False, "errors": errors}
         return out
     if args.cmd == "config-init" and args.example is None:
         for path in sorted(EXAMPLES.glob("*.yaml")):
@@ -282,6 +298,7 @@ async def _run(args: argparse.Namespace) -> Any:
         case "result":
             return await b.task_result(args.task_id)
         case "list":
+            args.task_total = await b.count_tasks(args.state)
             return await b.list_tasks(args.state, args.limit)
         case "agents":
             return b.list_agents()
@@ -464,17 +481,21 @@ def main(argv: list[str] | None = None) -> None:
             console = Console()
             extra = ({"width": console.width, "show_all": args.all}
                      if args.cmd == "account-list" else
-                     {"project": str(find_root())} if args.cmd == "list" else {})
+                     {"project": str(find_root()), "total": args.task_total}
+                     if args.cmd == "list" else {})
             console.print(getattr(render, view)(out, **extra))
         else:
             print(dumps(out))
+            if args.cmd == "list" and len(out) < args.task_total:
+                from .render import task_list_notice
+                print(task_list_notice(len(out), args.task_total), file=sys.stderr)
     if args.cmd == "storage" and any(e["status"] in ("failed", "corrupt", "changed")
                                      for e in out.get("sources", []) + out.get("entries", [])):
         raise SystemExit(1)
     if _signalled:
         raise SystemExit(128 + _signalled[0])  # the run was stopped; its task is PAUSED
-    if args.cmd == "health" and not out["ok"]:
-        raise SystemExit(1)  # scripts and CI can gate on `agent-bridge health`
+    if args.cmd in ("health", "config-check") and not out["ok"]:
+        raise SystemExit(1)  # scripts and CI can gate on both
 
 
 if __name__ == "__main__":

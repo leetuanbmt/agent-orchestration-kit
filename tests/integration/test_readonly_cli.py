@@ -24,6 +24,7 @@ def _cli(capsys, *args):
 # @pt.legacy none
 @pytest.mark.parametrize("command", ["health", "list", "agents", "account-list"])
 def test_fresh_views(repo, fake_codex, tmp_path, monkeypatch, capsys, command):
+    monkeypatch.setattr("bridge.service.describe_sandbox", lambda mode: "landlock ABI 5: writes confined")
     home = tmp_path / "bridge-home"
     monkeypatch.setenv("AGENT_BRIDGE_HOME", str(home))
     monkeypatch.setenv("BRIDGE_PROJECT_ROOT", str(repo))

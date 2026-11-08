@@ -41,6 +41,13 @@ def lock_nonblocking(handle):
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
+def unlock(handle):
+    if not WINDOWS:
+        import fcntl
+
+        fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def kill_group(pid: int, force: bool = False):
     if not WINDOWS:
         os.killpg(pid, signal.SIGKILL if force else signal.SIGTERM)

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ctypes
+import sys
+import time
 import fnmatch
 import functools
 import json
@@ -74,6 +77,16 @@ def matches(path: str, patterns: Iterable[str]) -> bool:
     return any(_pattern_regex(p).fullmatch(path) for p in patterns)
 
 
+def literal_prefix(pattern: str) -> str:
+    """The leading path segments before the first glob segment, or an empty string."""
+    literal = []
+    for part in PurePosixPath(pattern).parts:
+        if GLOB_CHARS & set(part):
+            break
+        literal.append(part)
+    return "/".join(literal)
+
+
 def validate_pattern(pattern: str, root: Path, protected: Iterable[str]) -> str:
     """Accept a project-relative path/glob that stays inside root and is not protected."""
     p = pattern.strip()
@@ -86,12 +99,7 @@ def validate_pattern(pattern: str, root: Path, protected: Iterable[str]) -> str:
     if ".." in pure.parts:
         raise PathError(f"path traversal rejected: {pattern!r}")
     # Resolve the literal prefix so a symlinked directory cannot point outside the project.
-    literal = []
-    for part in pure.parts:
-        if GLOB_CHARS & set(part):
-            break
-        literal.append(part)
-    resolved = root.joinpath(*literal).resolve()
+    resolved = (root / literal_prefix(p)).resolve()
     if resolved != root and root not in resolved.parents:
         raise PathError(f"path escapes the project (symlink?): {pattern!r}")
     norm = str(pure)
@@ -114,10 +122,22 @@ _SECRET_RES = [
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
     re.compile(r"\b(sk|rk|pk)-[A-Za-z0-9_\-]{16,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
+    re.compile(r"\b(?:sk_live_|sk_test_|rk_live_)[A-Za-z0-9]{24,}"),
+    re.compile(r"\bAIza[A-Za-z0-9_\-]{35,}"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}"),
+    re.compile(r"\bnpm_[A-Za-z0-9]{36,}"),
     re.compile(r"\bxox[abpr]-[A-Za-z0-9\-]{10,}"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{5,}"),
     re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._\-]{12,}"),
+    re.compile(
+        r'(?i)(?P<prefix>"[A-Z0-9_]*(?:api[_-]?key|token|secret|password|passwd)"\s*:\s*")'
+        r'(?:\\.|[^"\\])*(?P<suffix>")'
+    ),
+    re.compile(
+        r"(?i)(?P<prefix>\b[a-z][a-z0-9+.-]*://[^\s/:@]+:)"
+        r"[^\s/@]*(?P<suffix>@)"
+    ),
     re.compile(
         r"(?i)\b([A-Z0-9_]*(?:api[_-]?key|token|secret|password|passwd))\b(\s*[:=]\s*)"
         r"(\"[^\"]*\"|'[^']*'|[^\s,;]+)"
@@ -130,7 +150,9 @@ def redact(text: str | None, limit: int = 4000) -> str:
     if not text:
         return ""
     for rx in _SECRET_RES:
-        if rx.groups >= 3:
+        if "prefix" in rx.groupindex:
+            text = rx.sub(lambda m: f"{m.group('prefix')}[REDACTED]{m.group('suffix')}", text)
+        elif rx.groups >= 3:
             text = rx.sub(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED]", text)
         elif rx.groups == 1 and rx.pattern.startswith("(?i)\\b(bearer)"):
             text = rx.sub(lambda m: f"{m.group(1)} [REDACTED]", text)
@@ -142,7 +164,7 @@ def redact(text: str | None, limit: int = 4000) -> str:
 # Credential carriers stripped from agent and check environments whatever env_deny says; an
 # explicit env_allow entry still lets one through on purpose.
 ALWAYS_DENY_ENV = ["SSH_AUTH_SOCK", "*_DSN", "*DATABASE_URL*", "*CREDENTIALS*", "KUBECONFIG",
-                   "DOCKER_AUTH_CONFIG"]
+                   "DOCKER_AUTH_CONFIG", "*SECRET*", "*_KEY", "*_PAT", "NETRC", "*_AUTH"]
 
 
 def clean_env(env: Mapping[str, str], deny: Iterable[str], allow: Iterable[str]) -> dict[str, str]:
@@ -158,6 +180,16 @@ def process_started(pid: int) -> str | None:
     Fixed locale and zone, so the CLI, the TUI and the MCP server print the same string."""
     if osutil.WINDOWS:
         return None
+    if sys.platform == "darwin":
+        try:
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            buf = ctypes.create_string_buffer(136)
+            if libproc.proc_pidinfo(int(pid), 3, 0, buf, 136) != 136:
+                return None
+            sec = int.from_bytes(buf.raw[120:128], "little")
+            return time.strftime("%a %b %e %H:%M:%S %Y", time.gmtime(sec))
+        except (OSError, AttributeError, ValueError, OverflowError):
+            return None
     try:
         ps = subprocess.run(["ps", "-o", "lstart=", "-p", str(int(pid))],
                             capture_output=True, text=True, check=False,
@@ -165,3 +197,8 @@ def process_started(pid: int) -> str | None:
     except OSError:
         return None  # no ps: orphans are left alone rather than guessed at
     return ps.stdout.strip() or None
+
+
+def runner_alive(pid: int | None, started: str | None) -> bool:
+    """Check that the runner is alive and its PID has not been reused."""
+    return osutil.alive(pid) and started in (None, process_started(pid))

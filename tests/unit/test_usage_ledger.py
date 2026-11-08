@@ -306,3 +306,18 @@ def test_opencode_cost_rejects_malformed(tmp_path):
     for cost in (0.25, -5, float("nan"), float("inf"), True, 0.5):
         ad.handle({"type": "step_finish", "part": {"cost": cost}}, res, ctx)
     assert res.cost_usd == 0.75
+
+
+# @pt.id KIT-USAGE-BILL-01-reported
+# @pt.item A CLI-reported cost is an estimate, not a bill
+# @pt.condition one settled row with source reported
+# @pt.expected it counts as spent and sets the estimated flag
+# @pt.target bridge.state.Store.usage_spend
+# @pt.method unit
+# @pt.legacy audit BILL-01: Claude's total_cost_usd was recorded as actual
+def test_reported_cost_is_estimated(tmp_path):
+    s = _store(tmp_path)
+    starts = {"day": time.time() - DAY}
+    s.record_usage("work", key=KEY, task_id="T1", cost_usd=0.4, source="reported")
+    assert s.usage_spend(KEY, starts)["day"] == {"spent": 0.4, "reserved": 0.0, "unknown": 0,
+                                                 "estimated": True, "runs": 1}

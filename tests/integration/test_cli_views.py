@@ -68,6 +68,7 @@ def _out(capsys, *argv, tty=True, monkeypatch=None):
 # @pt.method integration
 # @pt.legacy none
 def test_views(project, repo, capsys, monkeypatch):
+    monkeypatch.setattr("bridge.service.describe_sandbox", lambda mode: "landlock ABI 5: writes confined")
     listing = _out(capsys, "list", monkeypatch=monkeypatch)
     assert "{" not in listing and project in listing and "REVIEW" in listing
     assert f"project {repo.name}" in listing

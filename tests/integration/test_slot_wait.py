@@ -76,16 +76,19 @@ def test_slot_wait_disabled(make_orch, fake_codex, fake_claude, monkeypatch):
 # @pt.id KIT-FLOW-SLOT-WAIT-3
 # @pt.item Slot wait expiry
 # @pt.condition routing.slot_wait_s is 1 and the account is never released
-# @pt.expected The workflow ends WAITING with a slot_wait_expired event; the task stays READY, 0 attempts
+# @pt.expected The workflow ends WAITING with a slot_wait_expired event in under 2.5 s; the task stays READY, 0 attempts
 # @pt.target Bridge._drive
 # @pt.method integration
 # @pt.legacy a busy slot ended the workflow WAITING at once
 def test_slot_wait_expires(make_orch, fake_codex, fake_claude, monkeypatch):
     b, wid, held = _setup(make_orch, fake_codex, monkeypatch, 1)
+    started = time.monotonic()
     try:
         wf = run(b.run_workflow(wid, wait=True))
     finally:
         held.release()
+    # The first retry is capped by the deadline too (audit FUN-05: it waited 5 s regardless).
+    assert time.monotonic() - started < 2.5
     task = wf["tasks"][0]
     assert wf["state"] == "WAITING" and task["state"] == State.READY
     assert "busy" in wf["detail"]["waiting"][task["task_id"]]

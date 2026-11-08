@@ -15,8 +15,8 @@ from .accounts import AccountLock, account_key
 from .executor import REVIEW_SCHEMA, RunRequest, RunResult, build_review_prompt, describe_event
 from .models import ACTIVE, Actor, ReviewDecision, State, leftover_failure, run_failure_state, \
     verdict
-from .review import EvidenceError, content_hashes, current_head, diff, recheck, run_verification, \
-    scope_violations, touches_sensitive
+from .review import EvidenceError, content_hashes, current_head, diff, protected_after, recheck, \
+    run_verification, scope_violations, touches_sensitive
 from .security import process_started, redact
 from .state import LimitExceeded
 
@@ -112,7 +112,7 @@ class TaskRunner:
         b = self.bridge
         try:
             try:
-                await self._run_inner(task_id, n, used, prompt, session, usage_id)
+                await self._run_inner(task_id, n, used, prompt, session, lock, usage_id)
             except EvidenceError as e:  # no evidence, no verdict: pause, never pass or fail
                 self._park_without_evidence(task_id, n, used, e)
             except Exception as e:  # never leave a task stuck in RUNNING/VERIFYING
@@ -134,7 +134,8 @@ class TaskRunner:
             b._runs.pop(task_id, None)
 
     async def _run_inner(self, task_id: str, n: int, used: int, prompt: str,
-                         session: str | None, usage_id: int | None = None) -> None:
+                         session: str | None, lock: AccountLock,
+                         usage_id: int | None = None) -> None:
         b = self.bridge
         try:
             row = self.store.get(task_id)
@@ -184,7 +185,8 @@ class TaskRunner:
                                write_paths=spec["allowed_paths"],
                                deny_paths=[*spec.get("excluded_paths", []),
                                            *b.cfg.protected_paths],
-                               read_deny=b._account_homes()),
+                               read_deny=b._account_homes(),
+                               keep_fds=() if (lock_fd := lock.fileno()) is None else (lock_fd,)),
                     on_start=lambda pid: self.store.update(task_id, codex_pid=pid,
                                                             codex_started=process_started(pid)),
                     on_session=lambda sid: self.store.update(task_id, session_id=sid),
@@ -222,16 +224,17 @@ class TaskRunner:
                       final=res.final or {"raw": res.final_text[-3000:]}, usage=res.usage,
                       stderr_tail=res.stderr_tail, changes=changes)
 
-        # Without a review stage nobody reads the evidence, so ignored-file changes must gate.
+        # Verification-only ignored changes must gate when nobody reviews the evidence.
         enforce = "review" not in b.orch.workflow.stages
         if res.outcome != "ok":
             # An attempt that ends early is never verified, and whatever it changed becomes the
             # next attempt's baseline: changes out of scope must stop the task now.
             leftover = scope_violations(changes["files"], spec, b.cfg, changes["head_changed"],
-                                        changes["ignored_files"], enforce_ignored=enforce)
+                                        changes["ignored_files"], root=b.root)
             if leftover:
                 record["verification"] = {"passed": False, "scope_violations": leftover,
-                                          "checks": [], "interrupted": True}
+                                          "checks": [], "interrupted": True,
+                                          **protected_after(b.root, leftover)}
             self.store.finish_attempt(task_id, n, **record)
             if leftover and self.store.get(task_id)["state"] in ACTIVE:
                 self.store.transition(task_id, State.BLOCKED, Actor.BRIDGE,
@@ -255,7 +258,7 @@ class TaskRunner:
 
         self.store.transition(task_id, State.VERIFYING, Actor.BRIDGE, {"attempt": n})
         violations = scope_violations(changes["files"], spec, b.cfg, changes["head_changed"],
-                                      changes["ignored_files"], enforce_ignored=enforce)
+                                      changes["ignored_files"], root=b.root)
         agent_status = (res.final or {}).get("status", "unknown")
         # Checks cannot change the outcome of a run that gave up without touching anything, and
         # can take many minutes.
@@ -281,13 +284,16 @@ class TaskRunner:
             final = recheck(b.root, before, changes, b.cfg)
             touched, later = final["files"], final["changed_by_verification"]
             violations = scope_violations(touched, spec, b.cfg, final["head_changed"],
-                                          final["ignored_files"], enforce_ignored=enforce)
+                                          final["ignored_files"], enforce_ignored=enforce, root=b.root,
+                                          verification_ignored=[f for f in final["ignored_files"]
+                                                                if f not in changes["ignored_files"]])
         passed, dst, failure = verdict(violations, checks, agent_status, stopped, used, max_att)
         record["verification"] = {"passed": passed, "scope_violations": violations,
                                   "checks": checks, "agent_status": agent_status,
                                   **({"changed_by_verification": later} if later else {}),
                                   **({"skipped": skipped} if skipped else {}),
-                                  **({"interrupted": True} if stopped else {})}
+                                  **({"interrupted": True} if stopped else {}),
+                                  **protected_after(b.root, violations)}
         # What a later approval is bound to: the verified content of every file the attempt touched.
         changes["after_hashes"] = content_hashes(b.root, touched)
         changes["verified_head"] = current_head(b.root)

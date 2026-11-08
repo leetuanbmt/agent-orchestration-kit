@@ -245,9 +245,9 @@ def test_estimate_cost():
 def test_run_cost():
     pricing = TokenPricing(input_per_mtok=1, output_per_mtok=1)
     usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000}
-    assert run_cost(0.42, usage, pricing) == (0.42, "actual")
-    assert run_cost(0, None, None) == (0.0, "actual")
-    assert run_cost(3, None, None) == (3.0, "actual")
+    assert run_cost(0.42, usage, pricing) == (0.42, "reported")
+    assert run_cost(0, None, None) == (0.0, "reported")
+    assert run_cost(3, None, None) == (3.0, "reported")
     assert run_cost(-1.0, usage, pricing) == (pytest.approx(2.0), "estimated")
     assert run_cost(True, usage, pricing) == (pytest.approx(2.0), "estimated")
     assert run_cost(None, usage, pricing) == (pytest.approx(2.0), "estimated")

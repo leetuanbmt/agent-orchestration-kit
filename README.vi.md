@@ -416,7 +416,7 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   file protected thì chặn, và khi workflow không có stage `review` thì mọi thay đổi ngoài
   `allowed_paths` đều là vi phạm (trừ cache của công cụ).
 - **Verification.** Bridge tự chạy lại, chỉ dùng argv (không toán tử shell, không dùng đường dẫn
-  làm chương trình), file thực thi phải nằm trong allowlist, có timeout. Trên Linux có Landlock,
+  làm chương trình), file thực thi phải nằm trong allowlist, có timeout. Dưới Landlock (Linux) hoặc Seatbelt (macOS),
   lệnh kiểm tra chỉ ghi được vào worktree, một `TMPDIR` riêng và `workflow.verify_writable`
   (`workflow.verify_sandbox`: mặc định `auto`, `strict` chặn thêm TCP, `none` để tắt); sau đó
   worktree được diff lại và những gì lệnh kiểm tra thay đổi được xét như thay đổi của agent. Không
@@ -437,10 +437,11 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   sau, chỉ khi PID là process `codex`, `claude`, `opencode` hoặc `agy`.
 - **Environment và output.** Biến có dạng credential (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`,
   `*PASSWORD*`, `AWS_*`, và luôn luôn `SSH_AUTH_SOCK`, `*_DSN`, `*DATABASE_URL*`, `*CREDENTIALS*`,
-  `KUBECONFIG`, `DOCKER_AUTH_CONFIG`) bị xoá trước khi agent hoặc lệnh verification chạy. Output
-  được lưu đều đi qua bước che secret.
-- **Chống đệ quy.** Mọi process agent nhận `AGENT_BRIDGE_AGENT=1`; server, CLI và Python API
-  `Bridge` đều từ chối khởi động khi có biến này.
+  `KUBECONFIG`, `DOCKER_AUTH_CONFIG`, `*SECRET*`, `*_KEY`, `*_PAT`, `NETRC`, `*_AUTH`) bị xoá trước
+  khi agent hoặc lệnh verification chạy. `env_deny` của project được cộng thêm vào mặc định, không
+  thể bỏ chúng. Output được lưu đều đi qua bước che secret.
+- **Chống đệ quy.** Mọi process agent và mọi lệnh verification nhận `AGENT_BRIDGE_AGENT=1`; server,
+  CLI và Python API `Bridge` đều từ chối khởi động khi có biến này.
 - **Audit.** Mọi lần chuyển trạng thái, attempt, quyết định định tuyến, review, thay đổi account
   và trạng thái workflow đều là một event trong `bridge.db`.
 
@@ -480,11 +481,15 @@ quyền bên trong bridge.
 - Deny rule trong `.claude/settings.json` chỉ định hướng cho Claude Code, không phải ranh giới bảo
   mật. Việc kiểm tra terminal interactive cho lệnh chỉ dành cho con người có thể bị vượt qua nếu
   agent tự cấp một pseudo-terminal.
-- Lệnh verification chỉ bị giới hạn ở nơi có Landlock (Linux 5.13+); ở nơi khác chúng chạy với
-  quyền của bạn, trừ khi `verify_sandbox: strict` từ chối chạy. Ngay cả khi bị giới hạn chúng vẫn
-  đọc được file của bạn, và ở chế độ `auto` vẫn có mạng.
-- File bị git-ignore được so bằng kích thước và mtime, không phải nội dung; khi có reviewer, file
-  ignore bị thay đổi được liệt kê cho reviewer thay vì bị từ chối.
+- Lệnh verification bị giới hạn bằng Landlock (Linux 5.13+) hoặc Seatbelt (macOS). Profile trên
+  macOS chỉ ở mức best effort: nó giới hạn việc ghi và chặn các đường thoát đã biết qua launch
+  services, nhưng cho phép mọi thứ khác. Khi không có cả hai, lệnh chạy với quyền của bạn, trừ khi
+  `verify_sandbox: strict` từ chối chạy, và `health` báo NOT OK (`verify_unconfined`) cho tới khi
+  con người chấp nhận bằng `verify_sandbox: none`. Ngay cả khi bị giới hạn chúng vẫn đọc được file
+  của bạn, và ở chế độ `auto` vẫn có mạng.
+- File bị git-ignore được so bằng kích thước và mtime, không phải nội dung. Agent thay đổi file
+  ignore nằm ngoài `allowed_paths` là vi phạm (trừ cache của công cụ); file ignore chỉ do lệnh
+  verification để lại thì được liệt kê cho reviewer thay vì bị từ chối.
 - Codex và Claude vẫn ghi file session của riêng chúng (`~/.codex/sessions`, `~/.claude.json`).
 - Các file trong `.ai/` ngoài `config.json` bị git-ignore và Codex ghi được; hãy coi chúng là bản
   sao tiện dụng, không phải đầu vào đáng tin cậy.
@@ -607,7 +612,7 @@ origin; `agent-bridge web --read-only` ẩn các thao tác và từ chối chún
 | `not a git repository` hoặc `Target must be a git work tree` | Bridge chỉ chạy trong git repository; chạy `git init` hoặc chuyển thư mục. |
 | `claude mcp list` hiện `agent-bridge: ⏸ Pending approval` | Mở `claude` trong thư mục một lần và trust nó. |
 | Lỗi `config-check` | Thông báo nêu đúng field; sửa `.ai/orchestrator.yaml`. |
-| `health` báo NOT OK | Thiếu adapter CLI hoặc CLI chưa đăng nhập, hoặc một file protected khác với `HEAD` (`protected_dirty`). `health` liệt kê từng nguyên nhân kèm cách sửa trong `problems`, và dấu QUOTA/AUTH của account trong `warnings`; con người đăng nhập hoặc kiểm tra file đó. |
+| `health` báo NOT OK | Thiếu adapter CLI hoặc CLI chưa đăng nhập, một file protected khác với `HEAD` hoặc vẫn giữ nội dung một task bị dừng đã ghi vào (`protected_dirty`), hoặc verification sẽ chạy không bị giới hạn (`verify_unconfined`, xem `verify_sandbox`). `health` liệt kê từng nguyên nhân kèm cách sửa trong `problems`, và dấu QUOTA/AUTH của account trong `warnings`; con người đăng nhập hoặc kiểm tra file đó. |
 | `no eligible executor agent (…)` | Mọi executor đều bị tắt, bận hoặc không sẵn sàng; lý do được liệt kê theo từng agent. |
 | Task `PAUSED` với `QUOTA` hoặc `AUTH` | Chờ cửa sổ quota reset hoặc sửa login; sau đó chạy `agent-bridge account-clear <name>` nếu dấu vẫn còn, rồi resume. Khi bật quota fallback, resume có thể chuyển task sang account khác. |
 | Task `PAUSED` với `INTERRUPTED` | Runner bị dừng bằng tín hiệu hoặc đã chết; `bridge_resume_task` tiếp tục session, `cancel` huỷ nó. |

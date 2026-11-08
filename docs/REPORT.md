@@ -5,6 +5,11 @@ through the bridge, including two accounts in parallel.
 
 ## 1. Compatibility (verified on this machine)
 
+`agent-bridge health` warns (`cli_unprobed`) when an installed Codex or Claude CLI is newer than
+the version in `PROBED_VERSIONS` (`bridge/service.py`): codex-cli 0.163.0 and Claude Code
+2.1.308. After re-running the probes below on a newer CLI, update both this table and that
+constant.
+
 | Component | Version | What was verified |
 |---|---|---|
 | Codex CLI | 0.163.0 | `exec --json`, `-o`, `--output-schema`, `--ignore-user-config`, `-s read-only\|workspace-write`, `-C`, prompt on stdin; `exec resume <thread_id> -` (no `-s`/`-C`: sandbox via `-c sandbox_mode=…`, enforced); JSONL events `thread.started`, `item.completed`, `turn.completed`, `turn.failed`, `error`; `CODEX_HOME` honoured; `codex login status` exit 0/1; 401 text on missing auth |

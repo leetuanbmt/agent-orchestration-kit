@@ -14,6 +14,11 @@ from .registry import find_root as find_root
 
 AI_DIR = ".ai"
 CONFIG_FILE = "config.json"
+DEFAULT_PROTECTED_PATHS = [
+    ".env", ".env.*", "**/.env", "**/.env.*", "*.pem", "*.key", "**/*.pem", "**/*.key",
+    ".git/**", ".ai/**", ".mcp.json", ".claude/settings.json", ".claude/settings.local.json",
+]
+DEFAULT_ENV_DENY = ["*_API_KEY", "*_TOKEN", "*_SECRET*", "*PASSWORD*", "AWS_*"]
 
 
 class AccountConfig(BaseModel):
@@ -62,18 +67,21 @@ class BridgeConfig(BaseModel):
         "npm", "npx", "pnpm", "yarn", "node", "go", "cargo", "git", "true", "false",
     ]
     # Never writable by Codex, never allowed in a task's allowed_paths.
-    protected_paths: list[str] = [
-        ".env", ".env.*", "**/.env", "**/.env.*", "*.pem", "*.key", "**/*.pem", "**/*.key",
-        ".git/**", ".ai/**", ".mcp.json", ".claude/settings.json", ".claude/settings.local.json",
-    ]
+    protected_paths: list[str] = DEFAULT_PROTECTED_PATHS
     # A change touching these forces human approval before DONE.
     sensitive_paths: list[str] = [
         "**/migrations/**", "migrations/**", "**/auth/**", "auth/**", "deploy/**",
         ".github/workflows/**", "**/*secret*", "**/*credential*", "Dockerfile", "**/Dockerfile",
     ]
     # Env var names (fnmatch) stripped from the Codex/verification environment.
-    env_deny: list[str] = ["*_API_KEY", "*_TOKEN", "*_SECRET*", "*PASSWORD*", "AWS_*"]
+    env_deny: list[str] = DEFAULT_ENV_DENY
     env_allow: list[str] = []
+
+    @model_validator(mode="after")
+    def enforce_safety_floor(self) -> BridgeConfig:
+        self.protected_paths = list(dict.fromkeys([*DEFAULT_PROTECTED_PATHS, *self.protected_paths]))
+        self.env_deny = list(dict.fromkeys([*DEFAULT_ENV_DENY, *self.env_deny]))
+        return self
 
     @model_validator(mode="after")
     def validate_accounts(self) -> BridgeConfig:

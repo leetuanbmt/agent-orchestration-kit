@@ -18,8 +18,9 @@ from typing import Any, TypedDict
 
 from . import osutil, sandbox
 from .config import BridgeConfig
+from .executor import AGENT_ENV
 from .models import PROTECTED_VIOLATION
-from .security import clean_env, matches, redact
+from .security import clean_env, literal_prefix, matches, redact
 
 
 class EvidenceError(RuntimeError):
@@ -62,6 +63,19 @@ def _hash(p: Path) -> str | None:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def untracked(root: Path) -> set[str]:
+    """Non-ignored untracked files in the worktree."""
+    out = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    paths = set()
+    parts = iter(out.split("\0"))
+    for entry in parts:
+        if entry.startswith("?? "):
+            paths.add(entry[3:])
+        elif entry and entry[0] in "RC":
+            next(parts, None)
+    return paths
 
 
 def _dirty(root: Path) -> set[str]:
@@ -212,14 +226,38 @@ IGNORED_NOISE = [*VERIFICATION_NOISE, ".mypy_cache/**", "**/.mypy_cache/**", ".r
                  "**/.ruff_cache/**", "node_modules/.cache/**", ".coverage", "**/.coverage"]
 
 
+def escaping_symlinks(root: Path, patterns: list[str]) -> list[str]:
+    """Links covered by patterns that escape root; ignored links need explicit coverage."""
+    tracked = _git(root, "ls-files", "-s", "-z")
+    links = {entry.split("\t", 1)[1] for entry in tracked.split("\0")
+             if entry.startswith("120000 ")}
+    links.update(path for path in _git(root, "ls-files", "-o", "--exclude-standard", "-z")
+                 .split("\0") if path and (root / path).is_symlink())
+    ignored_links = {path for path in
+                     _git(root, "ls-files", "-o", "-i", "--exclude-standard", "-z").split("\0")
+                     if path and (root / path).is_symlink()}
+    prefixes = [(pattern, literal_prefix(pattern)) for pattern in patterns]
+    resolved_root = root.resolve()
+    return sorted(link for link in links | ignored_links
+                  if any(matches(link, [pattern])
+                         or (prefix and (link == prefix or link.startswith(prefix + "/")))
+                         or (not prefix and (link in links or (root / link).resolve().is_dir()))
+                         for pattern, prefix in prefixes)
+                  and (root / link).is_symlink()
+                  and not (root / link).resolve().is_relative_to(resolved_root))
+
+
 def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig,
                      head_changed: bool, ignored: list[str] | None = None, *,
-                     enforce_ignored: bool = False) -> list[str]:
-    """Violations among changed files. Changed git-ignored files are violations when they are
-    protected, and also when outside allowed_paths if `enforce_ignored` (no reviewer will read
-    the evidence); otherwise they are only reported."""
+                     enforce_ignored: bool = False, root: Path | None = None,
+                     verification_ignored: list[str] | None = None) -> list[str]:
+    """Agent ignored changes gate scope; verification-only ignored changes gate when enforced.
+    Protected paths and escaping symlinks always gate, regardless of their source."""
     v = []
     for f in changed:
+        if (root is not None and (root / f).is_symlink()
+                and not (root / f).resolve().is_relative_to(root.resolve())):
+            v.append(f"symlink escapes the project: {f}")
         if matches(f, cfg.protected_paths):
             v.append(f"{PROTECTED_VIOLATION}{f}")
         elif matches(f, spec.get("excluded_paths", [])):
@@ -227,9 +265,13 @@ def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig
         elif not matches(f, spec["allowed_paths"]):
             v.append(f"outside allowed paths: {f}")
     for f in ignored or []:
+        if (root is not None and (root / f).is_symlink()
+                and not (root / f).resolve().is_relative_to(root.resolve())):
+            v.append(f"symlink escapes the project: {f}")
         if matches(f, cfg.protected_paths):
             v.append(f"{PROTECTED_VIOLATION}{f}")
-        elif (enforce_ignored and not matches(f, IGNORED_NOISE)
+        elif ((enforce_ignored or f not in (verification_ignored or []))
+              and not matches(f, IGNORED_NOISE)
               and not matches(f, spec["allowed_paths"])):
             v.append(f"ignored file changed outside allowed paths: {f}")
     if head_changed:
@@ -240,6 +282,23 @@ def scope_violations(changed: list[str], spec: dict[str, Any], cfg: BridgeConfig
 def content_hashes(root: Path, files: list[str]) -> dict[str, str | None]:
     """sha256 of each file as it is now (None for a missing file): what approval binds to."""
     return {f: _hash(root / f) for f in files}
+
+
+def protected_after(root: Path, violations: list[str]) -> dict[str, dict[str, str | None]]:
+    """What a stopped run left in each protected file it changed. `health` keeps reporting a file
+    while it still has this content; a restore or a human edit changes the hash and clears it."""
+    paths = [v[len(PROTECTED_VIOLATION):] for v in violations if v.startswith(PROTECTED_VIOLATION)]
+    return {"protected_after": protected_hashes(root, paths)} if paths else {}
+
+
+def protected_hashes(root: Path, paths: list[str]) -> dict[str, str | None]:
+    """Like content_hashes, but `.git/...` keys (from _git_internals) resolve through git, since
+    `.git` is a file in a linked worktree."""
+    def where(f: str) -> Path:
+        if not f.startswith(".git/"):
+            return root / f
+        return Path(_git(root, "rev-parse", "--path-format=absolute", "--git-path", f[5:]).strip())
+    return {f: _hash(where(f)) for f in paths}
 
 
 def current_head(root: Path) -> str | None:
@@ -331,8 +390,8 @@ async def _verify(cmds: list[str], root: Path, cfg: BridgeConfig,
                   writable: list[str], tmp: str, results: list[dict[str, Any]]) -> None:
     # No .pyc litter from the bridge's own checks in the next attempt's baseline; temp files go
     # to a private directory removed afterwards (the only temp location a confined check has).
-    env = {**clean_env(os.environ, cfg.env_deny, cfg.env_allow), "PYTHONDONTWRITEBYTECODE": "1",
-           "TMPDIR": tmp, "TMP": tmp, "TEMP": tmp}
+    env = {**clean_env(os.environ, cfg.env_deny, []), "PYTHONDONTWRITEBYTECODE": "1",
+           AGENT_ENV: "1", "TMPDIR": tmp, "TMP": tmp, "TEMP": tmp}
     loop = asyncio.get_running_loop()
     for cmd in cmds:
         if should_cancel and should_cancel():
@@ -341,7 +400,7 @@ async def _verify(cmds: list[str], root: Path, cfg: BridgeConfig,
         try:
             argv = sandbox.wrap(parse_command(cmd, cfg), writable, confine)
             if argv is None:
-                raise ValueError("verify_sandbox is strict but Landlock is not available here: "
+                raise ValueError("verify_sandbox is strict but no verification sandbox is available here: "
                                  "the check was not run")
             proc = await asyncio.create_subprocess_exec(
                 *argv, cwd=root, env=env, **osutil.GROUP_KWARGS, stdin=asyncio.subprocess.DEVNULL,

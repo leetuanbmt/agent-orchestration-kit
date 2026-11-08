@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import shlex
 import shutil
 import sqlite3
@@ -31,12 +32,12 @@ from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, Orchestrato
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .registry import remember_project
-from .review import EvidenceError, content_hashes, diff, parse_command, protected_dirty, \
-    scope_violations, snapshot
+from .review import EvidenceError, content_hashes, current_head, diff, parse_command, protected_dirty, \
+    escaping_symlinks, protected_after, protected_hashes, scope_violations, snapshot, untracked
 from .runner import _write_attempt_log_line as _write_attempt_log_line
 from .sandbox import describe as describe_sandbox
 from .runner import TaskRunner
-from .security import hook_settings_error, PathError, process_started, redact, validate_pattern
+from .security import hook_settings_error, matches, PathError, process_started, redact, runner_alive, validate_pattern
 from .state import ConflictError, LimitExceeded, Store, overview
 
 REBINDABLE = {State.READY, State.REWORK, State.FAILED, State.PAUSED}
@@ -64,7 +65,7 @@ def resolve_account(orch: OrchestratorConfig, cfg: BridgeConfig, root: Path,
     profile = orch.accounts.get(name)
     if profile is None:
         raise ValueError(f"unknown account: {name}")
-    return resolve_profile(name, profile.provider, profile.home, root)
+    return resolve_profile(name, profile.provider, profile.home, root, profile.token_env)
 
 
 class Bridge:
@@ -151,6 +152,8 @@ class Bridge:
             "account": row["account"] or ("default" if self.legacy else None),
             "workflow_id": row["workflow_id"],
             "state": row["state"],
+            "runner_alive": (row["runner_pid"] == os.getpid() or self._runner_alive(row))
+            if row["state"] in {State.RUNNING, State.VERIFYING} else None,
             "objective": spec["objective"][:200],
             "attempts": row["attempts"],
             "max_attempts": self._max_attempts(row),
@@ -258,8 +261,9 @@ class Bridge:
         await self.runner._run(task_id, n, used, prompt, session, lock, usage_id)
 
     async def _run_inner(self, task_id: str, n: int, used: int, prompt: str,
-                         session: str | None, usage_id: int | None = None) -> None:
-        await self.runner._run_inner(task_id, n, used, prompt, session, usage_id)
+                         session: str | None, lock: AccountLock,
+                         usage_id: int | None = None) -> None:
+        await self.runner._run_inner(task_id, n, used, prompt, session, lock, usage_id)
 
     async def _review_stage(self, task_id: str) -> None:
         await self.runner._review_stage(task_id)
@@ -385,6 +389,16 @@ class Bridge:
 
         return self._summary(self.store.rebind(task_id, REBINDABLE, change, actor, event_kind))
 
+    # The CLI versions whose sandbox and permission behaviour docs/REPORT.md last probed (audit
+    # TEST-04): a newer CLI may have changed it, so health asks for a re-probe.
+    PROBED_VERSIONS = {"codex-cli": (0, 163, 0), "claude-cli": (2, 1, 308)}
+
+    @classmethod
+    def unprobed(cls, adapter: str, version: str | None) -> bool:
+        found = re.search(r"(\d+)\.(\d+)\.(\d+)", version or "")
+        probed = cls.PROBED_VERSIONS.get(adapter)
+        return bool(found and probed and tuple(map(int, found.groups())) > probed)
+
     async def health(self) -> dict[str, Any]:
         codex: dict[str, Any] = {"path": self._adapter("codex-cli").available()}
         if codex["path"]:
@@ -405,9 +419,7 @@ class Bridge:
             path = self._adapter(name).available()
             adapters[name] = {"path": path,
                               "version": self._adapter(name).version() if path else None}
-        counts: dict[str, int] = {}
-        for r in self.store.list(limit=10_000):
-            counts[r["state"]] = counts.get(r["state"], 0) + 1
+        counts = self.store.task_counts()
         active = [r["id"] for r in self.store.list(limit=10_000) if r["state"] in ACTIVE]
         quota = {}
         for name in self.orch.accounts:
@@ -434,6 +446,14 @@ class Bridge:
             dirty = protected_dirty(self.root, self.cfg)
         except EvidenceError as e:  # cannot tell: do not report the project as fine
             dirty = [f"(git status failed: {redact(str(e), 200)})"]
+        # Git cannot see a git-ignored protected file (.ai/orchestrator.yaml): report every one a
+        # stopped run changed while it still holds what that run left.
+        try:
+            dirty = sorted({*dirty, *(f for left in self.store.protected_left()
+                                      for f, h in left.items()
+                                      if protected_hashes(self.root, [f])[f] == h)})
+        except EvidenceError as e:
+            dirty = [*dirty, f"(git failed: {redact(str(e), 200)})"]
         verify_sandbox = describe_sandbox(self.orch.workflow.verify_sandbox)
 
         def item(code: str, message: str, fix: str) -> dict[str, str]:
@@ -454,7 +474,8 @@ class Bridge:
                                  "protected files differ from HEAD and would be loaded as they "
                                  f"are: {', '.join(dirty)}",
                                  "inspect them (git diff) and restore what you did not change "
-                                 "yourself"))
+                                 "yourself; a file a stopped task changed (see `agent-bridge "
+                                 "result <id>`) stays listed until it is restored or edited"))
         # Worth knowing, but never a reason for `ok` to be false.
         warnings = []
         if storage_notice:
@@ -462,10 +483,16 @@ class Bridge:
                        else storage_notice)
             warnings.append(item("storage", message, storage_fix or storage_notice))
         if "unavailable" in verify_sandbox:
-            warnings.append(item("verify_unconfined", f"verification sandbox: {verify_sandbox}",
+            problems.append(item("verify_unconfined", f"verification sandbox: {verify_sandbox}",
                                  "confine verification commands by running the bridge on a "
                                  "Linux kernel with Landlock, or have a human set "
-                                 "workflow.verify_sandbox in .ai/orchestrator.yaml"))
+                                 "workflow.verify_sandbox: none in .ai/orchestrator.yaml "
+                                 "to accept unconfined checks"))
+        elif self.orch.workflow.verify_sandbox == "none":
+            warnings.append(item("verify_unconfined", "verification checks run unconfined by choice",
+                                 "run the bridge on a Linux kernel with Landlock and set "
+                                 "workflow.verify_sandbox: auto in .ai/orchestrator.yaml "
+                                 "to confine verification commands"))
         for name in self.orch.accounts:
             try:
                 key = account_key(self._account(name))
@@ -484,6 +511,14 @@ class Bridge:
                                      f"account {name} needs a new login{detail}",
                                      "a human logs the account in again with "
                                      f"`agent-bridge account-login {name}`"))
+        for name, info in adapters.items():
+            if self.unprobed(name, info["version"]):
+                probed = ".".join(map(str, self.PROBED_VERSIONS[name]))
+                warnings.append(item("cli_unprobed",
+                                     f"{name} {info['version']} is newer than {probed}, the "
+                                     "version its sandbox and permission rules were probed on",
+                                     "re-run the probes in docs/REPORT.md with this version, then "
+                                     "update PROBED_VERSIONS in bridge/service.py"))
         for name, info in limits.items():
             if info["status"] == "limited":
                 warnings.append(item("account_limited",
@@ -506,8 +541,7 @@ class Bridge:
             "limits": limits,
             "active_tasks": active,
             "task_counts": counts,
-            "ok": all(a["path"] for a in adapters.values())
-                  and ("codex-cli" not in used or codex.get("logged_in", False)) and not dirty,
+            "ok": not problems,
             "problems": problems,
             "warnings": warnings,
         }
@@ -544,6 +578,8 @@ class Bridge:
         try:
             s.allowed_paths = [validate_pattern(p, self.root, self.cfg.protected_paths)
                                for p in s.allowed_paths]
+            if links := escaping_symlinks(self.root, s.allowed_paths):
+                raise PathError(f"symlink escapes the project: {links[0]}")
             s.excluded_paths = [validate_pattern(p, self.root, []) for p in s.excluded_paths]
         except PathError as e:
             raise ValueError(str(e)) from e
@@ -570,6 +606,8 @@ class Bridge:
         if row["state"] == State.BACKLOG:
             raise TransitionError(f"{task_id} has unfinished dependencies: "
                                   f"{row['spec']['depends_on']}")
+        if row["state"] != State.READY:  # before routing writes an agent onto the task
+            raise TransitionError(f"{task_id} is {row['state']}; execute needs READY")
         self._quota_fallback(task_id)
         routed = self._route(task_id)
         row = self.store.get(task_id)
@@ -668,7 +706,8 @@ class Bridge:
                 res = await self._adapter(agent.adapter).run(
                     RunRequest(prompt, account, "read-only", self._timeout(agent, None),
                                schema=schema, model=agent.model, hook_settings=hook_settings,
-                               read_deny=self._account_homes()),
+                               read_deny=self._account_homes(),
+                               keep_fds=() if (fd := lock.fileno()) is None else (fd,)),
                     should_cancel=cancel)
             finally:
                 lock.release()
@@ -731,8 +770,38 @@ class Bridge:
         self._assert_verified_content(task_id, last)
 
     def _assert_verified_content(self, task_id: str, last: dict[str, Any]) -> None:
-        """Approval and closing apply to what was verified: every file the attempt touched must
-        still have its verified content. Other files (other tasks' work) do not matter."""
+        """Approval and closing bind to the verified HEAD and touched files' content."""
+        verified_head = (last.get("changes") or {}).get("verified_head")
+        if verified_head:
+            state = self.store.get(task_id)["state"]
+            fix = ("send it back (review --decision rework) and resume it to verify again"
+                   if state == State.REVIEW else
+                   "restore the verified HEAD, or cancel the task and create a new one")
+            try:
+                head = current_head(self.root)
+            except (OSError, subprocess.SubprocessError, EvidenceError) as exc:
+                raise TransitionError(f"{task_id}: cannot read HEAD since verification "
+                                      f"({verified_head[:8]}); {fix}") from exc
+            if not head:
+                raise TransitionError(f"{task_id}: cannot read HEAD since verification "
+                                      f"({verified_head[:8]}); {fix}")
+            if head != verified_head:
+                raise TransitionError(f"{task_id}: HEAD changed since verification: "
+                                      f"{verified_head[:8]} -> {head[:8]}; {fix}")
+        state = self.store.get(task_id)["state"]
+        fix = ("send it back (review --decision rework) and resume it to verify again"
+               if state == State.REVIEW else
+               "restore the verified content, or cancel the task and create a new one")
+        baseline = last.get("baseline")
+        if baseline is not None:
+            new = (untracked(self.root) - set(baseline["files"])
+                   - set((last.get("changes") or {}).get("files", []))
+                   - set((last.get("verification") or {}).get("changed_by_verification", []))
+                   - self.store.other_attempt_files_since(task_id, last["ended_at"]))
+            new = {path for path in new if not matches(path, self.cfg.protected_paths)}
+            if new:
+                raise TransitionError(f"{task_id}: new untracked files since verification: "
+                                      f"{', '.join(sorted(new))}; {fix}")
         bound = (last.get("changes") or {}).get("after_hashes")
         if bound is None:  # verified before approvals were bound to content
             self.store.log(task_id, Actor.BRIDGE, "approval_unbound",
@@ -741,10 +810,6 @@ class Bridge:
         now = content_hashes(self.root, list(bound))
         moved = sorted(f for f in bound if now[f] != bound[f])
         if moved:
-            state = self.store.get(task_id)["state"]
-            fix = ("send it back (review --decision rework) and resume it to verify again"
-                   if state == State.REVIEW else
-                   "restore the verified content, or cancel the task and create a new one")
             raise TransitionError(f"{task_id}: worktree changed since verification: "
                                   f"{', '.join(moved)}; {fix}")
 
@@ -770,7 +835,7 @@ class Bridge:
                                     failure=f"CANCELLED: {reason}"[:500])
         owner = row["runner_pid"]
         if owner != os.getpid() and not self._runner_alive(row):
-            kill_stale(row["codex_pid"], row["codex_started"])  # orphan from a dead runner
+            await asyncio.to_thread(kill_stale, row["codex_pid"], row["codex_started"])
         elif running:
             # The runner (this process or another one, e.g. a CLI `execute`) polls the state,
             # kills its agent or verification process group within ~1 s, then releases the
@@ -821,6 +886,11 @@ class Bridge:
             "reviews": [e["detail"] for e in self.store.events(task_id, 200)
                         if e["kind"] == "review"],
         }
+
+    async def count_tasks(self, state: str | None = None) -> int:
+        if state:
+            State(state)
+        return self.store.count(state)
 
     async def list_tasks(self, state: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         if state:
@@ -973,7 +1043,8 @@ class Bridge:
                         waiting[tid] = reason
                     elif slot is None:
                         slots[tid] = {"deadline": now + slot_wait_s, "delay": SLOT_WAIT_FIRST_S,
-                                      "next": now + SLOT_WAIT_FIRST_S + random.uniform(0, 1),
+                                      "next": min(now + SLOT_WAIT_FIRST_S + random.uniform(0, 1),
+                                                  now + slot_wait_s),
                                       "reason": reason, "until": time.time() + slot_wait_s}
                         self.store.log(tid, Actor.BRIDGE, "slot_wait",
                                        {"workflow_id": wid, "reason": reason,
@@ -991,14 +1062,33 @@ class Bridge:
                             now + delay + random.uniform(0, 1), slot["deadline"]))
                 else:
                     slots.pop(tid, None)
-            states = {t["id"]: t["state"] for t in self.store.workflow_tasks(wid)}
+            rows = self.store.workflow_tasks(wid)
+            states = {t["id"]: t["state"] for t in rows}
+            unreachable: dict[str, str] = {}
+            while True:
+                added = False
+                for task in rows:
+                    tid = task["id"]
+                    if states[tid] != State.BACKLOG or tid in unreachable:
+                        continue
+                    for dependency in task["spec"]["depends_on"]:
+                        if (states.get(dependency) in {State.CANCELLED, State.BLOCKED}
+                                or dependency in unreachable):
+                            unreachable[tid] = dependency
+                            added = True
+                            break
+                if not added:
+                    break
             if states and all(s == State.DONE for s in states.values()):
                 final = "DONE"
-            elif all(s in TERMINAL for s in states.values()):
+            elif all(s in TERMINAL or tid in unreachable for tid, s in states.items()):
                 final = "INCOMPLETE"
             else:
                 final = "WAITING"  # a review, a human approval or an account needs attention
-            self.store.set_workflow(wid, final, {"tasks": states, "waiting": waiting})
+            detail = {"tasks": states, "waiting": waiting}
+            if unreachable:
+                detail["unreachable"] = unreachable
+            self.store.set_workflow(wid, final, detail)
         except Exception as e:
             self.store.set_workflow(wid, "WAITING", {"error": redact(repr(e), 2000)})
         finally:
@@ -1014,14 +1104,14 @@ class Bridge:
             changes = diff(self.root, baseline, self.cfg.protected_paths)
         except EvidenceError:
             return []
-        return scope_violations(changes["files"], row["spec"], self.cfg, changes["head_changed"])
+        return scope_violations(changes["files"], row["spec"], self.cfg,
+                                changes["head_changed"], root=self.root)
 
     @staticmethod
     def _runner_alive(row: dict[str, Any]) -> bool:
         """The task's runner process still runs. A pid the OS reused for another process has a
         different start time, so it does not count (rows from older versions have none)."""
-        pid = row["runner_pid"]
-        return _alive(pid) and row.get("runner_started") in (None, process_started(pid))
+        return runner_alive(row["runner_pid"], row.get("runner_started"))
 
     def recover(self) -> list[str]:
         """Park tasks and workflows whose process died mid-run (crash, kill, closed session)."""
@@ -1038,7 +1128,9 @@ class Bridge:
                     leftover = self._leftover(row, a.get("baseline"))
                     self.store.finish_attempt(row["id"], a["n"], outcome="interrupted", **(
                         {"verification": {"passed": False, "scope_violations": leftover,
-                                          "checks": [], "interrupted": True}} if leftover else {}))
+                                          "checks": [], "interrupted": True,
+                                          **protected_after(self.root, leftover)}}
+                        if leftover else {}))
             if leftover:  # resuming would take these changes as the next attempt's baseline
                 self.store.transition(row["id"], State.BLOCKED, Actor.BRIDGE,
                                       {"reason": "runner died", "killed_orphan": killed,
@@ -1047,7 +1139,8 @@ class Bridge:
             else:
                 self.store.transition(row["id"], State.PAUSED, Actor.BRIDGE,
                                       {"reason": "runner died", "killed_orphan": killed},
-                                      failure="INTERRUPTED: runner process exited during execution")
+                                      failure="INTERRUPTED: runner process exited during execution",
+                                      attempts=max(row["attempts"] - 1, 0))
             recovered.append(row["id"])
         for wf in self.store.workflows_in("PLANNING", "RUNNING"):
             owner = wf["runner_pid"]

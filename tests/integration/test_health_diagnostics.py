@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import pytest
 
-from bridge import cli
+from bridge import cli, sandbox
 from bridge.models import Actor
 from tests.conftest import git, run
 from tests.integration.test_account_limits import FIVE_HOUR, config, seed
 from tests.integration.test_limit_failover import mark_quota
 
 PATH_WITHOUT_FAKES = "/usr/bin:/bin"
+
+
+@pytest.fixture(autouse=True)
+def available_landlock(monkeypatch):
+    monkeypatch.setattr(sandbox, "backend", lambda: "landlock")
 
 
 def _health(b) -> dict:
@@ -36,6 +41,46 @@ def test_healthy_has_no_problems(make_bridge):
     h = _health(make_bridge())
     assert h["ok"] is True and h["problems"] == []
     assert not [c for c in _codes(h["warnings"]) if c.startswith("account_")]
+    assert "verify_unconfined" not in _codes(h["warnings"])
+
+
+# @pt.id KIT-HEALTH-DIAG-8
+# @pt.item Unavailable verification confinement is a health problem
+# @pt.condition auto or strict mode with no Landlock available
+# @pt.expected ok is false with verify_unconfined and a fix naming both human options
+# @pt.target bridge.service.Bridge.health
+# @pt.method integration
+# @pt.legacy unavailable confinement was only a warning
+@pytest.mark.parametrize("mode", ["auto", "strict"])
+def test_unavailable_sandbox_is_problem(make_bridge, monkeypatch, mode):
+    monkeypatch.setattr(sandbox, "backend", lambda: None)
+    b = make_bridge()
+    b.orch.workflow.verify_sandbox = mode
+    h = _health(b)
+    assert h["ok"] is False
+    assert _codes(h["problems"]) == ["verify_unconfined"]
+    problem, = h["problems"]
+    assert problem["message"] == f"verification sandbox: {sandbox.describe(mode)}"
+    assert "Linux kernel with Landlock" in problem["fix"]
+    assert "workflow.verify_sandbox: none in .ai/orchestrator.yaml" in problem["fix"]
+    assert "verify_unconfined" not in _codes(h["warnings"])
+
+
+# @pt.id KIT-HEALTH-DIAG-9
+# @pt.item Explicitly accepted unconfined verification is a warning
+# @pt.condition none mode with no Landlock available
+# @pt.expected ok stays true and verify_unconfined warns that checks run unconfined by choice
+# @pt.target bridge.service.Bridge.health
+# @pt.method integration
+# @pt.legacy none mode did not explain unconfined verification
+def test_unconfined_by_choice_is_warning(make_bridge, monkeypatch):
+    monkeypatch.setattr(sandbox, "backend", lambda: None)
+    b = make_bridge()
+    b.orch.workflow.verify_sandbox = "none"
+    h = _health(b)
+    assert h["ok"] is True and h["problems"] == []
+    warning, = [e for e in h["warnings"] if e["code"] == "verify_unconfined"]
+    assert "checks run unconfined by choice" in warning["message"]
 
 
 # @pt.id KIT-HEALTH-DIAG-2
@@ -157,3 +202,21 @@ def test_cli_prints_fixes(make_bridge, repo, capsys, monkeypatch):
     fixes = out.split("To fix:", 1)[1]
     assert "install the codex CLI" in fixes
     assert "agent-bridge account-login default" in fixes
+
+
+# @pt.id KIT-HEALTH-DIAG-TEST04
+# @pt.item A CLI newer than the probed version is a health warning
+# @pt.condition the codex adapter reports 0.163.0 (probed), then 0.200.1 and a non-semver string
+# @pt.expected only 0.200.1 adds cli_unprobed with a re-probe fix; ok is unaffected
+# @pt.target bridge.service.Bridge.health, Bridge.unprobed
+# @pt.method integration
+# @pt.legacy audit TEST-04: sandbox claims were never re-checked when the CLI changed
+def test_unprobed_cli_is_warning(make_bridge, monkeypatch):
+    from bridge.executor import Adapter
+    b = make_bridge()
+    for version, warned in (("codex-cli 0.163.0", False), ("codex-cli 0.200.1", True),
+                            ("codex-cli 0.0.0-fake", False), ("error: gone", False)):
+        monkeypatch.setattr(Adapter, "version", lambda self, v=version: v)
+        h = _health(b)
+        assert ("cli_unprobed" in _codes(h["warnings"])) is warned, version
+        assert h["ok"] is True

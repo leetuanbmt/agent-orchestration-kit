@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -34,6 +35,7 @@ from .accounts import display_name
 from .config import AI_DIR, find_root
 from .render import ATTENTION, STYLE, account_rows, quota_text, remaining_pct
 from .service import Bridge
+from .state import NotFound
 
 TERMINAL = {"DONE", "CANCELLED", "BLOCKED"}
 CURSOR = "❯"
@@ -354,12 +356,26 @@ class BridgeApp(App[None]):
 
     @work(exclusive=True, group="tasks")
     async def refresh_tasks(self) -> None:
-        tasks = [t for t in await self.bridge.list_tasks(limit=200) if self._matches(t)]
-        needs = [t for t in tasks if t["state"] in ATTENTION]
+        listed = await self.bridge.list_tasks(limit=200)
+        total = await self.bridge.count_tasks()
+        query = self.query_text.strip().upper()
+        if re.fullmatch(r"T\d+", query) and not any(t["task_id"] == query for t in listed):
+            try:
+                listed.append(await self.bridge.task_status(query))
+            except NotFound:
+                pass
+        tasks = [t for t in listed if self._matches(t)]
+        needs = []
+        for state in ATTENTION:
+            count = await self.bridge.count_tasks(state)
+            needs.extend(self.bridge.store.list(state, count))
+        needs.sort(key=lambda t: t["created_at"], reverse=True)
+        needs = [summary for t in needs if self._matches(summary := self.bridge._summary(t))]
         self._fill_tasks("needs", needs)
         self._fill_tasks("tasks", tasks)
         self.query_one("#needs").border_title = f"Needs you ({len(needs)})"
-        self.query_one("#tasks").border_title = f"Tasks ({len(tasks)})"
+        suffix = f" of {total}" if len(tasks) < total else ""
+        self.query_one("#tasks").border_title = f"Tasks ({len(tasks)}{suffix})"
         name = self.bridge.root.name
         self.title = f"{name} · {len(needs)} need you" if needs else f"{name} · agent-bridge"
         # Start on Needs you (or Tasks), not on the first focusable widget: the search box,

@@ -285,3 +285,20 @@ def test_recursion(monkeypatch):
         cli.main(["health"])
     assert stop.value.code == 2
     assert os.environ[AGENT_ENV] == "1"
+
+
+# @pt.id KIT-AUDIT-CFG-06
+# @pt.item A broken machine-wide account is reported against the registry file
+# @pt.condition the registry holds an entry with an unknown key that the project yaml does not declare
+# @pt.expected the error names accounts.json and the entry, not orchestrator.yaml
+# @pt.target bridge.orchestrator.parse
+# @pt.method unit
+# @pt.legacy audit CFG-06: the message blamed .ai/orchestrator.yaml for a registry entry
+def test_registry_error_names_registry_file():
+    text = "version: 1\nagents: {}\nroles: {}\n"
+    with pytest.raises(ValueError) as err:
+        parse(text, "proj/.ai/orchestrator.yaml",
+              {"r1": {"provider": "openai", "home": None, "extra": 1}})
+    message = str(err.value)
+    assert "accounts.json: accounts.r1.extra" in message
+    assert "orchestrator.yaml" not in message

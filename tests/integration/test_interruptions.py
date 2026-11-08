@@ -158,12 +158,12 @@ def test_blocked_without_changes_skips_verification(make_bridge, fake_codex, mon
 
 
 # @pt.id KIT-INT-043-ignored-build-output-in-scope
-# @pt.item Git-ignored build output does not count as an out-of-scope change
-# @pt.condition codex writes build/out.bin (git-ignored, outside allowed_paths) and src/app.py
-# @pt.expected REVIEW; build/out.bin is not in the recorded changes
+# @pt.item Git-ignored build output within allowed_paths is not recorded in changes
+# @pt.condition codex writes build/out.bin (git-ignored) and src/app.py, both within allowed_paths
+# @pt.expected REVIEW with build/** allowed; changes.files contains only src/app.py
 # @pt.target bridge.review.snapshot, bridge.review.scope_violations
 # @pt.method integration
-# @pt.legacy none (new kit)
+# @pt.legacy SEC-08: agent-written ignored files must be within allowed_paths
 def test_ignored_build_output_is_not_a_scope_violation(make_bridge, fake_codex, repo,
                                                         monkeypatch) -> None:
     with (repo / ".gitignore").open("a") as f:
@@ -172,7 +172,7 @@ def test_ignored_build_output_is_not_a_scope_violation(make_bridge, fake_codex, 
                     "commit", "-qam", "ignore build"], check=True)
     monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n;build/out.bin=binary")
     b = make_bridge()
-    t = run(b.create_task(spec()))["task_id"]
+    t = run(b.create_task(spec(allowed_paths=["src/**", "build/**"])))["task_id"]
     assert run(b.execute_task(t, wait=True))["state"] == State.REVIEW
     assert b.store.attempts(t)[-1]["changes"]["files"] == ["src/app.py"]
 

@@ -23,7 +23,7 @@ Start from a shipped example and validate it:
 ```bash
 agent-bridge config-init                # list the examples
 agent-bridge config-init orchestrator   # write .ai/orchestrator.yaml; refuses to overwrite
-agent-bridge config-check               # schema check; errors name the field
+agent-bridge config-check               # schema and account-home isolation; errors name the field (exit 1)
 agent-bridge agents                     # resolved roles, agents and availability
 ```
 
@@ -53,7 +53,7 @@ workflow:
 | Section | Keys |
 |---|---|
 | `version` | Must be `1`. |
-| `accounts.<id>` | `provider`: `openai`, `anthropic`, `google` or `opencode`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode accepts no `home`). `max_concurrency`: 1–8, default 1. `limits`: optional per-account limits, see [Per-account limits](#per-account-limits-opt-in). |
+| `accounts.<id>` | `provider`: `openai`, `anthropic`, `google` or `opencode`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode accepts no `home`). `max_concurrency`: 1–8, default 1. `token_env` (anthropic only): the name of a variable holding a `claude setup-token` token, see [Accounts](#accounts). `limits`: optional per-account limits, see [Per-account limits](#per-account-limits-opt-in). |
 | `agents.<id>` | `adapter`: `codex-cli`, `claude-cli`, `client`, `opencode-cli` or `agy-cli`. `account` (required except for `client`), optional `provider` (must match the adapter), `model`, `capabilities` (subset of `[read, write]`), `allow_write` (default true for `codex-cli`, false otherwise), `allow_bash` (`claude-cli` only), `timeout_s` (≥ 30), `enabled` (default true). |
 | `roles.<name>` | An agent id, or `{agents: [...], default: <agent>, strategy: ordered \| explicit \| quota, requires: read \| write}`. `default` is tried first; the other agents are fallbacks in list order. `quota` picks the eligible agent whose account has the most remaining quota (unknown quota last, ties in list order). `default` cannot be combined with `strategy: explicit` or `quota`. |
 | `routing.slot_wait_s` | 0–86400, default 1800. How long `bridge_run_workflow` keeps retrying, with backoff from 5 s to 60 s, a task whose account slots (or the worktree's writer slot) are held by another bridge process. `0` ends the workflow `WAITING` at once, as before. |
@@ -122,14 +122,17 @@ are listed in the result).
 
 ### Verification sandbox
 
-Verification commands run code the executor wrote. On Linux with Landlock (kernel 5.13+) the
-bridge confines them; `agent-bridge health` shows what applies here (`verify_sandbox`).
+Verification commands run code the executor wrote. The bridge confines them with Landlock on
+Linux (kernel 5.13+) and with Seatbelt (`sandbox-exec`) on macOS; `agent-bridge health` shows
+what applies here (`verify_sandbox`). The macOS profile allows everything except writes outside
+the writable paths, AppleEvents, LaunchServices and running `open`, `launchctl` or `osascript`.
+It is best-effort confinement, not a full sandbox.
 
 | `workflow.verify_sandbox` | Effect |
 |---|---|
-| `auto` (default) | A check may write only to the worktree, a private `TMPDIR` (removed afterwards) and `verify_writable`; reads and the network are not restricted. Without Landlock (macOS, Windows, old kernels) checks run unconfined. |
-| `strict` | As `auto`, and TCP connect/bind are denied (Landlock ABI 4+, kernel 6.7+). Without Landlock checks are refused rather than run unconfined. |
-| `none` | No confinement. |
+| `auto` (default) | A check may write only to the worktree, a private `TMPDIR` (removed afterwards) and `verify_writable`; reads and the network are not restricted. Without either (Windows, old Linux kernels, or a bridge that already runs inside a sandbox) checks run unconfined and `health` reports the `verify_unconfined` problem (NOT OK) until a human sets `none`. |
+| `strict` | As `auto`, and TCP connect/bind are denied (Landlock ABI 4+, kernel 6.7+, or Seatbelt). Without a sandbox, checks are refused rather than run unconfined. |
+| `none` | No confinement, accepted by a human; `health` keeps a `verify_unconfined` warning. |
 
 Test runners that write caches outside the project need them in `verify_writable`, for example
 `verify_writable: [~/.cache/uv]` for `uv run pytest` or `[~/.npm]` for `npm test`; the check's
@@ -155,9 +158,9 @@ keys are rejected. The full file with every default is `config.example.json`;
 | `network_retries` / `retry_backoff_s` | `1` / `10` | Bounded retry for network errors only. |
 | `verify_timeout_s` | `900` | Limit per verification command. |
 | `verify_allowlist` | `pytest`, `uv`, `python`, `python3`, `ruff`, `mypy`, `make`, `npm`, `npx`, `pnpm`, `yarn`, `node`, `go`, `cargo`, `git`, `true`, `false` | Executables a verification command may start. |
-| `protected_paths` | `.env*`, `*.pem`, `*.key`, `.git/**`, `.ai/**`, `.mcp.json`, `.claude/settings*.json` | Never writable by a task and never allowed in `allowed_paths`. |
+| `protected_paths` | `.env*`, `*.pem`, `*.key`, `.git/**`, `.ai/**`, `.mcp.json`, `.claude/settings*.json` | Never writable by a task and never allowed in `allowed_paths`. A project value adds to these defaults; it cannot remove them. |
 | `sensitive_paths` | migrations, `auth/`, `deploy/`, `.github/workflows/`, `*secret*`, `*credential*`, `Dockerfile` | A change under these requires human approval before `DONE`. |
-| `env_deny` / `env_allow` | `*_API_KEY`, `*_TOKEN`, `*_SECRET*`, `*PASSWORD*`, `AWS_*` / none | Variables removed from agent and verification environments. |
+| `env_deny` / `env_allow` | `*_API_KEY`, `*_TOKEN`, `*_SECRET*`, `*PASSWORD*`, `AWS_*` / none | Variables removed from agent and verification environments. A project `env_deny` adds to the defaults; it cannot remove them. `env_allow` re-allows a denied variable for agent processes only, never for verification commands. |
 | `lock_dir` | `$AGENT_BRIDGE_HOME/locks` | Cross-process account slot locks, shared by every project on the machine. |
 | `accounts` / `default_account` / `auto_switch` | — | Legacy setup only. With `orchestrator.yaml`, setting `accounts` or an enabled `auto_switch` is an error. |
 
@@ -181,6 +184,21 @@ An account is one login with its own auth home. Projects declare accounts in
   home. For Codex it fails if the global `~/.codex/auth.json` changes during the login.
 - **codex-switch.** Homes made with `codex-switch home add` work as Codex accounts. codex-switch
   and claude-switch *profiles* are listed but never used, because they hold copied tokens.
+- **Claude long-lived token (`claude setup-token`).** Instead of a login in `home`, an
+  `anthropic` account can name an environment variable that holds the token:
+  `token_env: AGENT_BRIDGE_CLAUDE_PRINTLESS_TOKEN`. The bridge reads that variable from its own environment and
+  passes it as `CLAUDE_CODE_OAUTH_TOKEN` to that account's runs only. Other accounts, and
+  verification commands, never see it.
+  - The name must match `AGENT_BRIDGE_CLAUDE_<NAME>_TOKEN`. The namespace stops a tampered
+    config from pointing at another secret, such as `GITHUB_TOKEN`. The `_TOKEN` suffix keeps it
+    under the built-in scrub, so no other process inherits it.
+  - Only a value starting with `sk-ant-oat` (what `setup-token` prints) is forwarded.
+  - Export the variable in the shell that starts Claude Code (the MCP server inherits it) or
+    runs `agent-bridge`.
+  - While the variable is unset, the account reads as logged out.
+  - Never write the token into `orchestrator.yaml`. The file lives in the worktree, and agents
+    can read the worktree. Claude agents are denied `.ai/orchestrator.yaml`, but Codex agents
+    are not.
 
 ### Machine-wide accounts
 
@@ -292,7 +310,8 @@ reset time.
 
 | Source | When |
 |---|---|
-| `actual` | The CLI reported a cost (Claude's `total_cost_usd`, opencode's per-step `cost`). |
+| `reported` | The CLI reported a cost (Claude's `total_cost_usd`, opencode's per-step `cost`). It is the CLI's own list-price estimate, not your bill: on a subscription login (Pro, Max, ChatGPT) it is not a charge, and `config-check` warns when such an account has `budget_usd`. |
+| `actual` | A run that never started, charged 0. |
 | `estimated` | Tokens times your `pricing`; or the `reserve_usd` charged for a run whose cost stayed unknown; or a run the provider refused (AUTH / QUOTA with no usage), charged 0. |
 | `unavailable` | No cost, no tokens and no pricing. |
 

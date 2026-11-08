@@ -335,7 +335,9 @@ def test_config_init(repo, tmp_path):
     import pty
     import sys
     exe = str(Path(sys.executable).parent / 'agent-bridge')
-    env = {**os.environ, 'GIT_CEILING_DIRECTORIES': str(repo.parent), 'HOME': str(tmp_path)}
+    home = tmp_path.parent / f'{tmp_path.name}-home'  # outside the project: config-check checks it
+    home.mkdir()
+    env = {**os.environ, 'GIT_CEILING_DIRECTORIES': str(repo.parent), 'HOME': str(home)}
     listing = subprocess.run([exe, 'config-init'], cwd=repo, capture_output=True, text=True,
                              env=env)
     assert listing.returncode == 0, listing.stderr
@@ -368,7 +370,7 @@ def test_config_init(repo, tmp_path):
     assert ignored.returncode == 0
     check = subprocess.run([exe, 'config-check'], cwd=repo, capture_output=True, text=True,
                            env=env)
-    assert check.returncode == 0 and str(target) in check.stdout, check.stderr
+    assert check.returncode == 0 and str(target) in check.stdout, check.stdout + check.stderr
     target.write_text('# mine\n')
     code, out = in_terminal()
     assert code == 1 and 'exists' in out

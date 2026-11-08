@@ -414,7 +414,7 @@ untrusted code.
   and without a `review` stage any change outside `allowed_paths` is a violation (tool caches
   excepted).
 - **Verification.** Re-run by the bridge with argv lists only (no shell operators, no paths as
-  the program), allowlisted executables and a timeout. On Linux with Landlock the checks may
+  the program), allowlisted executables and a timeout. Under Landlock (Linux) or Seatbelt (macOS) the checks may
   write only to the worktree, a private `TMPDIR` and `workflow.verify_writable`
   (`workflow.verify_sandbox`: `auto` by default, `strict` also cuts TCP, `none`); the worktree is
   diffed again afterwards and what the checks changed is judged like the agent's changes. Nothing
@@ -436,10 +436,11 @@ untrusted code.
   `claude`, `opencode` or `agy` process.
 - **Environment and output.** Credential-shaped variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`,
   `*PASSWORD*`, `AWS_*`, and always `SSH_AUTH_SOCK`, `*_DSN`, `*DATABASE_URL*`, `*CREDENTIALS*`,
-  `KUBECONFIG`, `DOCKER_AUTH_CONFIG`) are removed before an agent or verification command starts.
-  Stored output passes through secret redaction.
-- **Recursion guard.** Every agent process gets `AGENT_BRIDGE_AGENT=1`; the server, the CLI and
-  the `Bridge` Python API refuse to start under it.
+  `KUBECONFIG`, `DOCKER_AUTH_CONFIG`, `*SECRET*`, `*_KEY`, `*_PAT`, `NETRC`, `*_AUTH`) are removed
+  before an agent or verification command starts. A project's `env_deny` adds to the defaults; it
+  cannot remove them. Stored output passes through secret redaction.
+- **Recursion guard.** Every agent process and every verification command gets
+  `AGENT_BRIDGE_AGENT=1`; the server, the CLI and the `Bridge` Python API refuse to start under it.
 - **Audit.** Every transition, attempt, routing decision, review, account change and workflow
   state is an event in `bridge.db`.
 
@@ -479,11 +480,15 @@ verification sandbox), not on a permission check inside the bridge.
 - Deny rules in `.claude/settings.json` guide Claude Code; they are not a security boundary. The
   interactive-terminal check for human-only commands can be defeated by an agent that allocates
   a pseudo-terminal.
-- Verification commands are confined only where Landlock exists (Linux 5.13+); elsewhere they run
-  with your permissions unless `verify_sandbox: strict` refuses them. Even confined they can read
-  your files, and under `auto` they keep the network.
-- Git-ignored files are compared by size and mtime, not content; with a reviewer, changed ignored
-  files are listed for the reviewer rather than refused.
+- Verification commands are confined by Landlock (Linux 5.13+) or Seatbelt (macOS). The macOS
+  profile is best effort: it confines writes and blocks the known launch-service escapes, but it
+  allows everything else. Without either, checks run with your permissions unless
+  `verify_sandbox: strict` refuses them, and `health` stays NOT OK (`verify_unconfined`) until a
+  human accepts that with `verify_sandbox: none`. Even confined they can read your files, and
+  under `auto` they keep the network.
+- Git-ignored files are compared by size and mtime, not content. An agent's change to an ignored
+  file outside `allowed_paths` is a violation (tool caches excepted); ignored files left only by
+  verification commands are listed for the reviewer rather than refused.
 - Codex and Claude still write their own session files (`~/.codex/sessions`, `~/.claude.json`).
 - Files under `.ai/` other than `config.json` are git-ignored and writable by Codex; treat them
   as convenience copies, not trusted input.
@@ -607,7 +612,7 @@ and rejects other `Host` headers. The threat model is in
 | `not a git repository` or `Target must be a git work tree` | The bridge only runs inside a git repository; run `git init` or change directory. |
 | `claude mcp list` shows `agent-bridge: ⏸ Pending approval` | Open `claude` in the folder once and trust it. |
 | `config-check` error | The message names the field; fix `.ai/orchestrator.yaml`. |
-| `health` reports NOT OK | An adapter CLI is missing or not logged in, or a protected file differs from `HEAD` (`protected_dirty`). `health` lists each cause with its fix under `problems`, and account QUOTA/AUTH marks under `warnings`; a human logs in or reviews that file. |
+| `health` reports NOT OK | An adapter CLI is missing or not logged in, a protected file differs from `HEAD` or still holds what a stopped task wrote into it (`protected_dirty`), or verification would run unconfined (`verify_unconfined`, see `verify_sandbox`). `health` lists each cause with its fix under `problems`, and account QUOTA/AUTH marks under `warnings`; a human logs in or reviews that file. |
 | `no eligible executor agent (…)` | Every executor is disabled, busy or unavailable; the reasons are listed per agent. |
 | Task `PAUSED` with `QUOTA` or `AUTH` | Wait for the quota window to reset, or fix the login; then `agent-bridge account-clear <name>` if the mark remains, and resume. With quota fallback enabled, resume may move the task to another account. |
 | Task `PAUSED` with `INTERRUPTED` | The runner was stopped by a signal or died; `bridge_resume_task` continues the session, `cancel` drops it. |
