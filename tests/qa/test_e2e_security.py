@@ -158,7 +158,7 @@ def test_verification_cannot_write_outside(sandbox: Sandbox) -> None:
     out = sandbox.ok("execute", task)
     assert not target.exists(), "a verification command wrote outside the worktree"
     check = sandbox.ok("result", task)["attempts"][-1]["verification"]["checks"][0]
-    assert out["state"] == "REWORK" and "Permission denied" in check["output_tail"], check
+    assert out["state"] == "REWORK" and any(text in check["output_tail"] for text in ("Permission denied", "Operation not permitted")), check
 
 
 # @pt.id QA-E2E-087-claude-credential-reads

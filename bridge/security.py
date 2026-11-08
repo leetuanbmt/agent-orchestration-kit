@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ctypes
+import sys
+import time
 import fnmatch
 import functools
 import json
@@ -177,6 +180,16 @@ def process_started(pid: int) -> str | None:
     Fixed locale and zone, so the CLI, the TUI and the MCP server print the same string."""
     if osutil.WINDOWS:
         return None
+    if sys.platform == "darwin":
+        try:
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            buf = ctypes.create_string_buffer(136)
+            if libproc.proc_pidinfo(int(pid), 3, 0, buf, 136) != 136:
+                return None
+            sec = int.from_bytes(buf.raw[120:128], "little")
+            return time.strftime("%a %b %e %H:%M:%S %Y", time.gmtime(sec))
+        except (OSError, AttributeError, ValueError, OverflowError):
+            return None
     try:
         ps = subprocess.run(["ps", "-o", "lstart=", "-p", str(int(pid))],
                             capture_output=True, text=True, check=False,

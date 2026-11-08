@@ -369,7 +369,7 @@ async def _verify(cmds: list[str], root: Path, cfg: BridgeConfig,
         try:
             argv = sandbox.wrap(parse_command(cmd, cfg), writable, confine)
             if argv is None:
-                raise ValueError("verify_sandbox is strict but Landlock is not available here: "
+                raise ValueError("verify_sandbox is strict but no verification sandbox is available here: "
                                  "the check was not run")
             proc = await asyncio.create_subprocess_exec(
                 *argv, cwd=root, env=env, **osutil.GROUP_KWARGS, stdin=asyncio.subprocess.DEVNULL,

@@ -47,11 +47,11 @@ def check_output(b, command: str) -> tuple[str, dict]:
 def test_wrap_modes(monkeypatch):
     argv = ["pytest", "-q"]
     assert sandbox.wrap(argv, ["/w"], "none") == argv
-    monkeypatch.setattr(sandbox, "landlock_abi", lambda: 5)
+    monkeypatch.setattr(sandbox, "backend", lambda: "landlock")
     wrapped = sandbox.wrap(argv, ["/w", "/t"], "auto")
     assert wrapped[1:4] == ["-I", "-c", sandbox.WRAPPER] and wrapped[4:] == ["/w", "/t", "net", "--", *argv]
     assert sandbox.wrap(argv, ["/w"], "strict")[4:6] == ["/w", "nonet"]
-    monkeypatch.setattr(sandbox, "landlock_abi", lambda: 0)
+    monkeypatch.setattr(sandbox, "backend", lambda: None)
     assert sandbox.wrap(argv, ["/w"], "auto") == argv
     assert sandbox.wrap(argv, ["/w"], "strict") is None
 
@@ -133,7 +133,7 @@ def test_verify_writable(make_orch, tmp_path, monkeypatch):
 # @pt.legacy none
 def test_strict_without_landlock_refuses(make_orch, repo, monkeypatch):
     monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n")
-    monkeypatch.setattr(sandbox, "landlock_abi", lambda: 0)
+    monkeypatch.setattr(sandbox, "backend", lambda: None)
     b = make_orch(flow("strict"))
     state, check = check_output(b, "python3 -c \"open('src/ran.txt', 'w')\"")
     assert not check["passed"] and "was not run" in check["error"]
@@ -153,3 +153,27 @@ def test_writable_validation():
         parse(flow("auto", "[cache]"))
     assert parse(flow("auto", "[/var/cache/x, ~/.cache/uv]")).workflow.verify_writable == [
         "/var/cache/x", "~/.cache/uv"]
+
+
+# @pt.id KIT-SEATBELT-006-verification
+# @pt.item Verification provisions confined worktree and TMPDIR writes on macOS
+# @pt.condition Seatbelt available, auto mode and a sibling outside the worktree
+# @pt.expected worktree and TMPDIR writes pass, outside write fails without creating the file
+# @pt.target bridge.review.run_verification, bridge.sandbox.wrap
+# @pt.method integration
+# @pt.legacy macOS verification ran unconfined
+@pytest.mark.skipif(sandbox.backend() != "seatbelt", reason="Seatbelt unavailable or nested")
+def test_seatbelt_verification_writes(make_orch, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n")
+    b = make_orch(flow("auto"))
+    command = (
+        "python3 -c \"import os, pathlib; pathlib.Path('src/inside.txt').write_text('x'); "
+        "pathlib.Path(os.environ['TMPDIR'], 't').write_text('x')\""
+    )
+    _, check = check_output(b, command)
+    assert check["passed"], check
+    target = tmp_path / "outside-seatbelt.txt"
+    state, check = check_output(b, f"python3 -c \"open('{target}', 'w')\"")
+    assert state == State.REWORK and "Operation not permitted" in check["output_tail"]
+    assert not target.exists()
+

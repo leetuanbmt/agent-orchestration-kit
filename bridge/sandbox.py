@@ -1,4 +1,4 @@
-"""Write confinement for verification commands: Linux Landlock, from the standard library.
+"""Write confinement for verification commands: Linux Landlock and macOS Seatbelt.
 
 Verification runs code the executor wrote. Under Landlock the command may write only to the
 worktree, a private temporary directory and the human-configured extra paths; reads are not
@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import ctypes
 import sys
+import subprocess
+from functools import cache
+from pathlib import Path
 from typing import Literal
 
 Mode = Literal["auto", "strict", "none"]
@@ -60,24 +63,66 @@ def landlock_abi() -> int:
         return 0
 
 
+@cache
+def _seatbelt_available() -> bool:
+    try:
+        return subprocess.run(
+            ["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)", "/usr/bin/true"],
+            capture_output=True, check=False,
+        ).returncode == 0
+    except OSError:
+        return False
+
+
+def backend() -> Literal["landlock", "seatbelt"] | None:
+    if landlock_abi() > 0:
+        return "landlock"
+    if (sys.platform == "darwin" and Path("/usr/bin/sandbox-exec").exists()
+            and _seatbelt_available()):
+        return "seatbelt"
+    return None
+
+
+def _seatbelt_profile(writable: list[str], mode: Mode) -> str:
+    rules = []
+    for path in writable:
+        resolved = str(Path(path).resolve())
+        if any(c in ('"', chr(92)) or ord(c) < 32 or ord(c) == 127
+               for c in str(path) + resolved):
+            raise ValueError("invalid Seatbelt writable path")
+        rules.append(f'(subpath "{resolved}")')
+    profile = ('(version 1)(allow default)(deny file-write*)(allow file-write* '
+               + " ".join(rules)
+               + ' (literal "/dev/null") (regex #"^/dev/(tty|fd/|stdout|stderr|ptmx|ttys)"))')
+    if mode == "strict":
+        profile += '(deny network-outbound (remote ip))(deny network-bind (local ip))'
+    return profile
+
+
 def wrap(argv: list[str], writable: list[str], mode: Mode) -> list[str] | None:
-    """argv run under the sandbox, the argv itself for `none` (or `auto` without Landlock), and
+    """argv run under the sandbox, the argv itself for `none` (or `auto` without a sandbox), and
     None when `strict` cannot be honoured: the check must then fail rather than run unconfined."""
     if mode == "none":
         return argv
-    if not landlock_abi():
+    selected = backend()
+    if selected is None:
         return None if mode == "strict" else argv
+    if selected == "seatbelt":
+        return ["/usr/bin/sandbox-exec", "-p", _seatbelt_profile(writable, mode), *argv]
     return [sys.executable, "-I", "-c", WRAPPER, *writable,
             "net" if mode == "auto" else "nonet", "--", *argv]
 
 
 def describe(mode: Mode) -> str:
     """One line for health: what verification commands run under here."""
-    abi = landlock_abi()
     if mode == "none":
         return "none (verify_sandbox: none)"
-    if not abi:
+    selected = backend()
+    if selected is None:
         return ("unavailable: checks are refused (strict)" if mode == "strict" else
                 "unavailable on this system: checks run unconfined (auto)")
+    if selected == "seatbelt":
+        return "seatbelt (sandbox-exec): writes confined" + (", TCP denied" if mode == "strict" else "")
+    abi = landlock_abi()
     return f"landlock ABI {abi}: writes confined" + (", TCP denied" if mode == "strict" and abi >= 4
                                                      else "")

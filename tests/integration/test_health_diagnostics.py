@@ -15,7 +15,7 @@ PATH_WITHOUT_FAKES = "/usr/bin:/bin"
 
 @pytest.fixture(autouse=True)
 def available_landlock(monkeypatch):
-    monkeypatch.setattr(sandbox, "landlock_abi", lambda: 5)
+    monkeypatch.setattr(sandbox, "backend", lambda: "landlock")
 
 
 def _health(b) -> dict:
@@ -53,7 +53,7 @@ def test_healthy_has_no_problems(make_bridge):
 # @pt.legacy unavailable confinement was only a warning
 @pytest.mark.parametrize("mode", ["auto", "strict"])
 def test_unavailable_sandbox_is_problem(make_bridge, monkeypatch, mode):
-    monkeypatch.setattr(sandbox, "landlock_abi", lambda: 0)
+    monkeypatch.setattr(sandbox, "backend", lambda: None)
     b = make_bridge()
     b.orch.workflow.verify_sandbox = mode
     h = _health(b)
@@ -74,7 +74,7 @@ def test_unavailable_sandbox_is_problem(make_bridge, monkeypatch, mode):
 # @pt.method integration
 # @pt.legacy none mode did not explain unconfined verification
 def test_unconfined_by_choice_is_warning(make_bridge, monkeypatch):
-    monkeypatch.setattr(sandbox, "landlock_abi", lambda: 0)
+    monkeypatch.setattr(sandbox, "backend", lambda: None)
     b = make_bridge()
     b.orch.workflow.verify_sandbox = "none"
     h = _health(b)
