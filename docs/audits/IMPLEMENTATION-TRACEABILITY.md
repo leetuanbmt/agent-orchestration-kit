@@ -29,7 +29,7 @@ commit.
 ## Verification
 
 - Bridge-run full suite after the last code change (814e5c9): 640 passed, 114 skipped.
-- `QA_E2E=1 pytest tests/qa` at 36407e3: 104 passed, 2 skipped.
+- `QA_E2E=1 pytest tests/qa` at 86baae8: 104 passed, 2 skipped.
 - `QA_E2E=1` web suite after the UX-01 fix: 30 passed, 1 skipped; the new keyboard check fails
   with the pre-fix `app.js` and passes with the fix.
 - `docs/audits/evidence/run_audit_repro.sh docs/audits/evidence/test_audit_2026_11_08_security.py`:
