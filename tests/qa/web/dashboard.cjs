@@ -586,6 +586,9 @@ const scenarios = {
     await page.waitForFunction(() => document.getElementById('drawer').hidden, null, { timeout: 4000 }).catch(() => {});
     check('main is not inert after Escape', await page.evaluate(() => !document.querySelector('main').inert));
     check('focus returns to the task row', await page.evaluate(() => !!document.activeElement?.closest('#task-rows')));
+    // UX-01 broke keys only on nodes a later poll patched, so press after one poll re-rendered.
+    await page.waitForResponse(r => r.url().endsWith('/api/overview'), { timeout: 8000 });
+    await page.waitForTimeout(300);
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => !document.getElementById('drawer').hidden &&
       document.getElementById('drawer-title').textContent.includes('Set x to 2'), null, { timeout: 8000 })
@@ -767,6 +770,9 @@ const scenarios = {
           await page.locator('#finished-cards .card').count());
     check('every card badge has a glyph', await page.evaluate(() => [...document.querySelectorAll('#board-view .card .badge')]
       .every(b => b.firstElementChild?.matches('.glyph[aria-hidden="true"]'))));
+    // UX-01 broke keys only on nodes a later poll patched, so press after one poll re-rendered.
+    await page.waitForResponse(r => r.url().endsWith('/api/overview'), { timeout: 8000 });
+    await page.waitForTimeout(300);
     await card.focus();
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => !document.getElementById('drawer').hidden &&

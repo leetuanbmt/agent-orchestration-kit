@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -659,3 +660,30 @@ def test_setup_failure_without_run_state(make_orch, fake_claude, monkeypatch):
     assert log(fake_claude) == []
     assert day_spend(b, "cl1")["unknown"] == 0
     assert os.getpid() == row["owner_pid"]
+
+
+# @pt.id KIT-AUDIT-CFG-04
+# @pt.item config-check applies the account home isolation check
+# @pt.condition an account home inside the project, the global ~/.claude, and a relative path
+# @pt.expected each config gets ok false with an error naming the account, and the CLI exits 1
+# @pt.target bridge.cli._run, bridge.cli.main
+# @pt.method integration
+# @pt.legacy audit CFG-04: config-check said ok and routing failed later
+def test_config_check_rejects_shared_homes(tmp_path, monkeypatch):
+    import os
+    root = tmp_path / "proj"
+    (root / ".ai").mkdir(parents=True)
+    monkeypatch.setattr(cli, "find_root", lambda *a, **k: root)
+    target = root / ".ai" / "orchestrator.yaml"
+    for home in (root / "homes" / "c1", Path(os.environ["HOME"]) / ".claude", "homes/c1"):
+        target.write_text("version: 1\naccounts:\n"
+                          f"  c1: {{provider: anthropic, home: '{home}'}}\n"
+                          "agents:\n  cl: {adapter: claude-cli, account: c1, allow_write: true}\n"
+                          "roles: {executor: cl}\nworkflow: {stages: [execute, test]}\n")
+        out = asyncio.run(cli._run(argparse.Namespace(cmd="config-check")))
+        assert out["ok"] is False and len(out["errors"]) == 1, home
+        assert out["errors"][0].startswith("account c1: home must be"), out["errors"]
+    monkeypatch.setattr(sys, "argv", ["agent-bridge", "config-check"])
+    with pytest.raises(SystemExit) as exit_:
+        cli.main()
+    assert exit_.value.code == 1

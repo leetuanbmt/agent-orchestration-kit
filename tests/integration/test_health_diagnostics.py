@@ -202,3 +202,21 @@ def test_cli_prints_fixes(make_bridge, repo, capsys, monkeypatch):
     fixes = out.split("To fix:", 1)[1]
     assert "install the codex CLI" in fixes
     assert "agent-bridge account-login default" in fixes
+
+
+# @pt.id KIT-HEALTH-DIAG-TEST04
+# @pt.item A CLI newer than the probed version is a health warning
+# @pt.condition the codex adapter reports 0.163.0 (probed), then 0.200.1 and a non-semver string
+# @pt.expected only 0.200.1 adds cli_unprobed with a re-probe fix; ok is unaffected
+# @pt.target bridge.service.Bridge.health, Bridge.unprobed
+# @pt.method integration
+# @pt.legacy audit TEST-04: sandbox claims were never re-checked when the CLI changed
+def test_unprobed_cli_is_warning(make_bridge, monkeypatch):
+    from bridge.executor import Adapter
+    b = make_bridge()
+    for version, warned in (("codex-cli 0.163.0", False), ("codex-cli 0.200.1", True),
+                            ("codex-cli 0.0.0-fake", False), ("error: gone", False)):
+        monkeypatch.setattr(Adapter, "version", lambda self, v=version: v)
+        h = _health(b)
+        assert ("cli_unprobed" in _codes(h["warnings"])) is warned, version
+        assert h["ok"] is True

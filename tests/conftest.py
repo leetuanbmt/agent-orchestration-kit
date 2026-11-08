@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from bridge import progress
 from bridge.config import BridgeConfig
 from bridge.executor import AGENT_ENV
 from bridge.orchestrator import parse
@@ -27,6 +28,8 @@ def isolated_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.
     monkeypatch.delenv("AGENT_BRIDGE_HOME", raising=False)
     # The suite may itself run inside an agent the bridge started.
     monkeypatch.delenv(AGENT_ENV, raising=False)
+    # The dashboard caches git topology for seconds; every test starts from a fresh repo layout.
+    monkeypatch.setattr(progress, "_TOPOLOGY", {})
 
 
 def git(root: Path, *args: str) -> None:

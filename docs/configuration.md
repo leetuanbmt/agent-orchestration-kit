@@ -23,7 +23,7 @@ Start from a shipped example and validate it:
 ```bash
 agent-bridge config-init                # list the examples
 agent-bridge config-init orchestrator   # write .ai/orchestrator.yaml; refuses to overwrite
-agent-bridge config-check               # schema check; errors name the field
+agent-bridge config-check               # schema and account-home isolation; errors name the field (exit 1)
 agent-bridge agents                     # resolved roles, agents and availability
 ```
 

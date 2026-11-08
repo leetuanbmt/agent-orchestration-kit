@@ -186,6 +186,14 @@ async def _run(args: argparse.Namespace) -> Any:
             "roles": {r: orch.role(r).agents for r in orch.roles}}
         if warnings := _limit_warnings(orch):
             out["warnings"] = warnings
+        errors = []
+        for name in sorted(orch.accounts):
+            try:  # the same isolation check routing applies, so a bad home fails here first
+                resolve_account(orch, load_config(root), root, name)
+            except ValueError as e:
+                errors.append(str(e))
+        if errors:
+            out |= {"ok": False, "errors": errors}
         return out
     if args.cmd == "config-init" and args.example is None:
         for path in sorted(EXAMPLES.glob("*.yaml")):
@@ -486,8 +494,8 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(1)
     if _signalled:
         raise SystemExit(128 + _signalled[0])  # the run was stopped; its task is PAUSED
-    if args.cmd == "health" and not out["ok"]:
-        raise SystemExit(1)  # scripts and CI can gate on `agent-bridge health`
+    if args.cmd in ("health", "config-check") and not out["ok"]:
+        raise SystemExit(1)  # scripts and CI can gate on both
 
 
 if __name__ == "__main__":

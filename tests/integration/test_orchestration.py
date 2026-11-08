@@ -651,3 +651,22 @@ def test_schema_upgrade(tmp_path):
     db.close()
     row = Store(path).get("T0001")
     assert row["account"] == "a" and row["agent"] is None and row["workflow_id"] is None
+
+
+# @pt.id KIT-AUDIT-FUN-03
+# @pt.item execute refuses a task that is not READY before routing it
+# @pt.condition an unpinned task is cancelled, then executed
+# @pt.expected TransitionError naming the state; no agent or account written and no agent_routed event
+# @pt.target bridge.service.Bridge.execute_task
+# @pt.method integration
+# @pt.legacy audit FUN-03: a terminal task was routed (agent, account and event written) before the state check
+def test_execute_terminal_task_is_not_routed(make_orch, fake_codex, fake_claude):
+    from bridge.models import TransitionError
+    b = make_orch(CONFIG_A)
+    tid = run(b.create_task(spec()))["task_id"]
+    run(b.cancel_task(tid, "not needed"))
+    with pytest.raises(TransitionError, match="CANCELLED; execute needs READY"):
+        run(b.execute_task(tid))
+    row = b.store.get(tid)
+    assert (row["agent"], row["account"]) == (None, None)
+    assert events(b, tid, "agent_routed") == []

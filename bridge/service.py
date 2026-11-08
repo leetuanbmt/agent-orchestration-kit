@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import shlex
 import shutil
 import sqlite3
@@ -388,6 +389,16 @@ class Bridge:
 
         return self._summary(self.store.rebind(task_id, REBINDABLE, change, actor, event_kind))
 
+    # The CLI versions whose sandbox and permission behaviour docs/REPORT.md last probed (audit
+    # TEST-04): a newer CLI may have changed it, so health asks for a re-probe.
+    PROBED_VERSIONS = {"codex-cli": (0, 163, 0), "claude-cli": (2, 1, 308)}
+
+    @classmethod
+    def unprobed(cls, adapter: str, version: str | None) -> bool:
+        found = re.search(r"(\d+)\.(\d+)\.(\d+)", version or "")
+        probed = cls.PROBED_VERSIONS.get(adapter)
+        return bool(found and probed and tuple(map(int, found.groups())) > probed)
+
     async def health(self) -> dict[str, Any]:
         codex: dict[str, Any] = {"path": self._adapter("codex-cli").available()}
         if codex["path"]:
@@ -500,6 +511,14 @@ class Bridge:
                                      f"account {name} needs a new login{detail}",
                                      "a human logs the account in again with "
                                      f"`agent-bridge account-login {name}`"))
+        for name, info in adapters.items():
+            if self.unprobed(name, info["version"]):
+                probed = ".".join(map(str, self.PROBED_VERSIONS[name]))
+                warnings.append(item("cli_unprobed",
+                                     f"{name} {info['version']} is newer than {probed}, the "
+                                     "version its sandbox and permission rules were probed on",
+                                     "re-run the probes in docs/REPORT.md with this version, then "
+                                     "update PROBED_VERSIONS in bridge/service.py"))
         for name, info in limits.items():
             if info["status"] == "limited":
                 warnings.append(item("account_limited",
@@ -587,6 +606,8 @@ class Bridge:
         if row["state"] == State.BACKLOG:
             raise TransitionError(f"{task_id} has unfinished dependencies: "
                                   f"{row['spec']['depends_on']}")
+        if row["state"] != State.READY:  # before routing writes an agent onto the task
+            raise TransitionError(f"{task_id} is {row['state']}; execute needs READY")
         self._quota_fallback(task_id)
         routed = self._route(task_id)
         row = self.store.get(task_id)
@@ -1022,7 +1043,8 @@ class Bridge:
                         waiting[tid] = reason
                     elif slot is None:
                         slots[tid] = {"deadline": now + slot_wait_s, "delay": SLOT_WAIT_FIRST_S,
-                                      "next": now + SLOT_WAIT_FIRST_S + random.uniform(0, 1),
+                                      "next": min(now + SLOT_WAIT_FIRST_S + random.uniform(0, 1),
+                                                  now + slot_wait_s),
                                       "reason": reason, "until": time.time() + slot_wait_s}
                         self.store.log(tid, Actor.BRIDGE, "slot_wait",
                                        {"workflow_id": wid, "reason": reason,

@@ -15,6 +15,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .accounts import load_registry
+from .registry import registry_dir
 from .config import AI_DIR, BridgeConfig
 
 ORCHESTRATOR_FILE = "orchestrator.yaml"
@@ -395,16 +396,24 @@ def parse(text: str, source: str = ORCHESTRATOR_FILE,
         raise ValueError(f"{source}: invalid YAML: {e}") from e
     if not isinstance(data, dict):
         raise ValueError(f"{source}: expected a mapping at the top level")
+    inherited = set()
     if registry:
         # Registry accounts are usable by name; the project's own declarations win.
+        inherited = set(registry) - set(data.get("accounts") or {})
         data["accounts"] = {**registry, **(data.get("accounts") or {})}
     try:
         return OrchestratorConfig.model_validate({**data, "source": source})
     except ValidationError as e:
-        problems = "; ".join(
-            f"{'.'.join(str(p) for p in err['loc']) or '<root>'}: {err['msg']}"
-            for err in e.errors())
-        raise ValueError(f"{source}: {problems}") from e
+        problems: dict[str, list[str]] = {}
+        for err in e.errors():
+            loc = err["loc"]
+            # An error in a machine-wide account belongs to the registry file, not this one.
+            where = (str(registry_dir() / "accounts.json")
+                     if len(loc) > 1 and loc[0] == "accounts" and loc[1] in inherited else source)
+            problems.setdefault(where, []).append(
+                f"{'.'.join(str(p) for p in loc) or '<root>'}: {err['msg']}")
+        raise ValueError("; ".join(f"{where}: {'; '.join(found)}"
+                                   for where, found in problems.items())) from e
 
 
 def load(root: Path, cfg: BridgeConfig) -> OrchestratorConfig:

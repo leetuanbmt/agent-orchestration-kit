@@ -43,11 +43,45 @@ def _rollout_quota(home):
         return limits
 
 
+# ponytail: git topology (worktree lists, store paths) is cached for 10 s, so a new worktree or a
+# moved store shows up that much later. Task rows have their own mtime cache and runner liveness
+# is never cached.
+_TOPOLOGY_TTL = 10.0
+_TOPOLOGY = {}
+_TOPOLOGY_LOCK = threading.Lock()
+
+
+def _topology(key, compute):
+    now = time.monotonic()
+    with _TOPOLOGY_LOCK:
+        hit = _TOPOLOGY.get(key)
+        if hit is not None and now - hit[0] < _TOPOLOGY_TTL:
+            return hit[1]
+    value = compute()  # errors are not cached
+    with _TOPOLOGY_LOCK:
+        _TOPOLOGY[key] = (now, value)
+    return value
+
+
+def _store(root):
+    return _topology(("store", str(root)), lambda: storage.find_store(root))
+
+
+def _worktree_list(root):
+    return _topology(("worktrees", root), lambda: subprocess.run(
+        ["git", "-C", root, "worktree", "list", "--porcelain"],
+        capture_output=True, text=True, check=False).stdout)
+
+
 def project_id(root: str) -> str:
     return hashlib.sha256(root.encode()).hexdigest()[:12]
 
 
 def discover_roots(here: Path | None = None) -> list[str]:
+    return list(_topology(("roots", str(here)), lambda: _discover_roots(here)))
+
+
+def _discover_roots(here):
     roots = dict.fromkeys(registry.with_worktrees(
         [*accounts.known_projects(), *([str(here)] if here else [])]))
     try:
@@ -95,7 +129,7 @@ def _json(value):
 
 def _read(root):
     try:
-        path = storage.find_store(root)
+        path = _store(root)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise FileNotFoundError(root) from exc
     path = path.resolve()
@@ -132,7 +166,7 @@ def _read(root):
 
 
 def _latest_attempt(root, tid):
-    path = storage.find_store(root).resolve()
+    path = _store(root).resolve()
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     try:
@@ -469,12 +503,11 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
         project["percent"] = percent(project["counts"])
         trees = []
         if not project["root_missing"]:
-            out = subprocess.run(["git", "-C", root, "worktree", "list", "--porcelain"],
-                                 capture_output=True, text=True, check=False)
-            trees = list(dict.fromkeys(line.removeprefix("worktree ") for line in out.stdout.splitlines()
+            listing = _worktree_list(root)
+            trees = list(dict.fromkeys(line.removeprefix("worktree ") for line in listing.splitlines()
                                        if line.startswith("worktree ")))
             current_tree = None
-            for line in out.stdout.splitlines():
+            for line in listing.splitlines():
                 if line.startswith("worktree "):
                     current_tree = line.removeprefix("worktree ")
                 elif not line:
@@ -571,7 +604,7 @@ def task_log(pid, tid, n, offset=0, roots=None):
     entries = []
     truncated = False
     try:
-        path = storage.find_store(root).parent / "logs" / f"{tid}-{n}.jsonl"
+        path = _store(root).parent / "logs" / f"{tid}-{n}.jsonl"
         with path.open("rb") as log:
             size = log.seek(0, 2)
             start = offset

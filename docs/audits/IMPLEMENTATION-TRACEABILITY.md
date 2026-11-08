@@ -3,7 +3,7 @@
 Maps the findings of the 2026-11-08 audit (`MASTER-AUDIT-REPORT.md` and the phase reports, left
 unchanged) to the changes on branch `feat/audit-driven-improvements`. Each fix was written by the
 executor agent through agent-bridge, verified by the bridge (full test suite) and reviewed before
-commit.
+commit, unless its row says it was written directly by Claude while no executor had quota.
 
 ## Fixed
 
@@ -31,6 +31,18 @@ commit.
 | SEC-08 | Low | With a review stage, ignored files the agent changed were only listed | An agent-written ignored file outside `allowed_paths` (tool caches excepted) is a violation in every workflow; ignored files left only by verification stay report-only with a reviewer (`bridge/review.py`, `bridge/runner.py`) | 840bba7 | `tests/integration/test_ignored_files.py` |
 | SEC-07 (untracked part) | Medium | Approval bound only the attempt's own files | Approval is refused when new untracked, non-ignored files appeared since verification, except files later attempts of other tasks recorded and protected files (`bridge/review.py`, `bridge/service.py`, `bridge/state.py`) | d6c925c | `tests/integration/test_approval_binding.py` (BIND-009..013) |
 | SEC-04 (`.ai/orchestrator.yaml` part) | Medium | `protected_dirty` used git status, which cannot see the git-ignored orchestrator config, so a tampered file stayed invisible after the task was BLOCKED | Attempts stopped by a protected-file violation record what each file held (`protected_after`); `health` lists the file in `protected_dirty` (NOT OK) while it still holds that content, and a restore or a human edit clears it (`bridge/review.py`, `bridge/runner.py`, `bridge/service.py`, `bridge/state.py`). Written directly by Claude with the user's approval because no executor had quota left | 2f0a631 | `tests/integration/test_protected_tamper.py` |
+| BILL-01 | Medium | A CLI-reported `total_cost_usd` was stored as if it were the bill, and `budget_usd` gated subscription logins on list prices | CLI-reported costs are recorded with source `reported` and counted as estimates; `config-check` warns when `budget_usd` is set on an anthropic or openai account (`bridge/quota.py`, `bridge/state.py`, `bridge/cli.py`). Written directly by Claude (no executor quota) | 0201379 | `tests/unit/test_usage_ledger.py`, `tests/integration/test_limit_hardening.py`, `tests/unit/test_quota_limits.py` |
+| AUTH-02 | Medium | One global `CLAUDE_CODE_OAUTH_TOKEN` overrode every Claude account's login | An anthropic account may name its own `token_env` (`AGENT_BRIDGE_CLAUDE_<NAME>_TOKEN`); only that account's runs get it, and only when it looks like a `setup-token` value; a missing or wrong value reads as logged out; Claude agents cannot read `.ai/orchestrator.yaml` (`bridge/accounts.py`, `bridge/orchestrator.py`, `bridge/service.py`, `bridge/executor.py`). Written directly by Claude (no executor quota) | a5903ae, 22a0ece | `tests/unit/test_account_tokens.py` |
+| CI flake | - | `test_reassign` failed on CI when background git maintenance removed `maintenance.lock` during a copy | The repo fixture turns off `gc.auto` and `maintenance.auto` (`tests/conftest.py`) | 76769ea | CI green on 76769ea and a5903ae |
+| PERF-01, PERF-02 | Medium | Every dashboard request ran `git worktree list` and `git rev-parse` for every project | Worktree lists, store paths and the project list are cached for 10 s; task rows keep their mtime cache and runner liveness is never cached (`bridge/progress.py`). In-process measurement on this machine (49 projects, 252 tasks): `snapshot` 36 → 0 `subprocess.run` per request, p50 800 → 81 ms; `task_detail` 10 → 0, p50 192 → 14 ms. Written directly by Claude (no executor quota) | (this commit) | `tests/unit/test_progress.py::test_topology_cached_liveness_not` |
+| TEST-03 | Medium | The keyboard e2e pressed Enter before any poll had re-rendered the rows | Both Enter checks wait for an `/api/overview` response first; with the UX-01 bug put back, "Enter on a task row opens the drawer" fails | (this commit) | `tests/qa/web/dashboard.cjs` |
+| TEST-04 | Medium | Sandbox claims rested on one-off probes; nothing flagged a newer CLI | `health` warns `cli_unprobed` when codex or claude is newer than `PROBED_VERSIONS` (`bridge/service.py`, `docs/REPORT.md`). The probes themselves still need a human run with real accounts | (this commit) | `tests/integration/test_health_diagnostics.py::test_unprobed_cli_is_warning` |
+| TEST-01 | Medium | Confirmed findings had no regression test | Every row in this table names the test that fails without its fix; the audit repro covers the original reproductions | - | this table, `docs/audits/evidence/` |
+| FUN-03 | Low | `execute` wrote a route (agent, account, event) onto a task before checking it was READY | `execute_task` refuses a non-READY task first (`bridge/service.py`). Written directly by Claude | (P2 commit) | `tests/integration/test_orchestration.py::test_execute_terminal_task_is_not_routed` |
+| FUN-05 | Low | The first slot retry ignored a `slot_wait_s` below 5 s | The first retry is capped by the deadline (`bridge/service.py`). Written directly by Claude | (P2 commit) | `tests/integration/test_slot_wait.py::test_slot_wait_expires` |
+| CFG-04 | Low | `config-check` passed account homes that routing later refused | `config-check` runs the same isolation check and exits 1 with `errors` (`bridge/cli.py`). Written directly by Claude | (P2 commit) | `tests/integration/test_limit_hardening.py::test_config_check_rejects_shared_homes` |
+| CFG-06 | Low | A broken registry entry was reported against `.ai/orchestrator.yaml` | Errors in an account that only the registry declares name `accounts.json` (`bridge/orchestrator.py`). Written directly by Claude | (P2 commit) | `tests/unit/test_orchestrator.py::test_registry_error_names_registry_file` |
+| TEST-02 | Low | A hung test could hold a CI job for GitHub's 6-hour default | Both CI jobs have `timeout-minutes: 30` (`.github/workflows/ci.yml`) | (P2 commit) | CI |
 
 ## Verification
 
@@ -57,6 +69,4 @@ commit.
 | SEC-03, SEC-12 | Same-user human gate is a documented limitation |
 | SEC-06, SEC-11, SEC-13 | Lower severity; separate changes |
 | AUTH-04 | `*_BASE_URL` is kept on purpose for proxies |
-| PERF-01, PERF-02 | Need a before/after benchmark (`bench_web.py`) and a git-topology cache that leaves runner liveness out; deferred for executor quota |
-| BILL-01 | Labelling `total_cost_usd` as an estimate and warning on `budget_usd` with subscription accounts; deferred for executor quota |
 | Remaining Medium/Low findings | Out of scope for this pass; see `08-improvement-roadmap.md` |
