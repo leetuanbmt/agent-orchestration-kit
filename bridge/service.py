@@ -258,8 +258,9 @@ class Bridge:
         await self.runner._run(task_id, n, used, prompt, session, lock, usage_id)
 
     async def _run_inner(self, task_id: str, n: int, used: int, prompt: str,
-                         session: str | None, usage_id: int | None = None) -> None:
-        await self.runner._run_inner(task_id, n, used, prompt, session, usage_id)
+                         session: str | None, lock: AccountLock,
+                         usage_id: int | None = None) -> None:
+        await self.runner._run_inner(task_id, n, used, prompt, session, lock, usage_id)
 
     async def _review_stage(self, task_id: str) -> None:
         await self.runner._review_stage(task_id)
@@ -673,7 +674,8 @@ class Bridge:
                 res = await self._adapter(agent.adapter).run(
                     RunRequest(prompt, account, "read-only", self._timeout(agent, None),
                                schema=schema, model=agent.model, hook_settings=hook_settings,
-                               read_deny=self._account_homes()),
+                               read_deny=self._account_homes(),
+                               keep_fds=() if (fd := lock.fileno()) is None else (fd,)),
                     should_cancel=cancel)
             finally:
                 lock.release()

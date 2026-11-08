@@ -112,7 +112,7 @@ class TaskRunner:
         b = self.bridge
         try:
             try:
-                await self._run_inner(task_id, n, used, prompt, session, usage_id)
+                await self._run_inner(task_id, n, used, prompt, session, lock, usage_id)
             except EvidenceError as e:  # no evidence, no verdict: pause, never pass or fail
                 self._park_without_evidence(task_id, n, used, e)
             except Exception as e:  # never leave a task stuck in RUNNING/VERIFYING
@@ -134,7 +134,8 @@ class TaskRunner:
             b._runs.pop(task_id, None)
 
     async def _run_inner(self, task_id: str, n: int, used: int, prompt: str,
-                         session: str | None, usage_id: int | None = None) -> None:
+                         session: str | None, lock: AccountLock,
+                         usage_id: int | None = None) -> None:
         b = self.bridge
         try:
             row = self.store.get(task_id)
@@ -184,7 +185,8 @@ class TaskRunner:
                                write_paths=spec["allowed_paths"],
                                deny_paths=[*spec.get("excluded_paths", []),
                                            *b.cfg.protected_paths],
-                               read_deny=b._account_homes()),
+                               read_deny=b._account_homes(),
+                               keep_fds=() if (lock_fd := lock.fileno()) is None else (lock_fd,)),
                     on_start=lambda pid: self.store.update(task_id, codex_pid=pid,
                                                             codex_started=process_started(pid)),
                     on_session=lambda sid: self.store.update(task_id, session_id=sid),

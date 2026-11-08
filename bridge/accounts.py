@@ -451,8 +451,12 @@ class AccountLock:
             return True
         return False
 
+    def fileno(self) -> int | None:
+        return self._file.fileno() if self._file is not None else None
+
     def release(self) -> None:
         if self._file is not None:
+            osutil.unlock(self._file)
             # Keep the inode: unlinking would let waiters lock different files for one account.
             self._file.close()
             self._file = None

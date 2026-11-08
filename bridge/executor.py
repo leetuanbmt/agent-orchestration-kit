@@ -195,6 +195,7 @@ class RunRequest:
     deny_paths: list[str] = field(default_factory=list)
     # Directories the agent's read tools must not open: every configured account's auth home.
     read_deny: list[Path] = field(default_factory=list)
+    keep_fds: tuple[int, ...] = ()
 
 
 @dataclass
@@ -280,6 +281,9 @@ class Adapter:
             env[AGENT_ENV] = "1"
             proc = await asyncio.create_subprocess_exec(
                 *argv, cwd=self.root, env=env, **osutil.GROUP_KWARGS,
+                # ponytail: an agent can LOCK_UN its inherited fd and give up its slot;
+                # accepted quota overuse, no worse than before descriptor inheritance.
+                **({"pass_fds": req.keep_fds} if not osutil.WINDOWS else {}),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024,
             )
