@@ -10,6 +10,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -269,6 +270,7 @@ _projects_lock = registry.projects_lock
 
 
 def load_registry() -> dict[str, dict[str, str | None]]:
+    registry.adopt_legacy()
     path = registry_dir() / "accounts.json"
     if not path.exists():
         return {}
@@ -281,13 +283,23 @@ def load_registry() -> dict[str, dict[str, str | None]]:
 def _save_registry(data: dict[str, dict[str, str | None]]) -> None:
     base = registry_dir()
     base.mkdir(mode=0o700, exist_ok=True)
-    tmp = base / "accounts.json.tmp"
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-    os.replace(tmp, base / "accounts.json")
+    tmp = base / f"accounts.json.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as out:
+            out.write(json.dumps(data, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, base / "accounts.json")
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def register(name: str, provider: str, home: str | None = None) -> Account:
     """Record a machine-wide account; without `home`, create a fresh one under the registry."""
+    with registry.projects_lock():
+        return _register(name, provider, home)
+
+
+def _register(name: str, provider: str, home: str | None) -> Account:
     if name == "default" or not _NAME.fullmatch(name):
         raise ValueError(f"invalid or reserved account name: {name!r} (use [a-z0-9_-])")
     if provider not in HOME_ENV and provider != "opencode":
@@ -323,11 +335,12 @@ def register(name: str, provider: str, home: str | None = None) -> Account:
 
 def unregister(name: str) -> bool:
     """Forget a registry account; delete its home only when the registry created it."""
-    data = load_registry()
-    entry = data.pop(name, None)
-    if entry is None:
-        raise ValueError(f"no registry account {name!r}")
-    _save_registry(data)
+    with registry.projects_lock():
+        data = load_registry()
+        entry = data.pop(name, None)
+        if entry is None:
+            raise ValueError(f"no registry account {name!r}")
+        _save_registry(data)
     home = Path(entry["home"]) if entry.get("home") else None
     owned = home is not None and home.parent == registry_dir() / "homes"
     if owned and home.is_dir() and not home.is_symlink():
