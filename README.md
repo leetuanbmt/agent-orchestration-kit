@@ -330,7 +330,7 @@ Full reference: every key and default, accounts, quota, quota fallback and state
 | Adapter | Provider | Can write | Isolation | Account home |
 |---|---|---|---|---|
 | `codex-cli` | `openai` | Yes (default) | Codex OS sandbox (`workspace-write` / `read-only`), no network | `CODEX_HOME` |
-| `claude-cli` | `anthropic` | Only with `allow_write: true` | CLI permission rules; no OS sandbox | `CLAUDE_CONFIG_DIR` |
+| `claude-cli` | `anthropic` | Only with `allow_write: true` | CLI permission rules; OS sandbox for Bash | `CLAUDE_CONFIG_DIR` |
 | `client` | — | No | The MCP caller itself; never started by the bridge | — |
 | `opencode-cli` | `opencode` | No (refused by config) | Tool permissions denied via config; no OS sandbox | Global login only |
 | `agy-cli` | `google` | No (refused by config) | `--mode plan --sandbox`; no OS sandbox | A whole `HOME` |
@@ -459,14 +459,19 @@ untrusted code.
 - **Codex CLI** runs in its OS sandbox (`workspace-write` or `read-only`; `danger-full-access`
   cannot be configured), without network, with `/tmp` and `$TMPDIR` not writable and
   `~/.codex/config.toml` ignored. Planner and reviewer runs are `read-only`.
-- **Claude CLI** has no OS sandbox. The bridge runs it with `--strict-mcp-config` (no MCP
-  servers), `--setting-sources ""` (no user or project settings, allow rules or hooks),
-  `--permission-mode dontAsk` and an allowlist of Read/Glob/Grep. With `allow_write: true` it also
-  gets Edit/Write scoped to the task's `allowed_paths`, with excluded and protected paths denied.
-  Reads of Codex/agent-bridge/agy credentials, `~/.claude/.credentials.json`, every configured
-  account home and the project's `.env*`/key files are denied; other files your user can read
-  remain readable, and `allow_bash: true` is not path-confined.
-  Prefer Codex as the executor and never combine `allow_bash` with untrusted work.
+- **Claude CLI** uses `--strict-mcp-config` (no MCP servers), `--setting-sources ""`
+  (no user/project settings), `--permission-mode dontAsk` and Read/Glob/Grep permissions.
+  With `allow_write: true`, Edit/Write stay scoped to task paths, with protected paths denied.
+  Read/Edit tools keep their existing permission rules, including credential read denies.
+  With `allow_bash: true`, Bash and its child processes run in Claude Code’s OS sandbox:
+  credential paths (every account home, registry homes, global CLI credential directories and
+  private project account/orchestrator files) cannot be read, writes are limited to the working
+  directory and `$TMPDIR`, and network access is denied. Sandbox availability is required;
+  unsandboxed retries and command exclusions are disabled. The macOS Keychain remains reachable:
+  `security` and `/usr/bin/security` are denied by permission rules only, a speed bump rather
+  than a security boundary. Other readable files remain readable.
+  Prefer Codex as the executor for untrusted work, because Claude's Read tools and the claude
+  process itself are not OS-confined and the Keychain is reachable from sandboxed Bash.
 - **opencode and agy** are read-only. opencode runs with edit, bash, webfetch and external
   directories denied through `OPENCODE_CONFIG_CONTENT`; agy runs with `--mode plan --sandbox` and
   keeps browser tools the CLI cannot disable. Probes wrote no files with either; neither has an

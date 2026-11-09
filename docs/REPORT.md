@@ -170,12 +170,16 @@ wrote only its own plan artifact outside the worktree. Isolating opencode by XDG
   Claude were exercised only against the fake CLIs: they are human-only, so no real login was
   run. `account-add` refuses to finish if the global login changed, as `account-login` does.
 
-- A Claude executor (`allow_write`) has no OS sandbox. Probe on 2.1.306 (haiku, `dontAsk`):
+- Claude Read/Edit tools use permission rules. Probe on 2.1.306 (haiku, `dontAsk`):
   an unscoped `Write` created a file outside the working directory; with `Edit(./src/**)` and
   `Write(./src/**)` the same run wrote `src/inside.txt` and was refused for a file outside the
   worktree and for `other.txt` in it. The adapter therefore scopes Edit/Write to the task's
   `allowed_paths` and denies excluded and protected paths. Read tools still read anything the
-  user can, and `allow_bash` is not path-confined.
+  user can subject to credential denies. With `allow_bash`, Bash and its children now run in
+  Claude Code’s OS sandbox: credential reads denied, writes only to the working directory and
+  `$TMPDIR`, no network, no unsandboxed retries, and failure if the sandbox is unavailable.
+  macOS Keychain remains reachable; permission denies for `security` and `/usr/bin/security`
+  are only a speed bump. Read/Edit tools keep their permission rules.
 - Claude quota is known only after the account's first run through the bridge. Where an
   isolated `CLAUDE_CONFIG_DIR` login is stored on macOS was not verified; `account-login`
   compares the global `claude auth status` identity before and after and exits 3 if it changed.
