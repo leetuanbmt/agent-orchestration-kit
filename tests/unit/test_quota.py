@@ -2,6 +2,7 @@
 
 import json
 import os
+import pathlib
 
 import pytest
 
@@ -207,3 +208,32 @@ def test_bucket_preference(tmp_path, preferred):
                 "type": "token_count", "rate_limits": limits}}) + "\n")
     result = read_quota(tmp_path, now=0)
     assert result["remaining_pct"] == (80.0 if preferred is None else 40.0)
+
+
+# @pt.id KIT-PERF-QUOTA-001-cache
+# @pt.item Rollout parse cache
+# @pt.condition read_quota is called repeatedly, then one rollout is rewritten
+# @pt.expected Unchanged files are opened once and only the changed file is re-read
+# @pt.target bridge.quota.read_quota
+# @pt.method unit
+# @pt.legacy none
+def test_rollout_cache(tmp_path, monkeypatch):
+    first = rollout(tmp_path, "a", {"primary": {"used_percent": 70}}, 10)
+    second = rollout(tmp_path, "b", {"primary": {"used_percent": {}}}, 20)
+    opened = []
+    real_open = pathlib.Path.open
+
+    def counting_open(self, *args, **kwargs):
+        opened.append(self.name)
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "open", counting_open)
+    assert read_quota(tmp_path, now=0)["remaining_pct"] == 30.0
+    assert read_quota(tmp_path, now=0)["remaining_pct"] == 30.0
+    assert sorted(opened) == [first.name, second.name]
+    second.write_text(json.dumps({"type": "event_msg", "payload": {
+        "type": "token_count", "rate_limits": {"primary": {"used_percent": 5}}}}) + "\n\n")
+    os.utime(second, (21, 21))
+    opened.clear()
+    assert read_quota(tmp_path, now=0)["remaining_pct"] == 95.0
+    assert opened == [second.name]

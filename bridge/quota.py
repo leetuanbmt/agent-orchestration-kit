@@ -76,6 +76,32 @@ def effective_account_state(state: dict, quota: dict | str, cooldown_s: float | 
     return state, None
 
 
+# path -> ((st_mtime_ns, st_size), rate_limits payloads in file order); independent of `now`.
+_ROLLOUT_CACHE: dict[str, tuple[tuple[int, int], tuple[dict, ...]]] = {}
+_CACHE_CAP = 256
+
+
+def _parse_rollout(path: Path) -> tuple[dict, ...] | None:
+    """Every token_count rate_limits payload in a rollout, in order; None if unreadable."""
+    found = []
+    try:
+        with path.open(encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict) or event.get("type") != "event_msg":
+                    continue
+                payload = event.get("payload")
+                if (isinstance(payload, dict) and payload.get("type") == "token_count"
+                        and isinstance(payload.get("rate_limits"), dict)):
+                    found.append(payload["rate_limits"])
+    except OSError:
+        return None
+    return tuple(found)
+
+
 def read_quota(home: Path, now: float | None = None) -> dict | None:
     sessions = home / "sessions"
     if sessions.is_symlink():
@@ -91,32 +117,35 @@ def read_quota(home: Path, now: float | None = None) -> dict | None:
             except OSError:
                 continue
             if stat.S_ISREG(info.st_mode):
-                candidates.append((info.st_mtime, path))
+                candidates.append((info.st_mtime, path, info.st_mtime_ns, info.st_size))
     now = time.time() if now is None else now
-    for mtime, path in sorted(candidates, key=lambda item: item[0], reverse=True)[:20]:
+    newest = sorted(candidates, key=lambda item: item[0], reverse=True)[:20]
+    prefix = str(sessions) + os.sep
+    keep = {str(path) for _, path, _, _ in newest}
+    for stale in [k for k in _ROLLOUT_CACHE if k.startswith(prefix) and k not in keep]:
+        del _ROLLOUT_CACHE[stale]
+    if len(_ROLLOUT_CACHE) > _CACHE_CAP:
+        for stale in [k for k in _ROLLOUT_CACHE if k not in keep]:
+            del _ROLLOUT_CACHE[stale]
+    for mtime, path, mtime_ns, size in newest:
+        key = str(path)
+        cached = _ROLLOUT_CACHE.get(key)
+        if cached is not None and cached[0] == (mtime_ns, size):
+            payloads = cached[1]
+        else:
+            payloads = _parse_rollout(path)
+            if payloads is None:
+                continue
+            _ROLLOUT_CACHE[key] = ((mtime_ns, size), payloads)
         latest = None
         latest_codex = None
-        try:
-            with path.open(encoding="utf-8", errors="replace") as stream:
-                for line in stream:
-                    try:
-                        event = json.loads(line)
-                    except ValueError:
-                        continue
-                    if not isinstance(event, dict) or event.get("type") != "event_msg":
-                        continue
-                    payload = event.get("payload")
-                    if (isinstance(payload, dict) and payload.get("type") == "token_count"
-                            and isinstance(payload.get("rate_limits"), dict)):
-                        limits = payload["rate_limits"]
-                        if remaining_pct(limits, now) is None:
-                            continue
-                        latest = limits
-                        # Legacy snapshots without a bucket ID describe Codex quota.
-                        if limits.get("limit_id", "codex") == "codex":
-                            latest_codex = limits
-        except OSError:
-            continue
+        for limits in payloads:
+            if remaining_pct(limits, now) is None:
+                continue
+            latest = limits
+            # Legacy snapshots without a bucket ID describe Codex quota.
+            if limits.get("limit_id", "codex") == "codex":
+                latest_codex = limits
         if latest_codex is not None:
             latest = latest_codex
         if latest is not None:

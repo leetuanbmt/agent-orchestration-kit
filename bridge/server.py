@@ -49,7 +49,7 @@ async def bridge_list_accounts() -> dict[str, Any]:
     otherwise UNKNOWN)."""
     async def listing() -> dict[str, Any]:
         b = bridge()
-        return b.list_accounts()
+        return await asyncio.to_thread(b.list_accounts)
 
     return await _safe(listing())
 
@@ -61,7 +61,8 @@ async def bridge_account_usage(account: str | None = None) -> dict[str, Any]:
     to narrow it to one account. Limits are human-owned config in .ai/orchestrator.yaml;
     this tool cannot change them."""
     async def usage() -> dict[str, Any]:
-        return bridge().usage_report(account)
+        b = bridge()
+        return await asyncio.to_thread(b.usage_report, account)
 
     return await _safe(usage())
 
@@ -71,7 +72,8 @@ async def bridge_list_agents() -> dict[str, Any]:
     """Configured agents (adapter, provider, account, model, read/write), their roles, whether
     each can take work now, and the workflow stages."""
     async def listing() -> dict[str, Any]:
-        return bridge().list_agents()
+        b = bridge()
+        return await asyncio.to_thread(b.list_agents)
 
     return await _safe(listing())
 
