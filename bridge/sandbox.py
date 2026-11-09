@@ -83,7 +83,8 @@ def backend() -> Literal["landlock", "seatbelt"] | None:
     return None
 
 
-def _seatbelt_profile(writable: list[str], mode: Mode, deny_write: list[str] | None = None) -> str:
+def _seatbelt_profile(writable: list[str], mode: Mode, deny_write: list[str] | None = None,
+                      deny_read: list[str] | None = None) -> str:
     rules = []
     for path in writable:
         resolved = str(Path(path).resolve())
@@ -105,6 +106,14 @@ def _seatbelt_profile(writable: list[str], mode: Mode, deny_write: list[str] | N
         denied.append(f'(subpath "{resolved}")')
     if denied:
         profile += "(deny file-write* " + " ".join(denied) + ")"
+    # Credential paths stay unreadable (subpath also matches a single file); a path that does not
+    # exist yet is denied too, so a file created later stays unreadable. Landlock here restricts
+    # writes only, so read denial is a Seatbelt-only protection.
+    for path in deny_read or []:
+        resolved = str(Path(path).resolve())
+        if any(c in ('"', chr(92)) or ord(c) < 32 or ord(c) == 127 for c in str(path) + resolved):
+            raise ValueError("invalid Seatbelt deny-read path")
+        profile += f'(deny file-read* (subpath "{resolved}"))'
     # (allow default) keeps toolchains working; these close known launch-service escapes and the
     # Keychain, where an account token may live (`credential: keychain`). Denying the `security`
     # binary alone is not enough: Security.framework through ctypes reached it (probed), so the
@@ -125,7 +134,8 @@ def _seatbelt_profile(writable: list[str], mode: Mode, deny_write: list[str] | N
 
 
 def wrap(argv: list[str], writable: list[str], mode: Mode,
-         deny_write: list[str] | None = None) -> list[str] | None:
+         deny_write: list[str] | None = None,
+         deny_read: list[str] | None = None) -> list[str] | None:
     """argv run under the sandbox, the argv itself for `none` (or `auto` without a sandbox), and
     None when `strict` cannot be honoured: the check must then fail rather than run unconfined."""
     if mode == "none":
@@ -134,7 +144,7 @@ def wrap(argv: list[str], writable: list[str], mode: Mode,
     if selected is None:
         return None if mode == "strict" else argv
     if selected == "seatbelt":
-        return ["/usr/bin/sandbox-exec", "-p", _seatbelt_profile(writable, mode, deny_write), *argv]
+        return ["/usr/bin/sandbox-exec", "-p", _seatbelt_profile(writable, mode, deny_write, deny_read), *argv]
     return [sys.executable, "-I", "-c", WRAPPER, *writable,
             "net" if mode == "auto" else "nonet", "--", *argv]
 

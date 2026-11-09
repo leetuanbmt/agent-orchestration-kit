@@ -187,6 +187,17 @@ def git_write_denies(root: Path) -> list[str]:
             str(common / "info")]
 
 
+def verification_read_denies(root: Path, homes: list[str] | list[Path]) -> list[str]:
+    """Credential paths a verification command must not read (Seatbelt): every account home, the
+    registry's homes directory, the global Codex/Claude logins and the project's token files."""
+    from .registry import registry_dir
+    home = Path.home()
+    paths = [*(str(Path(h).expanduser()) for h in homes), str(registry_dir() / "homes"),
+             str(home / ".codex" / "auth.json"), str(home / ".claude" / ".credentials.json"),
+             str(Path(root) / ".ai" / "orchestrator.yaml"), str(Path(root) / ".ai" / "accounts.yaml")]
+    return list(dict.fromkeys(str(Path(p).absolute()) for p in paths))
+
+
 def _git_internals(root: Path) -> dict[str, str | None]:
     """Hooks, config and attributes of the repository, keyed as .git/... (a protected path).
     Anything that can write the worktree can write them in a main checkout, and git runs hooks
@@ -459,8 +470,8 @@ def recheck(root: Path, before: dict[str, Any], changes: dict[str, Any],
 async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
                            should_cancel: Callable[[], bool] | None = None,
                            on_start: Callable[[int | None], None] | None = None,
-                           confine: sandbox.Mode = "none", writable: list[str] | None = None
-                           ) -> list[dict[str, Any]]:
+                           confine: sandbox.Mode = "none", writable: list[str] | None = None,
+                           read_deny: list[str] | None = None) -> list[dict[str, Any]]:
     """Run each command in its own process group. A cancel (polled every second) kills the
     running command and skips the rest. `on_start` gets each command's pid when it starts and
     None once its group has ended, so a dead runner's check can be found and killed.
@@ -472,7 +483,8 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
     try:
         await _verify(cmds, root, cfg, should_cancel, on_start, confine,
                       [str(root), tmp, *(str(Path(p).expanduser()) for p in writable or [])],
-                      tmp, results, git_write_denies(root) if confine != "none" else [])
+                      tmp, results, git_write_denies(root) if confine != "none" else [],
+                      read_deny if confine != "none" else None)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return results
@@ -482,7 +494,8 @@ async def _verify(cmds: list[str], root: Path, cfg: BridgeConfig,
                   should_cancel: Callable[[], bool] | None,
                   on_start: Callable[[int | None], None] | None, confine: sandbox.Mode,
                   writable: list[str], tmp: str, results: list[dict[str, Any]],
-                  deny_write: list[str] | None = None) -> None:
+                  deny_write: list[str] | None = None,
+                  deny_read: list[str] | None = None) -> None:
     # No .pyc litter from the bridge's own checks in the next attempt's baseline; temp files go
     # to a private directory removed afterwards (the only temp location a confined check has).
     env = {**clean_env(os.environ, cfg.env_deny, []), "PYTHONDONTWRITEBYTECODE": "1",
@@ -493,7 +506,7 @@ async def _verify(cmds: list[str], root: Path, cfg: BridgeConfig,
             break
         r: dict[str, Any] = {"command": cmd, "passed": False}
         try:
-            argv = sandbox.wrap(parse_command(cmd, cfg), writable, confine, deny_write)
+            argv = sandbox.wrap(parse_command(cmd, cfg), writable, confine, deny_write, deny_read)
             if argv is None:
                 raise ValueError("verify_sandbox is strict but no verification sandbox is available here: "
                                  "the check was not run")

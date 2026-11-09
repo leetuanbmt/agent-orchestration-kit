@@ -16,7 +16,7 @@ from .executor import REVIEW_SCHEMA, RunRequest, RunResult, build_review_prompt,
 from .models import ACTIVE, Actor, ReviewDecision, State, leftover_failure, run_failure_state, \
     verdict
 from .review import EvidenceError, content_hashes, current_head, diff, protected_after, recheck, \
-    run_verification, scope_violations, touches_sensitive
+    run_verification, scope_violations, touches_sensitive, verification_read_denies
 from .security import process_started, redact
 from .state import LimitExceeded
 
@@ -277,7 +277,9 @@ class TaskRunner:
         flow = b.orch.workflow
         checks = (await run_verification(commands, b.root, b.cfg, should_cancel=cancelled,
                                          on_start=check_started, confine=flow.verify_sandbox,
-                                         writable=flow.verify_writable) if commands else [])
+                                         writable=flow.verify_writable,
+                                         read_deny=verification_read_denies(
+                                             b.root, b._account_homes())) if commands else [])
         stopped = cancelled()  # checks cut short (or never started) prove nothing
         touched, later = changes["files"], []
         if commands:  # the checks ran code in the worktree: judge what they changed too
