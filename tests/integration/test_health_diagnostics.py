@@ -64,7 +64,7 @@ def test_unavailable_sandbox_is_problem(make_bridge, monkeypatch, mode):
     problem, = h["problems"]
     assert problem["message"] == f"verification sandbox: {sandbox.describe(mode)}"
     assert "Linux kernel with Landlock" in problem["fix"]
-    assert "workflow.verify_sandbox: none in .ai/orchestrator.yaml" in problem["fix"]
+    assert '"verify_sandbox": "none" in .ai/config.json' in problem["fix"]
     assert "verify_unconfined" not in _codes(h["warnings"])
 
 

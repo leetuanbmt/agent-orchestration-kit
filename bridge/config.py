@@ -61,6 +61,10 @@ class BridgeConfig(BaseModel):
     network_retries: int = Field(1, ge=0, le=3)
     retry_backoff_s: float = Field(10.0, ge=0)
     verify_timeout_s: int = Field(900, ge=5)
+    # Owner location of the verification sandbox settings; orchestrator.yaml workflow.verify_* is
+    # deprecated. None means "not set here".
+    verify_sandbox: Literal["auto", "strict", "none"] | None = None
+    verify_writable: list[str] | None = None
     # Executables a verification command may start (argv[0] basename). No shells.
     verify_allowlist: list[str] = [
         "pytest", "uv", "python", "python3", "ruff", "mypy", "make",

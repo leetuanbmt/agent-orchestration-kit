@@ -510,12 +510,12 @@ class Bridge:
             problems.append(item("verify_unconfined", f"verification sandbox: {verify_sandbox}",
                                  "confine verification commands by running the bridge on a "
                                  "Linux kernel with Landlock, or have a human set "
-                                 "workflow.verify_sandbox: none in .ai/orchestrator.yaml "
+                                 '"verify_sandbox": "none" in .ai/config.json '
                                  "to accept unconfined checks"))
         elif self.orch.workflow.verify_sandbox == "none":
             warnings.append(item("verify_unconfined", "verification checks run unconfined by choice",
                                  "run the bridge on a Linux kernel with Landlock and set "
-                                 "workflow.verify_sandbox: auto in .ai/orchestrator.yaml "
+                                 '"verify_sandbox": "auto" in .ai/config.json '
                                  "to confine verification commands"))
         if self.legacy:
             try:

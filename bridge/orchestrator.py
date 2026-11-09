@@ -305,6 +305,8 @@ class OrchestratorConfig(BaseModel):
     accounts_from_registry: list[str] = Field([], exclude=True)
     accounts_in_orchestrator: list[str] = Field([], exclude=True)
     agents_in_accounts_file: list[str] = Field([], exclude=True)
+    # Which verify_* keys orchestrator.yaml's `workflow:` sets (deprecated; config.json owns them).
+    verify_in_orchestrator: list[str] = Field([], exclude=True)
 
     @model_validator(mode="after")
     def _references(self) -> OrchestratorConfig:
@@ -432,6 +434,8 @@ def deprecated(orch: OrchestratorConfig, cfg: BridgeConfig) -> list[str]:
             "the machine registry" for n in orch.accounts_from_registry]
     out += [f"{n}: agent or executor entry in .ai/accounts.yaml; move it to orchestrator.yaml"
             for n in orch.agents_in_accounts_file]
+    out += [f"workflow.{k} in orchestrator.yaml; move it to .ai/config.json as \"{k}\""
+            for k in orch.verify_in_orchestrator]
     if not orch.source.startswith("legacy") and "max_attempts" in cfg.model_fields_set:
         out.append("max_attempts in .ai/config.json is ignored; use workflow.max_rework")
     return out
@@ -572,6 +576,31 @@ def parse(text: str, source: str = ORCHESTRATOR_FILE,
     orch.accounts_in_orchestrator = own_accounts
     orch.agents_in_accounts_file = list(dict.fromkeys(
         [*managed_agents, *(managed.get("executor") or [])]))
+    raw_workflow = data.get("workflow")
+    orch.verify_in_orchestrator = [k for k in VERIFY_KEYS if isinstance(raw_workflow, dict)
+                                   and k in raw_workflow]
+    return orch
+
+
+VERIFY_KEYS = ("verify_sandbox", "verify_writable")
+
+
+def with_verify_settings(orch: OrchestratorConfig, cfg: BridgeConfig) -> OrchestratorConfig:
+    """Apply `.ai/config.json` verify_* (the owner) to the effective workflow.
+
+    A key set in both files is an error: it must never silently weaken the sandbox."""
+    values = {k: getattr(cfg, k) for k in VERIFY_KEYS if getattr(cfg, k) is not None}
+    for key in values:
+        if key in orch.verify_in_orchestrator:
+            raise ValueError(f"{key} is set in both .ai/config.json and {orch.source} "
+                             f"(workflow.{key}); keep it only in .ai/config.json")
+    if not values:
+        return orch
+    try:
+        orch.workflow = WorkflowConfig(**{**orch.workflow.model_dump(), **values})
+    except ValidationError as e:
+        raise ValueError(".ai/config.json: " + "; ".join(
+            err["msg"] for err in e.errors())) from e
     return orch
 
 
@@ -623,7 +652,8 @@ def migration_plan(root: Path, cfg: BridgeConfig) -> dict:
 
     plan_accounts = {"accounts": accounts}
     text = yaml.safe_dump(data, sort_keys=False)
-    planned = parse(text, str(path), registry, plan_accounts, str(managed_path))
+    planned = with_verify_settings(
+        parse(text, str(path), registry, plan_accounts, str(managed_path)), cfg)
     if planned.model_dump() != current.model_dump():
         raise ValueError("migration would change the effective configuration; nothing "
                          "written. Differences in: " + ", ".join(
@@ -642,9 +672,10 @@ def load(root: Path, cfg: BridgeConfig) -> OrchestratorConfig:
     path = root / AI_DIR / ORCHESTRATOR_FILE
     registry = load_registry()
     if not path.exists():
-        return legacy(cfg, registry)
+        return with_verify_settings(legacy(cfg, registry), cfg)
     if cfg.accounts or cfg.auto_switch.enabled:
         raise ValueError(f"{path}: accounts and auto_switch moved to orchestrator.yaml; "
                          "remove them from .ai/config.json")
     managed = root / AI_DIR / MANAGED_FILE
-    return parse(path.read_text(), str(path), registry, load_managed(managed), str(managed))
+    return with_verify_settings(
+        parse(path.read_text(), str(path), registry, load_managed(managed), str(managed)), cfg)
