@@ -530,7 +530,8 @@ until it is migrated. Older databases gain new columns and tables on first start
 ### Migrating and maintaining state
 
 All `storage` commands preview by default and change nothing without `--apply` (or `--yes` for
-`rollback`). The kit's Claude Code settings deny the applying forms to Claude.
+`rollback`). The `.claude/settings.json` that `agent-bridge init` installs denies the applying
+forms to Claude.
 
 1. Close Claude Code sessions, the TUI and `agent-bridge web`.
 2. `agent-bridge storage status` shows the plan.

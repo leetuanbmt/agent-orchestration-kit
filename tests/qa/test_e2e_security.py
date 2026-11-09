@@ -128,12 +128,13 @@ workflow: {stages: [execute, test]}
 # @pt.id QA-E2E-085-human-only-guard
 # @pt.item The kit `init` installs keeps human-only commands away from Claude Code
 # @pt.condition the .claude/settings.json written by `agent-bridge init`
-# @pt.expected approve, reassign, account-add/login/remove and config-init are denied; no secret values in the installed files
+# @pt.expected approve, reassign, account-add/login/remove and config-init are denied, Edit(/.ai/**) is in the deny list; no secret values in the installed files
 # @pt.target bridge.install
 # @pt.method e2e
 # @pt.legacy none
 def test_init_denies_human_only_commands(sandbox: Sandbox) -> None:
     settings = json.loads((sandbox.root / ".claude" / "settings.json").read_text())
+    assert "Edit(/.ai/**)" in settings["permissions"]["deny"]
     denied = " ".join(settings["permissions"]["deny"])
     for command in ("approve", "reassign", "account-add", "account-login", "account-remove"):
         assert command in denied, (command, denied)

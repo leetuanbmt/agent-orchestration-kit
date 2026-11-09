@@ -1,7 +1,5 @@
 {
-  "enabledMcpjsonServers": [
-    "agent-bridge"
-  ],
+  "enabledMcpjsonServers": ["agent-bridge"],
   "permissions": {
     "deny": [
       "Bash(*agent-bridge approve*)",
