@@ -36,8 +36,9 @@ exposes these tools.
 |---|---|
 | `init [dir] [--force]` | Install the kit into a project (default: current directory) |
 | `uninstall [dir] [--purge]` | Remove what `init` added, keeping files you edited; `--purge` also deletes `.ai/` |
-| `config-init [example]` | Human only: write `.ai/orchestrator.yaml` from a shipped example (refuses to overwrite); without an argument, list the examples and the path of `config.example.json` |
-| `config-check` | Validate `.ai/orchestrator.yaml` (or the legacy config) |
+| `config-init [example]` | Human only: write `.ai/orchestrator.yaml` and `.ai/accounts.yaml` from a shipped example pair (refuses if either exists); without an argument, list the examples and the path of `config.example.json` |
+| `config-check [--json]` | Validate `.ai/orchestrator.yaml` and `.ai/accounts.yaml` (or the legacy config); `deprecated` lists settings in an older location |
+| `config-migrate [--apply] [--json]` | Human only: preview moving accounts to `.ai/accounts.yaml` and agents/roles to `orchestrator.yaml`; `--apply` backs both files up to `.ai/backup-<stamp>/` and writes them. Refuses if the effective configuration would change |
 | `serve` | MCP stdio server (what `.mcp.json` runs) |
 
 ### Monitoring
@@ -53,8 +54,9 @@ exposes these tools.
 | `list [--state S] [--limit N] [--json]` | Tasks of this project (default limit 50); tasks that need you are marked `●` with the next command |
 | `tasks [--state S] [--limit N] [--json]` | Tasks of every project and worktree on this machine, grouped by project (default 10 per project) |
 
-These six views print tables in a terminal, and the same JSON the MCP tools return with
-`--json` or when the output is piped.
+The monitoring views above, plus `config-check`, `config-migrate` and `project-account-add`, print
+a readable view in a terminal, and the same JSON the MCP tools return with `--json` or when the
+output is piped. (`config-migrate` and `project-account-add` still need a terminal to run.)
 
 ### Tasks and workflows
 
@@ -75,10 +77,12 @@ These six views print tables in a terminal, and the same JSON the MCP tools retu
 | Command | Description |
 |---|---|
 | `account-use <name> [--shell]` | Print `export` / function lines for `eval "$(…)"`, or open a subshell, so your own CLI uses that account |
+| `account-show <name>` | One account: its listing row (login, quota), the credential reference (never the value), the agents that use it and the roles it is default for. Prints JSON |
+| `account-verify <name>` | Check the account's login and credential reference; prints JSON with `ok` and exits 1 when the account cannot run |
 | `account-clear <name>` | Clear an account's unavailable mark (run after the user confirms) |
 
-`account-login`, `account-use`, `account-clear` and `account-remove` accept `--provider` when one
-name is used by several providers.
+`account-login`, `account-use`, `account-clear`, `account-set-token` and `account-remove` accept
+`--provider` when one name is used by several providers.
 
 ### Storage
 
@@ -106,4 +110,8 @@ These need an interactive terminal and a typed confirmation (or the TUI). The ki
 | `reassign <id> <agent\|account>` | Move a task to another agent; starts a new session |
 | `account-login <name> [--device-auth]` | Fresh login into the account's own home (`codex login`, `claude auth login`, agy sign-in, `opencode auth login`) |
 | `account-add <name> --provider openai\|anthropic\|google\|opencode [--home DIR] [--device-auth]` | Create a machine-wide account under `~/.agent-bridge/homes/` (or register `--home`), then log in |
+| `account-set-token <name> [--delete]` | Store a setup-token or API key in the macOS Keychain for an account with `credential: keychain`; `security` prompts for the secret on the terminal, so it never passes through argv. `--delete` removes the stored token. Refuses accounts without `credential: keychain` |
 | `account-remove <name>` | Forget a machine-wide account; deletes its home only if `account-add` created it |
+| `project-account-add <name> (--provider P \| --login L) [--home DIR] [--credential keychain] [--token-env VAR] [--executor] [--json]` | Declare an account in `.ai/accounts.yaml` (a new home, or a reference to a registry login); prints the agent line to paste into `orchestrator.yaml` |
+| `project-account-limits <name> [--five-hour-pct N] [--weekly-pct N] [--clear]` | Set or clear an account's window limits in `.ai/accounts.yaml` |
+| `project-account-remove <name>` | Remove an account `accounts.yaml` owns and its Keychain token; keeps the home |

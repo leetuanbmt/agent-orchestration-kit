@@ -6,8 +6,10 @@ import pytest
 
 from bridge import cli, sandbox
 from bridge.models import Actor
+from bridge.orchestrator import AccountLimits, account_owner, parse
 from tests.conftest import git, run
 from tests.integration.test_account_limits import FIVE_HOUR, config, seed
+from tests.integration.test_limit_hardening import REGISTRY_YAML, bridge_for, registry_bridge
 from tests.integration.test_limit_failover import mark_quota
 
 PATH_WITHOUT_FAKES = "/usr/bin:/bin"
@@ -62,7 +64,7 @@ def test_unavailable_sandbox_is_problem(make_bridge, monkeypatch, mode):
     problem, = h["problems"]
     assert problem["message"] == f"verification sandbox: {sandbox.describe(mode)}"
     assert "Linux kernel with Landlock" in problem["fix"]
-    assert "workflow.verify_sandbox: none in .ai/orchestrator.yaml" in problem["fix"]
+    assert '"verify_sandbox": "none" in .ai/config.json' in problem["fix"]
     assert "verify_unconfined" not in _codes(h["warnings"])
 
 
@@ -160,6 +162,33 @@ def test_limited_account_is_warning(make_orch):
     assert len(limited) == 1 and "cl1" in limited[0]["message"]
     assert h["limits"]["cl1"]["reason"] in limited[0]["message"]
     assert "account_limited" not in _codes(h["problems"])
+
+
+# @pt.id KIT-HEALTH-DIAG-9
+# @pt.item The limit fix and the deprecation warning point at the file that owns the account
+# @pt.condition a project that only uses the registry login reg1, over its five-hour limit; then a project whose accounts sit in accounts.yaml
+# @pt.expected account_limited's fix holds account_owner's text, not .ai/orchestrator.yaml; config_deprecated is a warning and ok stays true; the accounts.yaml project has no config_deprecated
+# @pt.target bridge.service.Bridge.health, bridge.orchestrator.account_owner
+# @pt.method integration
+# @pt.legacy the fix always said .ai/orchestrator.yaml
+def test_limit_fix_names_owner_and_deprecated_warns(repo, fake_codex, fake_claude, fake_others):
+    b = registry_bridge(repo, fake_codex)
+    b.orch.accounts["reg1"].limits = AccountLimits(five_hour_pct=80)
+    seed(b, "reg1")
+    h = _health(b)
+    limited, = [e for e in h["warnings"] if e["code"] == "account_limited"]
+    assert account_owner(b.orch, "reg1") in limited["fix"]
+    assert ".ai/orchestrator.yaml" not in limited["fix"]
+    deprecated, = [e for e in h["warnings"] if e["code"] == "config_deprecated"]
+    assert "config-check" in deprecated["fix"]
+    assert "config_deprecated" not in _codes(h["problems"]) and h["ok"] is True
+
+    home = fake_codex.parent / "homes" / "own"
+    clean = bridge_for(repo, fake_codex, parse(
+        REGISTRY_YAML.replace("reg1", "own"),
+        managed={"accounts": {"own": {"provider": "anthropic", "home": str(home)}}}))
+    h = _health(clean)
+    assert "config_deprecated" not in _codes(h["warnings"]) and h["ok"] is True
 
 
 # @pt.id KIT-HEALTH-DIAG-7

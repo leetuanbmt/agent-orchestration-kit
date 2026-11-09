@@ -24,9 +24,11 @@
 - Every agent process gets `AGENT_BRIDGE_AGENT=1`; the CLI, the MCP server and the `Bridge`
   Python API refuse to start under it. Everything still runs as one user: human-only steps rely on
   the agents being confined, not on an OS boundary inside the bridge.
-- Verification commands run under Landlock where available (`workflow.verify_sandbox` in
-  `.ai/orchestrator.yaml`, `auto` by default): writes only to the worktree, a private TMPDIR and
-  `verify_writable`; the worktree is diffed again after them. Never weaken this setting yourself.
+- Verification commands run under Landlock where available (`verify_sandbox` in the tracked
+  `.ai/config.json`, `auto` by default; `workflow.verify_sandbox` in orchestrator.yaml is the
+  deprecated location, and setting both is an error): writes only to the worktree, a private
+  TMPDIR and `verify_writable`; the worktree is diffed again after them. Never weaken this
+  setting yourself, and treat any `.ai/config.json` change in a diff as a security change.
   On macOS (Seatbelt) a check also cannot write the repository's git config, `config.worktree`,
   `hooks/` or `info/`, and cannot read any configured account home, the registry's `homes/`,
   `~/.codex/auth.json`, `~/.claude/.credentials.json`, `.ai/orchestrator.yaml` or
@@ -57,6 +59,11 @@ Accounts:
   `~/.claude`; two accounts never share a home. `account-add` and `account-remove` are
   human-only; `account-use` only prints shell lines and Claude does not run it for the user.
   claude-switch and codex-switch profiles hold copied tokens: list them, never use them.
+- A project uses an account only by declaring it in `.ai/accounts.yaml`: its own home, or
+  `login: <name>` for a machine registry login. Its limits live there, so a project need is
+  never solved by changing machine-wide settings. When telling a human where to change an
+  account, name the file the bridge's error or `config-check` names; `config-migrate` and
+  `project-account-*` are human-only.
 - A task stays on its agent and account; retries and resumes stay on it. Two things can move
   it, both starting a new session: a human (`agent-bridge reassign <id> <agent>`), or the bridge
   itself when the user enabled quota fallback (only to the configured candidates, logged as an

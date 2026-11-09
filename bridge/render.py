@@ -234,6 +234,80 @@ def agents_view(a: dict[str, Any]) -> Group:
     return Group(head, table, *_steps(hints))
 
 
+def _raw(line: str, style: str = "") -> Text:
+    """A line that is never wrapped, truncated or decorated, so it can be copied whole."""
+    return Text(line, style=style, no_wrap=True, overflow="ignore")
+
+
+def config_view(c: dict[str, Any]) -> Group:
+    head = Text()
+    head.append(" OK " if c["ok"] else " NOT OK ",
+                style="bold black on green" if c["ok"] else "bold white on red")
+    head.append(f"  config {c['source']}\n", style="bold")
+    head.append(f"stages {' → '.join(c['stages'])}", style="dim")
+    roles = Table("Role", "Agents", title="Roles", title_justify="left")
+    for role, agents in c["roles"].items():
+        roles.add_row(role, ", ".join(agents) or "-")
+    counts = Text(f"Agents    {', '.join(c['agents']) or '-'}\n"
+                  f"Accounts  {', '.join(c['accounts']) or '-'}")
+    parts: list[RenderableType] = [head, Text(""), roles, counts]
+    if c.get("errors"):
+        errors = Text("\nErrors\n", style="bold red")
+        for e in c["errors"]:
+            errors.append(f"  {e}\n", style="red")
+        parts.append(errors)
+    if c.get("deprecated"):
+        move = Text("\nMove\n", style="bold yellow")
+        for d in c["deprecated"]:
+            move.append(f"  {d}\n", style="yellow")
+        move.append("Run `agent-bridge config-migrate` to move accounts, agents and roles; "
+                    "move workflow.verify_* to .ai/config.json by hand.\n", style="dim")
+        parts.append(move)
+    if c.get("warnings"):
+        warn = Text("\nWarnings\n", style="bold yellow")
+        for w in c["warnings"]:
+            warn.append(f"  {w}\n")
+        parts.append(warn)
+    return Group(*parts)
+
+
+def migrate_view(m: dict[str, Any]) -> Group:
+    if not m["changed"]:
+        return Group(Text("Already on the one-owner layout; nothing was written.", style="green"))
+    moves = Text("Moves\n", style="bold")
+    for i, move in enumerate(m["moves"], 1):
+        moves.append(f"  {i}. {move}\n")
+    if m["applied"]:
+        done = Text(f"\nWrote .ai/accounts.yaml and .ai/orchestrator.yaml\n"
+                    f"Backup  {m['backup']}\n", style="green")
+        return Group(moves, done, *_steps(["agent-bridge config-check"]))
+    from rich.syntax import Syntax
+    parts: list[RenderableType] = [moves]
+    for name in (".ai/accounts.yaml", ".ai/orchestrator.yaml"):
+        parts.append(Text(f"\n{name}", style="bold underline"))
+        parts.append(Syntax(m[name], "yaml", background_color="default", word_wrap=True))
+    parts.append(Text("\nNothing written. Comments in orchestrator.yaml are not kept.",
+                      style="yellow"))
+    parts += _steps(["agent-bridge config-migrate --apply  "
+                     "(backs up the originals to .ai/backup-<stamp>/)"])
+    return Group(*parts)
+
+
+def account_added_view(a: dict[str, Any]) -> Group:
+    head = Text()
+    head.append("Account added  ", style="bold green")
+    head.append(f"{a['account']}\n", style="bold")
+    head.append(f"agent {a['agent']} · home {a['home'] or '-'}\n", style="dim")
+    head.append(f"written to {a['file']}\n", style="dim")
+    paste = a["paste"]
+    parts: list[RenderableType] = [
+        head, Text("Add this line under `agents:` in .ai/orchestrator.yaml:\n", style="bold"),
+        _raw(paste["agents"])]
+    if hint := paste.get("roles.executor"):
+        parts.append(Text(f"\nExecutor: {hint}"))
+    return Group(*parts, *_steps([a["next"]]))
+
+
 def _next_for(task: dict[str, Any]) -> str | None:
     tid = task["task_id"]
     match task["state"]:

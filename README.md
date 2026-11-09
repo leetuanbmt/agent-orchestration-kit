@@ -10,7 +10,7 @@
   <a href="https://github.com/leetuanbmt/agent-orchestration-kit/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/leetuanbmt/agent-orchestration-kit/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="platform: macOS | Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
   <img alt="python: &gt;=3.12" src="https://img.shields.io/badge/python-%E2%89%A53.12-blue">
-  <img alt="dependencies: mcp | pyyaml | textual" src="https://img.shields.io/badge/dependencies-mcp%20%7C%20pyyaml%20%7C%20textual-brightgreen">
+  <img alt="dependencies: mcp | pyyaml | textual" src="https://img.shields.io/static/v1?label=dependencies&message=mcp%20%7C%20pyyaml%20%7C%20textual&color=brightgreen">
   <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="version: 0.1.0 + unreleased" src="https://img.shields.io/badge/version-0.1.0%20%2B%20unreleased-blue">
 </p>
@@ -240,7 +240,7 @@ reviews, Codex executes on its global login). Run these in your own terminal: `c
 
 ```bash
 agent-bridge config-init                # list the shipped examples
-agent-bridge config-init orchestrator   # writes .ai/orchestrator.yaml; never overwrites
+agent-bridge config-init orchestrator   # writes .ai/orchestrator.yaml and .ai/accounts.yaml; never overwrites
 agent-bridge config-check               # validate
 agent-bridge agents                     # who plans, executes and reviews; who is available
 ```
@@ -268,18 +268,27 @@ agent plans:  bridge_plan → bridge_workflow_status(wait_s) → bridge_run_work
 
 ## Configuration
 
-Two optional files in the project's `.ai/` directory:
+Three optional files in the project's `.ai/` directory, each the only owner of its settings:
 
 | File | Purpose |
 |---|---|
-| `.ai/orchestrator.yaml` | Accounts, agents, roles, routing, workflow stages. Git-ignored (it names machine-specific homes). |
-| `.ai/config.json` | Bridge settings: sandbox, timeouts, path rules, verification allowlist. Tracked. |
+| `.ai/accounts.yaml` | The accounts this project uses (own home, or `login:` naming a machine-wide login) and their limits. Git-ignored (it names machine-specific homes). |
+| `.ai/orchestrator.yaml` | Agents, roles, routing, workflow stages. Git-ignored. |
+| `.ai/config.json` | Bridge settings: sandbox, verification sandbox, timeouts, path rules, verification allowlist. Tracked, so review every change to it as a security change. |
+
+Older layouts (accounts in `orchestrator.yaml`) still load; `config-check` lists what to move
+and `agent-bridge config-migrate` (human only) moves it.
 
 ```yaml
-version: 1
+# .ai/accounts.yaml
 accounts:
   codex-work:  {provider: openai,    home: ~/.codex-accounts/homes/work}
   claude-main: {provider: anthropic, home: ~/.claude-accounts/main, max_concurrency: 1}
+```
+
+```yaml
+# .ai/orchestrator.yaml
+version: 1
 agents:
   claude:          {adapter: client}                         # the MCP caller
   claude-headless: {adapter: claude-cli, account: claude-main, model: sonnet}
@@ -415,8 +424,8 @@ untrusted code.
   excepted).
 - **Verification.** Re-run by the bridge with argv lists only (no shell operators, no paths as
   the program), allowlisted executables and a timeout. Under Landlock (Linux) or Seatbelt (macOS) the checks may
-  write only to the worktree, a private `TMPDIR` and `workflow.verify_writable`
-  (`workflow.verify_sandbox`: `auto` by default, `strict` also cuts TCP, `none`); the worktree is
+  write only to the worktree, a private `TMPDIR` and `verify_writable`
+  (`verify_sandbox` in `.ai/config.json`: `auto` by default, `strict` also cuts TCP, `none`); the worktree is
   diffed again afterwards and what the checks changed is judged like the agent's changes. Nothing
   the agent or a check started outlives it (its process group is ended).
 - **Evidence.** A failing git command pauses the task (`EVIDENCE_ERROR`) instead of yielding an

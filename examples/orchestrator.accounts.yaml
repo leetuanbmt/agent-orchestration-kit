@@ -1,0 +1,13 @@
+# Accounts for the orchestrator example; config-init writes it to .ai/accounts.yaml.
+# An account is an isolated login (one auth home each), with an optional concurrency limit.
+accounts:
+  codex-work:
+    provider: openai
+    home: ~/.codex-accounts/homes/work   # a human runs: agent-bridge account-login codex-work
+  codex-personal:
+    provider: openai
+    home: ~/.codex-accounts/homes/personal
+  claude-main:
+    provider: anthropic
+    home: ~/.claude-accounts/main        # a human runs: agent-bridge account-login claude-main
+    max_concurrency: 1

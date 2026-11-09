@@ -341,7 +341,8 @@ def test_config_init(repo, tmp_path):
     listing = subprocess.run([exe, 'config-init'], cwd=repo, capture_output=True, text=True,
                              env=env)
     assert listing.returncode == 0, listing.stderr
-    examples = {p.stem for p in (KIT / 'examples').glob('*.yaml')}
+    examples = {p.stem for p in (KIT / 'examples').glob('*.yaml')
+                if not p.name.endswith('.accounts.yaml')}
     assert {line.split()[0]
             for line in listing.stdout.splitlines()[:len(examples)]} == examples
     piped = subprocess.run([exe, 'config-init', 'single-agent'], cwd=repo, capture_output=True,
@@ -366,6 +367,8 @@ def test_config_init(repo, tmp_path):
     target = repo / '.ai' / 'orchestrator.yaml'
     assert code == 0, out
     assert target.read_text() == (KIT / 'examples' / 'single-agent.yaml').read_text()
+    assert ((repo / '.ai' / 'accounts.yaml').read_text()
+            == (KIT / 'examples' / 'single-agent.accounts.yaml').read_text())
     ignored = subprocess.run(['git', '-C', str(repo), 'check-ignore', '-q', str(target)])
     assert ignored.returncode == 0
     check = subprocess.run([exe, 'config-check'], cwd=repo, capture_output=True, text=True,
@@ -375,6 +378,9 @@ def test_config_init(repo, tmp_path):
     code, out = in_terminal()
     assert code == 1 and 'exists' in out
     assert target.read_text() == '# mine\n'
+    target.unlink()  # the accounts file alone also blocks, and nothing is written
+    code, out = in_terminal()
+    assert code == 1 and 'exists' in out and not target.exists()
 
 
 # @pt.id KIT-SETUP-013-in-repo-symlinks

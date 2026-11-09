@@ -1,0 +1,3 @@
+# Accounts for the gates-only example; config-init writes it to .ai/accounts.yaml.
+accounts:
+  default: {provider: openai}   # the inherited ~/.codex login, used read-only

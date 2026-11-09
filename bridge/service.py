@@ -28,7 +28,8 @@ from .gate import LIMIT_REPORT_TTL_S as LIMIT_REPORT_TTL_S
 from .gate import AccountGate
 from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError, \
     leftover_failure
-from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig
+from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig, \
+    account_owner, deprecated
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .registry import remember_project, with_worktrees
@@ -62,7 +63,7 @@ def resolve_account(orch: OrchestratorConfig, cfg: BridgeConfig, root: Path,
                     name: str) -> Account:
     if orch.source.startswith("legacy") and (name == "default" or name in cfg.accounts):
         return resolve(cfg, root, name)
-    profile = orch.accounts.get(name)
+    profile = orch.accounts.get(name) or orch.catalog.get(name)
     if profile is None:
         raise ValueError(f"unknown account: {name}")
     return resolve_profile(name, profile.provider, profile.home, root, profile.token_env,
@@ -326,7 +327,8 @@ class Bridge:
     def usage_report(self, name: str | None = None) -> dict[str, Any]:
         """Per-account state, limit checks with spend, and provider quota; read-only.
 
-        Limits are human-owned config (.ai/orchestrator.yaml); this only reports them."""
+        Limits are human-owned config (see `account_owner` for the file); this only reports
+        them."""
         if name is not None and name not in self.orch.accounts:
             raise ValueError(f"unknown account {name!r}; known: {sorted(self.orch.accounts)}")
         names = [name] if name is not None else list(self.orch.accounts)
@@ -508,12 +510,12 @@ class Bridge:
             problems.append(item("verify_unconfined", f"verification sandbox: {verify_sandbox}",
                                  "confine verification commands by running the bridge on a "
                                  "Linux kernel with Landlock, or have a human set "
-                                 "workflow.verify_sandbox: none in .ai/orchestrator.yaml "
+                                 '"verify_sandbox": "none" in .ai/config.json '
                                  "to accept unconfined checks"))
         elif self.orch.workflow.verify_sandbox == "none":
             warnings.append(item("verify_unconfined", "verification checks run unconfined by choice",
                                  "run the bridge on a Linux kernel with Landlock and set "
-                                 "workflow.verify_sandbox: auto in .ai/orchestrator.yaml "
+                                 '"verify_sandbox": "auto" in .ai/config.json '
                                  "to confine verification commands"))
         if self.legacy:
             try:
@@ -561,7 +563,12 @@ class Bridge:
                 warnings.append(item("account_limited",
                                      f"account {name} is over its limits: {info['reason']}",
                                      "wait for the limit window to reset, or have a human "
-                                     f"change accounts.{name}.limits in .ai/orchestrator.yaml"))
+                                     f"change its limits in {account_owner(self.orch, name)}"))
+        if moved := deprecated(self.orch, self.cfg):
+            warnings.append(item("config_deprecated",
+                                 f"{len(moved)} settings are in a deprecated place",
+                                 "a human moves the listed entries (see `agent-bridge "
+                                 "config-check`)"))
         return {
             "project_root": str(self.root),
             "database": str(self.store.path),

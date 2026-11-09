@@ -12,6 +12,8 @@
   "network_retries": 1,
   "retry_backoff_s": 10.0,
   "verify_timeout_s": 900,
+  "verify_sandbox": null,
+  "verify_writable": null,
   "verify_allowlist": [
     "pytest",
     "uv",

@@ -40,7 +40,7 @@ def project(tmp_path, monkeypatch):
 def add(name, **over):
     args = {"name": name, "provider": "anthropic", "home": None, "credential": None,
             "token_env": None, "credential_kind": "oauth_token", "agent": None, "model": None, "executor": False,
-            "five_hour_pct": None, "weekly_pct": None, **over}
+            "five_hour_pct": None, "weekly_pct": None, "login": None, **over}
     return cli._project_account_add(argparse.Namespace(**args))
 
 
@@ -49,12 +49,12 @@ def load(root):
 
 
 # @pt.id KIT-PROJ-ACCT-001-add
-# @pt.item project-account-add declares an account and its agent without touching orchestrator.yaml
+# @pt.item project-account-add writes only the account to accounts.yaml and prints the agent to paste
 # @pt.condition a project with an orchestrator.yaml whose executor role has a default; add a keychain anthropic account with --executor
-# @pt.expected orchestrator.yaml is byte-identical; the merged config has the account (credential keychain, its own new 0700 home), an allow_write claude-cli agent, executor order [default, new]
+# @pt.expected orchestrator.yaml is byte-identical; accounts.yaml holds only `accounts`; the merged config has the account (credential keychain, its own new 0700 home) and no new agent; the result's paste has the agent stanza and the roles.executor line
 # @pt.target bridge.cli._project_account_add, bridge.orchestrator.parse
 # @pt.method unit
-# @pt.legacy none
+# @pt.legacy it also wrote the agent and the executor order into accounts.yaml
 def test_add_account_and_executor(project):
     root, yaml_file = project
     before = yaml_file.read_bytes()
@@ -62,14 +62,75 @@ def test_add_account_and_executor(project):
     assert yaml_file.read_bytes() == before
     assert out["agent"] == "agent-claude-thuyseatch"
     assert out["next"] == "agent-bridge account-set-token claude-thuyseatch"
+    managed = orchestrator.load_managed(root / ".ai" / orchestrator.MANAGED_FILE)
+    assert set(managed) == {"accounts"}
+    assert out["paste"]["agents"].startswith("agent-claude-thuyseatch: {")
+    assert '"adapter": "claude-cli"' in out["paste"]["agents"]
+    assert "roles.executor" in out["paste"]
     orch = load(root)
     acc = orch.accounts["claude-thuyseatch"]
     assert (acc.provider, acc.credential) == ("anthropic", "keychain")
     home = Path(acc.home)
     assert home.is_dir() and oct(home.stat().st_mode & 0o777) == "0o700"
-    agent = orch.agents["agent-claude-thuyseatch"]
-    assert (agent.adapter, agent.account, agent.allow_write) == ("claude-cli", "claude-thuyseatch", True)
-    assert orch.role("executor").agents == ["codex", "agent-claude-thuyseatch"]
+    assert "agent-claude-thuyseatch" not in orch.agents
+    assert "roles.executor" not in add("other")["paste"]
+
+
+# @pt.id KIT-PROJ-ACCT-008-parse-pure
+# @pt.item parse() never mutates its managed argument, so a written accounts.yaml keeps `login` only
+# @pt.condition parse a config with a managed {login: reg1} account and a registry; then project-account-add --login reg1 and load the written files
+# @pt.expected the managed dict equals a deepcopy taken before; accounts.yaml has no provider or home for the login account and orchestrator.load succeeds
+# @pt.target bridge.orchestrator.parse, bridge.cli._write_managed
+# @pt.method unit
+# @pt.legacy parse filled provider and home into the caller's dict, which was then written out
+def test_parse_does_not_mutate_managed(project):
+    import copy
+
+    from bridge.accounts import register
+    root, yaml_file = project
+    reg = register("reg1", "anthropic")
+    managed = {"accounts": {"reg1": {"login": "reg1", "limits": {"five_hour_pct": 70.0}}}}
+    before = copy.deepcopy(managed)
+    registry = {"reg1": {"provider": "anthropic", "home": str(reg.home)}}
+    orchestrator.parse(yaml_file.read_text(), str(yaml_file), registry, managed, "m.yaml")
+    assert managed == before
+    add("reg1", login="reg1", provider=None, five_hour_pct=70.0)
+    written = orchestrator.load_managed(root / ".ai" / orchestrator.MANAGED_FILE)
+    assert written == before
+    assert load(root).accounts["reg1"].home == str(reg.home)
+
+
+# @pt.id KIT-PROJ-ACCT-007-login
+# @pt.item project-account-add --login references a registry login
+# @pt.condition registry login reg1 (anthropic); add reg1 as a project account with --login and --five-hour-pct 70; add the same name again; add with a mismatching --provider; add an unknown login
+# @pt.expected accounts.yaml holds {login: reg1, limits}; no home is created; the loaded account has the registry home and the 70 limit; the implicit registry name was accepted; a name now in accounts.yaml, a mismatch and an unknown login are refused
+# @pt.target bridge.cli._project_account_add
+# @pt.method unit
+# @pt.legacy none
+def test_add_with_login(project):
+    from bridge.accounts import register
+    root, _ = project
+    reg = register("reg1", "anthropic")
+    # an agent that uses reg1 makes it an implicit project account
+    ai = root / ".ai"
+    text = (ai / "orchestrator.yaml").read_text().replace(
+        "agents:\n", "agents:\n  a-reg: {adapter: claude-cli, account: reg1}\n")
+    (ai / "orchestrator.yaml").write_text(text)
+    assert "reg1" in load(root).accounts_from_registry
+    homes_before = sorted(p.name for p in (Path(os.environ["HOME"]) / ".agent-bridge").rglob("*"))
+    out = add("reg1", login="reg1", provider=None, five_hour_pct=70.0)
+    managed = orchestrator.load_managed(ai / orchestrator.MANAGED_FILE)
+    assert managed == {"accounts": {"reg1": {"login": "reg1", "limits": {"five_hour_pct": 70.0}}}}
+    assert out["home"] == str(reg.home)
+    assert sorted(p.name for p in (Path(os.environ["HOME"]) / ".agent-bridge").rglob("*")) == homes_before
+    acc = load(root).accounts["reg1"]
+    assert acc.home == str(reg.home) and acc.limits.five_hour_pct == 70.0
+    with pytest.raises(ValueError, match="already exists"):
+        add("reg1", login="reg1", provider=None)
+    with pytest.raises(ValueError, match="does not match"):
+        add("reg2", login="reg1", provider="openai")
+    with pytest.raises(ValueError, match="unknown login"):
+        add("reg3", login="nope", provider=None)
 
 
 # @pt.id KIT-PROJ-ACCT-002-refusals
@@ -90,17 +151,19 @@ def test_add_refusals_write_nothing(project):
 
 
 # @pt.id KIT-PROJ-ACCT-003-precedence
-# @pt.item orchestrator.yaml wins over the managed file, and managed errors name accounts.yaml
+# @pt.item an account in both files is an error, and managed errors name accounts.yaml
 # @pt.condition the managed file declares cx (also in orchestrator.yaml) and a broken account
-# @pt.expected cx keeps its orchestrator.yaml home; the broken entry's error names accounts.yaml
+# @pt.expected the clash error names cx and both files; the broken entry's error names accounts.yaml
 # @pt.target bridge.orchestrator.parse
 # @pt.method unit
 # @pt.legacy none
 def test_orchestrator_yaml_wins(project):
     root, yaml_file = project
     managed = {"accounts": {"cx": {"provider": "openai", "home": "/elsewhere"}}}
-    orch = orchestrator.parse(yaml_file.read_text(), str(yaml_file), None, managed, "m.yaml")
-    assert orch.accounts["cx"].home != "/elsewhere"
+    with pytest.raises(ValueError) as clash:
+        orchestrator.parse(yaml_file.read_text(), str(yaml_file), None, managed, "m.yaml")
+    assert "'cx'" in str(clash.value) and str(yaml_file) in str(clash.value)
+    assert "m.yaml" in str(clash.value)
     broken = {"accounts": {"bad": {"provider": "anthropic", "extra": 1}}}
     with pytest.raises(ValueError) as err:
         orchestrator.parse(yaml_file.read_text(), str(yaml_file), None, broken, "m.yaml")
@@ -108,24 +171,43 @@ def test_orchestrator_yaml_wins(project):
 
 
 # @pt.id KIT-PROJ-ACCT-004-remove
-# @pt.item project-account-remove drops the account, its agent and executor entry, keeps the home
-# @pt.condition an account added with --executor, then removed with the typed confirmation; then a name only orchestrator.yaml declares
-# @pt.expected the merged config no longer has them, the home still exists, routing is back to [codex]; removing cx is refused
+# @pt.item project-account-remove drops the account (and legacy agent entries), keeps the home, and refuses accounts it does not own
+# @pt.condition an account added then removed with the typed confirmation; a legacy accounts.yaml with an agent and executor entry for an account; the orchestrator.yaml account cx; an implicit registry account
+# @pt.expected the account is gone and its home stays; the legacy agent and executor entries are dropped; cx and the registry account are refused with the account_owner text
 # @pt.target bridge.cli._project_account_remove
 # @pt.method unit
 # @pt.legacy none
 def test_remove_keeps_home(project, monkeypatch):
+    from bridge.accounts import register
     root, _ = project
     out = add("claude-thuyseatch", executor=True)
     monkeypatch.setattr(builtins, "input", lambda prompt: "claude-thuyseatch")
     gone = cli._project_account_remove(argparse.Namespace(name="claude-thuyseatch"))
-    assert gone["agents_removed"] == ["agent-claude-thuyseatch"]
+    assert gone["agents_removed"] == []
     assert Path(out["home"]).is_dir() and gone["home_kept"] == out["home"]
     orch = load(root)
     assert "claude-thuyseatch" not in orch.accounts
     assert orch.role("executor").agents == ["codex"]
-    with pytest.raises(ValueError, match="edited there"):
+
+    managed = root / ".ai" / orchestrator.MANAGED_FILE
+    add("old")
+    data = orchestrator.load_managed(managed)
+    data |= {"agents": {"agent-old": {"adapter": "claude-cli", "account": "old"}},
+             "executor": ["agent-old"]}
+    managed.write_text(__import__("yaml").safe_dump(data))
+    monkeypatch.setattr(builtins, "input", lambda prompt: "old")
+    gone = cli._project_account_remove(argparse.Namespace(name="old"))
+    assert gone["agents_removed"] == ["agent-old"]
+    assert orchestrator.load_managed(managed) == {"accounts": {}}
+
+    with pytest.raises(ValueError, match="accounts.cx in .ai/orchestrator.yaml"):
         cli._project_account_remove(argparse.Namespace(name="cx"))
+    register("reg1", "anthropic")
+    ai = root / ".ai"
+    (ai / "orchestrator.yaml").write_text((ai / "orchestrator.yaml").read_text().replace(
+        "agents:\n", "agents:\n  a-reg: {adapter: claude-cli, account: reg1}\n"))
+    with pytest.raises(ValueError, match="the machine registry"):
+        cli._project_account_remove(argparse.Namespace(name="reg1"))
 
 
 # @pt.id KIT-PROJ-ACCT-006-limits
@@ -153,7 +235,7 @@ def test_window_limits(project):
     assert managed.read_text() == before
     assert set_limits(clear=True)["limits"] == {}
     assert load(root).accounts["vydnt"].limits is None
-    with pytest.raises(ValueError, match="edited there"):
+    with pytest.raises(ValueError, match="accounts.cx in .ai/orchestrator.yaml"):
         set_limits(name="cx", weekly_pct=90.0)
 
 

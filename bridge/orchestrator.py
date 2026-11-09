@@ -7,6 +7,7 @@ projects keep their behaviour.
 
 from __future__ import annotations
 
+import copy
 import re
 from pathlib import Path
 from typing import Literal
@@ -123,6 +124,9 @@ class AccountProfile(BaseModel):
     credential: Literal["keychain"] | None = None
     # What that secret is: a `claude setup-token` token or an Anthropic Console API key.
     credential_kind: Literal["oauth_token", "api_key"] = "oauth_token"
+    # The name of a machine registry login this project account uses: provider and home come
+    # from that entry (resolved in `parse`); limits and credentials stay the project's own.
+    login: str | None = Field(None, exclude=True)
 
     @model_validator(mode="after")
     def _known_provider(self) -> AccountProfile:
@@ -294,6 +298,15 @@ class OrchestratorConfig(BaseModel):
     workflow: WorkflowConfig = WorkflowConfig()
     security: SecurityConfig = SecurityConfig()
     source: str = Field("orchestrator.yaml", exclude=True)
+    # Registry accounts no agent of this project references: still usable by the machine-wide
+    # account commands, never part of the project's accounts.
+    catalog: dict[str, AccountProfile] = Field({}, exclude=True)
+    # Provenance, for reporting.
+    accounts_from_registry: list[str] = Field([], exclude=True)
+    accounts_in_orchestrator: list[str] = Field([], exclude=True)
+    agents_in_accounts_file: list[str] = Field([], exclude=True)
+    # Which verify_* keys orchestrator.yaml's `workflow:` sets (deprecated; config.json owns them).
+    verify_in_orchestrator: list[str] = Field([], exclude=True)
 
     @model_validator(mode="after")
     def _references(self) -> OrchestratorConfig:
@@ -401,6 +414,33 @@ def legacy(cfg: BridgeConfig, registry: dict | None = None) -> OrchestratorConfi
     )
 
 
+def account_owner(orch: OrchestratorConfig, name: str) -> str:
+    """Where a human changes this account's settings."""
+    if name in orch.accounts_in_orchestrator:
+        return f"accounts.{name} in .ai/orchestrator.yaml (move it to .ai/accounts.yaml)"
+    if name in orch.accounts_from_registry:
+        return (f"the machine registry; declare it for this project: `{name}: {{login: {name}}}` "
+                "in .ai/accounts.yaml (or run `agent-bridge config-migrate`)")
+    if orch.source.startswith("legacy"):
+        return ".ai/config.json"
+    return f"accounts.{name} in .ai/accounts.yaml (`agent-bridge project-account-limits {name}`)"
+
+
+def deprecated(orch: OrchestratorConfig, cfg: BridgeConfig) -> list[str]:
+    """Settings layouts that still load but should move; empty for a clean config."""
+    out = [f"{n}: declared in orchestrator.yaml; move it to .ai/accounts.yaml"
+           for n in orch.accounts_in_orchestrator]
+    out += [f"{n}: registry login used without a project declaration; its limits come from "
+            "the machine registry" for n in orch.accounts_from_registry]
+    out += [f"{n}: agent or executor entry in .ai/accounts.yaml; move it to orchestrator.yaml"
+            for n in orch.agents_in_accounts_file]
+    out += [f"workflow.{k} in orchestrator.yaml; move it to .ai/config.json as \"{k}\""
+            for k in orch.verify_in_orchestrator]
+    if not orch.source.startswith("legacy") and "max_attempts" in cfg.model_fields_set:
+        out.append("max_attempts in .ai/config.json is ignored; use workflow.max_rework")
+    return out
+
+
 def load_managed(path: Path) -> dict:
     """The CLI-managed `.ai/accounts.yaml`: {accounts, agents, executor}, all optional."""
     if not path.exists():
@@ -414,26 +454,59 @@ def load_managed(path: Path) -> dict:
     return data
 
 
-def _with_managed(data: dict, managed: dict) -> tuple[set[str], set[str]]:
-    """Merge `managed` into `data` in place; returns the account and agent names it added."""
+def _with_managed(data: dict, managed: dict, source: str = ORCHESTRATOR_FILE,
+                  managed_source: str = MANAGED_FILE) -> tuple[set[str], set[str]]:
+    """Merge `managed` into `data` in place; returns the account and agent names it added.
+
+    A name declared in both files is an error: neither file silently overrides the other."""
     added = {}
     for key in ("accounts", "agents"):
         own = data.get(key) or {}
-        mine = {k: v for k, v in (managed.get(key) or {}).items() if k not in own}
-        added[key] = set(mine)
-        data[key] = {**mine, **own}
+        theirs = managed.get(key) or {}
+        for name in theirs:
+            if name in own:
+                raise ValueError(f"{key[:-1]} {name!r} is declared in both {source} and "
+                                 f"{managed_source}; keep it in one file")
+        added[key] = set(theirs)
+        data[key] = {**theirs, **own}
     first = [a for a in managed.get("executor") or [] if a in data["agents"]]
     roles = data.get("roles")
     if first and isinstance(roles, dict) and "executor" in roles:
         role = roles["executor"]
         if isinstance(role, str):
-            role = [role]
-        if isinstance(role, list):
+            roles["executor"] = {"agents": list(dict.fromkeys([*first, role]))}
+        elif isinstance(role, list):
             roles["executor"] = list(dict.fromkeys([*first, *role]))
         elif isinstance(role, dict) and isinstance(role.get("agents"), list):
             # A `default:` in orchestrator.yaml still goes first; these come next.
             role["agents"] = list(dict.fromkeys([*first, *role["agents"]]))
     return added["accounts"], added["agents"]
+
+
+def _resolve_logins(accounts: dict, registry: dict, managed_accounts: set[str],
+                    source: str, managed_source: str) -> set[str]:
+    """Fill provider and home of `login:` entries from the registry; returns their names."""
+    used = set()
+    for name, entry in accounts.items():
+        if not isinstance(entry, dict) or entry.get("login") is None:
+            continue
+        where = managed_source if name in managed_accounts else source
+        login = entry["login"]
+        target = registry.get(login) if isinstance(login, str) else None
+        if target is None:
+            raise ValueError(f"{where}: account {name}: unknown login {login!r}; "
+                             f"registry logins: {sorted(registry)}")
+        if entry.get("home") is not None:
+            raise ValueError(f"{where}: account {name}: login {login!r} supplies the home; "
+                             "remove `home`")
+        if entry.get("provider") not in (None, target.get("provider")):
+            raise ValueError(f"{where}: account {name}: provider {entry['provider']!r} does "
+                             f"not match login {login!r} ({target.get('provider')})")
+        entry["provider"] = target.get("provider")
+        if target.get("home") is not None:
+            entry["home"] = target["home"]
+        used.add(name)
+    return used
 
 
 def parse(text: str, source: str = ORCHESTRATOR_FILE,
@@ -445,14 +518,28 @@ def parse(text: str, source: str = ORCHESTRATOR_FILE,
         raise ValueError(f"{source}: invalid YAML: {e}") from e
     if not isinstance(data, dict):
         raise ValueError(f"{source}: expected a mapping at the top level")
-    managed_accounts, managed_agents = _with_managed(data, managed or {})
-    inherited = set()
-    if registry:
-        # Registry accounts are usable by name; the project's own declarations win.
-        inherited = set(registry) - set(data.get("accounts") or {})
-        data["accounts"] = {**registry, **(data.get("accounts") or {})}
+    # Never mutate the caller's arguments: login resolution fills provider and home in place.
+    managed = copy.deepcopy(managed or {})
+    registry = copy.deepcopy(registry or {})
+    own_accounts = list(data.get("accounts") or {})
+    managed_accounts, managed_agents = _with_managed(data, managed, source, managed_source)
+    logins = (_resolve_logins(data["accounts"], registry, managed_accounts,
+                              source, managed_source)
+              if isinstance(data.get("accounts"), dict) else set())
+    declared = set(data.get("accounts") or {})
+    # A registry entry whose login a project account already uses is not merged a second time:
+    # both would share one auth home.
+    taken = {(data["accounts"][n].get("provider"), data["accounts"][n].get("home"))
+             for n in logins}
+    inherited = {n for n in registry if n not in declared
+                 and (registry[n].get("provider"), registry[n].get("home")) not in taken}
+    extra = {n: registry[n] for n in registry if n not in declared and n not in inherited}
+    if inherited:
+        # Registry accounts resolve by name; the project's own declarations win.
+        data["accounts"] = {**{n: registry[n] for n in registry if n in inherited},
+                            **(data.get("accounts") or {})}
     try:
-        return OrchestratorConfig.model_validate({**data, "source": source})
+        orch = OrchestratorConfig.model_validate({**data, "source": source})
     except ValidationError as e:
         problems: dict[str, list[str]] = {}
         for err in e.errors():
@@ -468,15 +555,127 @@ def parse(text: str, source: str = ORCHESTRATOR_FILE,
                 f"{'.'.join(str(p) for p in loc) or '<root>'}: {err['msg']}")
         raise ValueError("; ".join(f"{where}: {'; '.join(found)}"
                                    for where, found in problems.items())) from e
+    # Scope the registry to this project: only accounts an agent points to stay.
+    referenced = {a.account for a in orch.agents.values() if a.account}
+    catalog: dict[str, AccountProfile] = {}
+    for name in sorted(extra):
+        try:
+            catalog[name] = AccountProfile(**extra[name])
+        except ValidationError as e:
+            raise ValueError(f"{registry_dir() / 'accounts.json'}: accounts.{name}: "
+                             f"{e.errors()[0]['msg']}") from e
+    kept = {}
+    for name, acc in orch.accounts.items():
+        if name in inherited and name not in referenced:
+            catalog[name] = acc
+        else:
+            kept[name] = acc
+    orch.accounts = kept
+    orch.catalog = dict(sorted(catalog.items()))
+    orch.accounts_from_registry = [n for n in kept if n in inherited]
+    orch.accounts_in_orchestrator = own_accounts
+    orch.agents_in_accounts_file = list(dict.fromkeys(
+        [*managed_agents, *(managed.get("executor") or [])]))
+    raw_workflow = data.get("workflow")
+    orch.verify_in_orchestrator = [k for k in VERIFY_KEYS if isinstance(raw_workflow, dict)
+                                   and k in raw_workflow]
+    return orch
+
+
+VERIFY_KEYS = ("verify_sandbox", "verify_writable")
+
+
+def with_verify_settings(orch: OrchestratorConfig, cfg: BridgeConfig) -> OrchestratorConfig:
+    """Apply `.ai/config.json` verify_* (the owner) to the effective workflow.
+
+    A key set in both files is an error: it must never silently weaken the sandbox."""
+    values = {k: getattr(cfg, k) for k in VERIFY_KEYS if getattr(cfg, k) is not None}
+    for key in values:
+        if key in orch.verify_in_orchestrator:
+            raise ValueError(f"{key} is set in both .ai/config.json and {orch.source} "
+                             f"(workflow.{key}); keep it only in .ai/config.json")
+    if not values:
+        return orch
+    try:
+        orch.workflow = WorkflowConfig(**{**orch.workflow.model_dump(), **values})
+    except ValidationError as e:
+        raise ValueError(".ai/config.json: " + "; ".join(
+            err["msg"] for err in e.errors())) from e
+    return orch
+
+
+def migration_plan(root: Path, cfg: BridgeConfig) -> dict:
+    """The one-owner layout for this project; writes nothing.
+
+    Accounts end up only in accounts.yaml (registry logins as `login:` entries that carry the
+    registry limits), agents and roles only in orchestrator.yaml. The effective configuration
+    must be unchanged, else ValueError and the plan is never to be written."""
+    path = root / AI_DIR / ORCHESTRATOR_FILE
+    if not path.exists():
+        raise ValueError("nothing to migrate: legacy setup")
+    managed_path = root / AI_DIR / MANAGED_FILE
+    registry = load_registry()
+    current = load(root, cfg)
+    managed = load_managed(managed_path)
+    try:
+        data = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as e:
+        raise ValueError(f"{path}: invalid YAML: {e}") from e
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: expected a mapping at the top level")
+    data = copy.deepcopy(data)
+    moves: list[str] = []
+
+    accounts = copy.deepcopy(managed.get("accounts") or {})
+    for name, entry in (data.pop("accounts", None) or {}).items():
+        accounts[name] = copy.deepcopy(entry)
+        moves.append(f"account {name}: {ORCHESTRATOR_FILE} -> {MANAGED_FILE}")
+    for name in current.accounts_from_registry:
+        reg = registry.get(name) or {}
+        entry: dict = {"login": name}
+        for key in ("max_concurrency", "limits"):
+            if reg.get(key) is not None:
+                entry[key] = copy.deepcopy(reg[key])
+        accounts[name] = entry
+        moves.append(f"account {name}: machine registry -> {MANAGED_FILE} as `login: {name}`"
+                     " (registry limits copied)")
+
+    extra = {k: copy.deepcopy(managed[k]) for k in ("agents", "executor") if managed.get(k)}
+    for name in extra.get("agents") or {}:
+        moves.append(f"agent {name}: {MANAGED_FILE} -> {ORCHESTRATOR_FILE}")
+    for name in extra.get("executor") or []:
+        moves.append(f"executor entry {name}: {MANAGED_FILE} -> roles.executor in "
+                     f"{ORCHESTRATOR_FILE}")
+    if extra:
+        _with_managed(data, extra)
+        data.pop("accounts", None)
+
+    plan_accounts = {"accounts": accounts}
+    text = yaml.safe_dump(data, sort_keys=False)
+    planned = with_verify_settings(
+        parse(text, str(path), registry, plan_accounts, str(managed_path)), cfg)
+    if planned.model_dump() != current.model_dump():
+        raise ValueError("migration would change the effective configuration; nothing "
+                         "written. Differences in: " + ", ".join(
+                             k for k, v in current.model_dump().items()
+                             if planned.model_dump().get(k) != v))
+    if (planned.accounts_in_orchestrator or planned.accounts_from_registry
+            or planned.agents_in_accounts_file):
+        left = [*planned.accounts_in_orchestrator, *planned.accounts_from_registry,
+                *planned.agents_in_accounts_file]
+        raise ValueError(f"migration would leave settings in the old layout: {left}")
+    return {"accounts_yaml": plan_accounts, "orchestrator_yaml": data, "moves": moves,
+            "changed": bool(moves)}
 
 
 def load(root: Path, cfg: BridgeConfig) -> OrchestratorConfig:
     path = root / AI_DIR / ORCHESTRATOR_FILE
     registry = load_registry()
     if not path.exists():
-        return legacy(cfg, registry)
+        return with_verify_settings(legacy(cfg, registry), cfg)
     if cfg.accounts or cfg.auto_switch.enabled:
         raise ValueError(f"{path}: accounts and auto_switch moved to orchestrator.yaml; "
                          "remove them from .ai/config.json")
     managed = root / AI_DIR / MANAGED_FILE
-    return parse(path.read_text(), str(path), registry, load_managed(managed), str(managed))
+    return with_verify_settings(
+        parse(path.read_text(), str(path), registry, load_managed(managed), str(managed)), cfg)

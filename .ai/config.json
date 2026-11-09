@@ -1,0 +1,4 @@
+{
+  "verify_sandbox": "auto",
+  "verify_writable": ["~/.cache/uv"]
+}
