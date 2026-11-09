@@ -29,43 +29,44 @@ def test_kit_files_in_wheel():
 
 
 # @pt.id KIT-PKG-005-settings-template-denies
-# @pt.item Installed deny list template
-# @pt.condition templates/claude-settings.json, the file init merges into a project's .claude/settings.json
-# @pt.expected deny list contains the approve and reassign Bash denies and Edit(/.ai/**)
-# @pt.target templates/claude-settings.json, bridge.install.install
+# @pt.item Repository deny list is covered by the shipped template
+# @pt.condition the deny lists of .claude/settings.json and templates/claude-settings.json
+# @pt.expected every deny entry of .claude/settings.json is also in the template, so a credential deny added only to the repo file fails and names the missing entries
+# @pt.target .claude/settings.json, templates/claude-settings.json, bridge.executor._claude_credential_denies
 # @pt.method unit
 # @pt.legacy none
 def test_settings_template_denies_human_only_commands():
     import json
 
-    deny = json.loads((ROOT / "templates/claude-settings.json").read_text())["permissions"]["deny"]
-    for entry in ("Bash(*agent-bridge approve*)", "Bash(*agent-bridge reassign*)", "Edit(/.ai/**)"):
-        assert entry in deny
+    repo = json.loads((ROOT / ".claude/settings.json").read_text())["permissions"]["deny"]
+    template = json.loads((ROOT / "templates/claude-settings.json").read_text())["permissions"]["deny"]
+    missing = [entry for entry in repo if entry not in template]
+    assert not missing, f"denies missing from templates/claude-settings.json: {missing}"
 
 
 # @pt.id KIT-PKG-006-credential-denies-from-template
 # @pt.item Claude adapter credential Read denies in a wheel-shaped kit
 # @pt.condition a kit directory containing only templates/claude-settings.json
-# @pt.expected _claude_credential_denies returns the template's Read( rules, including ~/.codex/auth.json
+# @pt.expected _claude_credential_denies includes the fixed Read denies for ~/.codex/auth.json, ~/.codex-accounts/**, ~/.agent-bridge/homes/** and ~/.gemini/antigravity-cli/**, and every rule starts with Read(
 # @pt.target bridge.executor._claude_credential_denies
 # @pt.method unit
 # @pt.legacy none
 def test_credential_denies_read_settings_template(monkeypatch, tmp_path):
-    import json
-
     import bridge.install
     from bridge.executor import _claude_credential_denies
 
     template = ROOT / "templates/claude-settings.json"
     (tmp_path / "templates").mkdir()
     (tmp_path / "templates/claude-settings.json").write_text(template.read_text())
-    expected = [rule for rule in json.loads(template.read_text())["permissions"]["deny"]
-                if rule.startswith("Read(")]
+    required = ["Read(~/.codex/auth.json)", "Read(~/.codex-accounts/**)",
+                "Read(~/.agent-bridge/homes/**)", "Read(~/.gemini/antigravity-cli/**)"]
     monkeypatch.setattr(bridge.install, "KIT", tmp_path)
     _claude_credential_denies.cache_clear()
     try:
-        assert _claude_credential_denies() == expected
-        assert "Read(~/.codex/auth.json)" in expected
+        denies = list(_claude_credential_denies())
+        for rule in required:
+            assert rule in denies, (rule, denies)
+        assert all(rule.startswith("Read(") for rule in denies), denies
     finally:
         _claude_credential_denies.cache_clear()
 

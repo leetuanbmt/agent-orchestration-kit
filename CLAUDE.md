@@ -35,7 +35,9 @@ approvals and anything irreversible.
    until the user says it is resolved. A task PAUSED for QUOTA waits for the user too, unless
    the user enabled quota fallback (`routing.quota_fallback` in `orchestrator.yaml`, or
    `auto_switch` in the legacy `config.json`): then the bridge (never Claude) moves it to the
-   next eligible agent. Claude never edits that config or picks accounts itself.
+   next eligible agent. Claude never picks accounts itself, and edits that config only when the
+   user asks. This repository's settings allow edits to `.ai/` (including `.ai/config.json` and
+   `.ai/orchestrator.yaml`); projects set up by `agent-bridge init` keep the `Edit(/.ai/**)` deny.
 
 ## Branches and PRs
 
