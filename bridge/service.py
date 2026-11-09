@@ -62,7 +62,7 @@ def resolve_account(orch: OrchestratorConfig, cfg: BridgeConfig, root: Path,
                     name: str) -> Account:
     if orch.source.startswith("legacy") and (name == "default" or name in cfg.accounts):
         return resolve(cfg, root, name)
-    profile = orch.accounts.get(name)
+    profile = orch.accounts.get(name) or orch.catalog.get(name)
     if profile is None:
         raise ValueError(f"unknown account: {name}")
     return resolve_profile(name, profile.provider, profile.home, root, profile.token_env,

@@ -120,11 +120,16 @@ def _login(cfg: Any, acc: Any, device_auth: bool, api_key: bool = False) -> Any:
     return login_status(cfg, acc)
 
 
+def _providers(orch: Any) -> dict[str, str]:
+    """Provider by account name: the project's accounts plus the unreferenced registry ones."""
+    return {k: a.provider for k, a in {**orch.catalog, **orch.accounts}.items()}
+
+
 def _set_token(args: argparse.Namespace) -> dict[str, Any]:
     root = find_root()
     cfg = load_config(root)
     orch = orchestrator.load(root, cfg)
-    name = _pick(args, {k: a.provider for k, a in orch.accounts.items()})
+    name = _pick(args, _providers(orch))
     acc = resolve_account(orch, cfg, root, name)
     if acc.credential != "keychain":
         raise ValueError(f"account {name} needs `credential: keychain` in .ai/orchestrator.yaml")
@@ -465,11 +470,11 @@ async def _run(args: argparse.Namespace) -> Any:
         _on_stop_signals(asyncio.current_task().cancel)  # type: ignore[union-attr]
     match args.cmd:
         case "account-clear":
-            return b.clear_account(_pick(args, {k: a.provider for k, a in b.orch.accounts.items()}))
+            return b.clear_account(_pick(args, _providers(b.orch)))
         case "account-show":
-            return b.show_account(_pick(args, {k: a.provider for k, a in b.orch.accounts.items()}))
+            return b.show_account(_pick(args, _providers(b.orch)))
         case "account-verify":
-            return b.verify_account(_pick(args, {k: a.provider for k, a in b.orch.accounts.items()}))
+            return b.verify_account(_pick(args, _providers(b.orch)))
         case "health":
             return await b.health()
         case "create":

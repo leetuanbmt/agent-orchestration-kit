@@ -90,17 +90,19 @@ def test_add_refusals_write_nothing(project):
 
 
 # @pt.id KIT-PROJ-ACCT-003-precedence
-# @pt.item orchestrator.yaml wins over the managed file, and managed errors name accounts.yaml
+# @pt.item an account in both files is an error, and managed errors name accounts.yaml
 # @pt.condition the managed file declares cx (also in orchestrator.yaml) and a broken account
-# @pt.expected cx keeps its orchestrator.yaml home; the broken entry's error names accounts.yaml
+# @pt.expected the clash error names cx and both files; the broken entry's error names accounts.yaml
 # @pt.target bridge.orchestrator.parse
 # @pt.method unit
 # @pt.legacy none
 def test_orchestrator_yaml_wins(project):
     root, yaml_file = project
     managed = {"accounts": {"cx": {"provider": "openai", "home": "/elsewhere"}}}
-    orch = orchestrator.parse(yaml_file.read_text(), str(yaml_file), None, managed, "m.yaml")
-    assert orch.accounts["cx"].home != "/elsewhere"
+    with pytest.raises(ValueError) as clash:
+        orchestrator.parse(yaml_file.read_text(), str(yaml_file), None, managed, "m.yaml")
+    assert "'cx'" in str(clash.value) and str(yaml_file) in str(clash.value)
+    assert "m.yaml" in str(clash.value)
     broken = {"accounts": {"bad": {"provider": "anthropic", "extra": 1}}}
     with pytest.raises(ValueError) as err:
         orchestrator.parse(yaml_file.read_text(), str(yaml_file), None, broken, "m.yaml")

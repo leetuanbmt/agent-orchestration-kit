@@ -123,6 +123,9 @@ class AccountProfile(BaseModel):
     credential: Literal["keychain"] | None = None
     # What that secret is: a `claude setup-token` token or an Anthropic Console API key.
     credential_kind: Literal["oauth_token", "api_key"] = "oauth_token"
+    # The name of a machine registry login this project account uses: provider and home come
+    # from that entry (resolved in `parse`); limits and credentials stay the project's own.
+    login: str | None = Field(None, exclude=True)
 
     @model_validator(mode="after")
     def _known_provider(self) -> AccountProfile:
@@ -294,6 +297,13 @@ class OrchestratorConfig(BaseModel):
     workflow: WorkflowConfig = WorkflowConfig()
     security: SecurityConfig = SecurityConfig()
     source: str = Field("orchestrator.yaml", exclude=True)
+    # Registry accounts no agent of this project references: still usable by the machine-wide
+    # account commands, never part of the project's accounts.
+    catalog: dict[str, AccountProfile] = Field({}, exclude=True)
+    # Provenance, for reporting.
+    accounts_from_registry: list[str] = Field([], exclude=True)
+    accounts_in_orchestrator: list[str] = Field([], exclude=True)
+    agents_in_accounts_file: list[str] = Field([], exclude=True)
 
     @model_validator(mode="after")
     def _references(self) -> OrchestratorConfig:
@@ -414,26 +424,59 @@ def load_managed(path: Path) -> dict:
     return data
 
 
-def _with_managed(data: dict, managed: dict) -> tuple[set[str], set[str]]:
-    """Merge `managed` into `data` in place; returns the account and agent names it added."""
+def _with_managed(data: dict, managed: dict, source: str = ORCHESTRATOR_FILE,
+                  managed_source: str = MANAGED_FILE) -> tuple[set[str], set[str]]:
+    """Merge `managed` into `data` in place; returns the account and agent names it added.
+
+    A name declared in both files is an error: neither file silently overrides the other."""
     added = {}
     for key in ("accounts", "agents"):
         own = data.get(key) or {}
-        mine = {k: v for k, v in (managed.get(key) or {}).items() if k not in own}
-        added[key] = set(mine)
-        data[key] = {**mine, **own}
+        theirs = managed.get(key) or {}
+        for name in theirs:
+            if name in own:
+                raise ValueError(f"{key[:-1]} {name!r} is declared in both {source} and "
+                                 f"{managed_source}; keep it in one file")
+        added[key] = set(theirs)
+        data[key] = {**theirs, **own}
     first = [a for a in managed.get("executor") or [] if a in data["agents"]]
     roles = data.get("roles")
     if first and isinstance(roles, dict) and "executor" in roles:
         role = roles["executor"]
         if isinstance(role, str):
-            role = [role]
-        if isinstance(role, list):
+            roles["executor"] = {"agents": list(dict.fromkeys([*first, role]))}
+        elif isinstance(role, list):
             roles["executor"] = list(dict.fromkeys([*first, *role]))
         elif isinstance(role, dict) and isinstance(role.get("agents"), list):
             # A `default:` in orchestrator.yaml still goes first; these come next.
             role["agents"] = list(dict.fromkeys([*first, *role["agents"]]))
     return added["accounts"], added["agents"]
+
+
+def _resolve_logins(accounts: dict, registry: dict, managed_accounts: set[str],
+                    source: str, managed_source: str) -> set[str]:
+    """Fill provider and home of `login:` entries from the registry; returns their names."""
+    used = set()
+    for name, entry in accounts.items():
+        if not isinstance(entry, dict) or entry.get("login") is None:
+            continue
+        where = managed_source if name in managed_accounts else source
+        login = entry["login"]
+        target = registry.get(login) if isinstance(login, str) else None
+        if target is None:
+            raise ValueError(f"{where}: account {name}: unknown login {login!r}; "
+                             f"registry logins: {sorted(registry)}")
+        if entry.get("home") is not None:
+            raise ValueError(f"{where}: account {name}: login {login!r} supplies the home; "
+                             "remove `home`")
+        if entry.get("provider") not in (None, target.get("provider")):
+            raise ValueError(f"{where}: account {name}: provider {entry['provider']!r} does "
+                             f"not match login {login!r} ({target.get('provider')})")
+        entry["provider"] = target.get("provider")
+        if target.get("home") is not None:
+            entry["home"] = target["home"]
+        used.add(name)
+    return used
 
 
 def parse(text: str, source: str = ORCHESTRATOR_FILE,
@@ -445,14 +488,27 @@ def parse(text: str, source: str = ORCHESTRATOR_FILE,
         raise ValueError(f"{source}: invalid YAML: {e}") from e
     if not isinstance(data, dict):
         raise ValueError(f"{source}: expected a mapping at the top level")
-    managed_accounts, managed_agents = _with_managed(data, managed or {})
-    inherited = set()
-    if registry:
-        # Registry accounts are usable by name; the project's own declarations win.
-        inherited = set(registry) - set(data.get("accounts") or {})
-        data["accounts"] = {**registry, **(data.get("accounts") or {})}
+    managed = managed or {}
+    registry = registry or {}
+    own_accounts = list(data.get("accounts") or {})
+    managed_accounts, managed_agents = _with_managed(data, managed, source, managed_source)
+    logins = (_resolve_logins(data["accounts"], registry, managed_accounts,
+                              source, managed_source)
+              if isinstance(data.get("accounts"), dict) else set())
+    declared = set(data.get("accounts") or {})
+    # A registry entry whose login a project account already uses is not merged a second time:
+    # both would share one auth home.
+    taken = {(data["accounts"][n].get("provider"), data["accounts"][n].get("home"))
+             for n in logins}
+    inherited = {n for n in registry if n not in declared
+                 and (registry[n].get("provider"), registry[n].get("home")) not in taken}
+    extra = {n: registry[n] for n in registry if n not in declared and n not in inherited}
+    if inherited:
+        # Registry accounts resolve by name; the project's own declarations win.
+        data["accounts"] = {**{n: registry[n] for n in registry if n in inherited},
+                            **(data.get("accounts") or {})}
     try:
-        return OrchestratorConfig.model_validate({**data, "source": source})
+        orch = OrchestratorConfig.model_validate({**data, "source": source})
     except ValidationError as e:
         problems: dict[str, list[str]] = {}
         for err in e.errors():
@@ -468,6 +524,28 @@ def parse(text: str, source: str = ORCHESTRATOR_FILE,
                 f"{'.'.join(str(p) for p in loc) or '<root>'}: {err['msg']}")
         raise ValueError("; ".join(f"{where}: {'; '.join(found)}"
                                    for where, found in problems.items())) from e
+    # Scope the registry to this project: only accounts an agent points to stay.
+    referenced = {a.account for a in orch.agents.values() if a.account}
+    catalog: dict[str, AccountProfile] = {}
+    for name in sorted(extra):
+        try:
+            catalog[name] = AccountProfile(**extra[name])
+        except ValidationError as e:
+            raise ValueError(f"{registry_dir() / 'accounts.json'}: accounts.{name}: "
+                             f"{e.errors()[0]['msg']}") from e
+    kept = {}
+    for name, acc in orch.accounts.items():
+        if name in inherited and name not in referenced:
+            catalog[name] = acc
+        else:
+            kept[name] = acc
+    orch.accounts = kept
+    orch.catalog = dict(sorted(catalog.items()))
+    orch.accounts_from_registry = [n for n in kept if n in inherited]
+    orch.accounts_in_orchestrator = own_accounts
+    orch.agents_in_accounts_file = list(dict.fromkeys(
+        [*managed_agents, *(managed.get("executor") or [])]))
+    return orch
 
 
 def load(root: Path, cfg: BridgeConfig) -> OrchestratorConfig:
