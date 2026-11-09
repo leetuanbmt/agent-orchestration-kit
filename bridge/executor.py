@@ -108,10 +108,10 @@ _CLAUDE_WRITE_TOOLS = ("Edit", "Write")
 
 @functools.cache
 def _claude_credential_denies() -> list[str]:
-    """The kit settings' Read denies (credential paths). Claude agents load no settings files,
+    """The settings template's Read denies (credential paths). Claude agents load no settings files,
     so they get these on every run through --disallowedTools (verified to block on 2.1.308)."""
-    from .install import KIT
-    deny = json.loads((KIT / ".claude" / "settings.json").read_text())["permissions"]["deny"]
+    from .install import KIT, SETTINGS_TEMPLATE
+    deny = json.loads((KIT / SETTINGS_TEMPLATE).read_text())["permissions"]["deny"]
     return [rule for rule in deny if rule.startswith("Read(")]
 
 

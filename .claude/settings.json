@@ -1,5 +1,7 @@
 {
-  "enabledMcpjsonServers": ["agent-bridge"],
+  "enabledMcpjsonServers": [
+    "agent-bridge"
+  ],
   "permissions": {
     "deny": [
       "Bash(*agent-bridge approve*)",
@@ -23,7 +25,6 @@
       "Bash(*sqlite3*)",
       "Bash(*storage *--apply*)",
       "Bash(*storage rollback*)",
-      "Edit(/.ai/**)",
       "Edit(~/.agent-bridge/**)",
       "Write(~/.agent-bridge/**)",
       "Read(~/.codex/auth.json)",

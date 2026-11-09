@@ -61,7 +61,7 @@ def test_fresh_install(repo):
     assert server['args'] == ['run', '--project', str(KIT), 'agent-bridge', 'serve']
     assert server['env'] == {'BRIDGE_PROJECT_ROOT': '${CLAUDE_PROJECT_DIR:-.}'}
     settings = json.loads((repo / '.claude/settings.json').read_text())
-    assert settings == json.loads((KIT / '.claude/settings.json').read_text())
+    assert settings == json.loads((KIT / 'templates/claude-settings.json').read_text())
     for name in ['orchestration', 'delegation', 'security']:
         assert (repo / f'.claude/rules/{name}.md').read_bytes() == (KIT / f'.claude/rules/{name}.md').read_bytes()
     assert (repo / '.claude/skills/agent-orchestration/SKILL.md').read_bytes() == (KIT / '.claude/skills/agent-orchestration/SKILL.md').read_bytes()
@@ -204,7 +204,7 @@ def test_invalid_target(tmp_path):
 def test_preexisting_assets(repo):
     rule = '.claude/rules/delegation.md'
     write(repo, rule, (KIT / '.claude/rules/delegation.md').read_text())
-    write(repo, '.claude/settings.json', (KIT / '.claude/settings.json').read_text())
+    write(repo, '.claude/settings.json', (KIT / 'templates/claude-settings.json').read_text())
     original = 'before\n<!-- agent-bridge:start -->old<!-- agent-bridge:end -->\nafter\n'
     write(repo, 'CLAUDE.md', original)
     write(repo, '.ai/.gitignore', 'custom\n')
@@ -213,7 +213,7 @@ def test_preexisting_assets(repo):
     assert (repo / 'CLAUDE.md').read_text().endswith('<!-- agent-bridge:end -->\nafter\n')
     run('uninstall.sh', repo)
     assert (repo / rule).read_bytes() == (KIT / '.claude/rules/delegation.md').read_bytes()
-    assert (repo / '.claude/settings.json').read_bytes() == (KIT / '.claude/settings.json').read_bytes()
+    assert (repo / '.claude/settings.json').read_bytes() == (KIT / 'templates/claude-settings.json').read_bytes()
     assert (repo / 'CLAUDE.md').read_text() == original
     assert (repo / '.ai/.gitignore').read_text() == 'custom\n'
 
@@ -287,7 +287,7 @@ def test_old_server_name(repo):
         assert 'codex-bridge' not in (repo / name).read_text(), name
     assert json.loads((repo / '.mcp.json').read_text())['mcpServers']['agent-bridge']['args'][-2:] == ['agent-bridge', 'serve']
     settings = json.loads((repo / '.claude/settings.json').read_text())
-    kit_settings = json.loads((KIT / '.claude/settings.json').read_text())
+    kit_settings = json.loads((KIT / 'templates/claude-settings.json').read_text())
     assert settings['enabledMcpjsonServers'] == ['agent-bridge']
     assert sorted(settings['permissions']['deny']) == sorted(kit_settings['permissions']['deny'])
     run('uninstall.sh', repo)

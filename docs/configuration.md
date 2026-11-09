@@ -54,7 +54,7 @@ parsed as YAML, the whole configuration is validated first, and nothing is writt
 
 `config-init`, `config-migrate`, `config-set`, `config-unset`, `project-account-add`,
 `project-account-limits` and `project-account-remove` are meant to be run by a human: they refuse to run without a terminal,
-and the kit's `.claude/settings.json` also denies `config-init` to Claude Code.
+and the `.claude/settings.json` that `agent-bridge init` installs also denies `config-init` to Claude Code.
 
 `.ai/accounts.yaml`:
 

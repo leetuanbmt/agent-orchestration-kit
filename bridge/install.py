@@ -24,6 +24,8 @@ KIT = Path(__file__).resolve().parent.parent
 CHECKOUT = (KIT / ".claude/rules/orchestration.md").is_file()
 if not CHECKOUT:
     KIT = Path(__file__).resolve().parent / "kit"
+# Separate from the repo's own .claude/settings.json so relaxing rules here does not change what projects get.
+SETTINGS_TEMPLATE = "templates/claude-settings.json"
 NAME = "agent-bridge"
 OLD_NAME = "codex-bridge"
 START, END = b"<!-- agent-bridge:start -->", b"<!-- agent-bridge:end -->"
@@ -153,7 +155,7 @@ def install(target: Path, force: bool = False, server: dict | None = None,
                 record.setdefault("container_created", "mcpServers" not in before)
                 servers[NAME] = server
         else:
-            kit_settings = json.loads((kit / name).read_bytes())
+            kit_settings = json.loads((kit / SETTINGS_TEMPLATE).read_bytes())
             for keys, values in [(("enabledMcpjsonServers",), [NAME]),
                                  (("permissions", "deny"), kit_settings["permissions"]["deny"])]:
                 cursor = obj
