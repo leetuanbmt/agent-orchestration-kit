@@ -52,10 +52,11 @@ def _server_entry() -> dict[str, Any]:
 VIEWS = {"account-list": "accounts_view", "health": "health_view", "agents": "agents_view",
          "list": "tasks_view", "tasks": "projects_view", "usage": "usage_view",
          "config-check": "config_view", "config-migrate": "migrate_view",
-         "project-account-add": "account_added_view"}
+         "project-account-add": "account_added_view", "config-set": "config_change_view",
+         "config-unset": "config_change_view"}
 HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove", "account-set-token",
                       "project-account-add", "project-account-remove",
-                      "project-account-limits"}
+                      "project-account-limits", "config-set", "config-unset"}
 # Adapter per provider for `project-account-add`; google and opencode only plan and review.
 _PROVIDER_ADAPTER = {"openai": "codex-cli", "anthropic": "claude-cli", "google": "agy-cli",
                      "opencode": "opencode-cli"}
@@ -212,6 +213,220 @@ def _config_migrate(args: argparse.Namespace) -> dict[str, Any]:
         tmp.write_text(text)
         os.replace(tmp, ai / name)
     return {"changed": True, "applied": True, "backup": str(backup), "moves": plan["moves"]}
+
+
+# --- Reusable helpers for commands that change .ai files after a preview ---------------------
+
+def _backup_and_write(root: Path, texts: dict[str, str]) -> Path | None:
+    """Back up the existing files among `texts` (name -> new text) to .ai/backup-<UTC stamp>/,
+    then write each atomically. Returns the backup directory (None when nothing existed)."""
+    import datetime
+    ai = root / AI_DIR
+    ensure_ai_dir(root)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    existing = [n for n in texts if (ai / n).exists()]
+    backup = ai / f"backup-{stamp}" if existing else None
+    if backup is not None:
+        backup.mkdir(parents=True)
+        for name in existing:
+            shutil.copy2(ai / name, backup / name)
+    for name, text in texts.items():
+        target = ai / name
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(text)
+        os.replace(tmp, target)
+    return backup
+
+
+def _read_text(path: Path) -> str | None:
+    return path.read_text() if path.exists() else None
+
+
+def _load_layout(texts: dict[str, str | None]) -> tuple[Any, BridgeConfig]:
+    """Load the whole configuration from in-memory file texts (name -> text or None when the
+    file is absent), exactly as `orchestrator.load` does from disk. ValueError names the problem."""
+    import yaml
+    from pydantic import ValidationError
+    try:
+        cfg = BridgeConfig.model_validate(json.loads(texts.get("config.json") or "{}"))
+    except json.JSONDecodeError as e:
+        raise ValueError(f".ai/config.json: invalid JSON: {e}") from None
+    except ValidationError as e:
+        raise ValueError(".ai/config.json: " + "; ".join(
+            f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())) from None
+    registry = load_registry()
+    orch_text = texts.get(orchestrator.ORCHESTRATOR_FILE)
+    if orch_text is None:
+        return orchestrator.with_verify_settings(orchestrator.legacy(cfg, registry), cfg), cfg
+    if cfg.accounts or cfg.auto_switch.enabled:
+        raise ValueError(".ai/config.json: accounts and auto_switch moved to orchestrator.yaml; "
+                         "remove them from .ai/config.json")
+    try:
+        managed = yaml.safe_load(texts.get(orchestrator.MANAGED_FILE) or "") or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f".ai/accounts.yaml: invalid YAML: {e}") from None
+    if not isinstance(managed, dict) or set(managed) - orchestrator.MANAGED_KEYS:
+        raise ValueError(f".ai/accounts.yaml: expected only "
+                         f"{sorted(orchestrator.MANAGED_KEYS)}")
+    orch = orchestrator.parse(orch_text, f".ai/{orchestrator.ORCHESTRATOR_FILE}", registry,
+                              managed, f".ai/{orchestrator.MANAGED_FILE}")
+    return orchestrator.with_verify_settings(orch, cfg), cfg
+
+
+_ORCH_KEYS = ("version", "agents", "roles", "routing", "workflow", "security")
+_SECURITY_KEYS = frozenset({"sandbox", "verify_sandbox", "verify_writable", "verify_allowlist",
+                            "protected_paths", "sensitive_paths", "env_deny", "env_allow",
+                            "claude_hook_settings", "ignore_user_config"})
+_SECURITY_NOTE = "security setting: .ai/config.json is tracked, so this applies to every clone"
+_MISSING = object()
+
+
+def _file_of(first: str, legacy: bool) -> str:
+    """The file that owns a key's first segment."""
+    config_keys = [k for k in BridgeConfig.model_fields if k != "accounts"]
+    if legacy:
+        if first in config_keys:
+            return "config.json"
+        raise ValueError(f"{first!r} is not a .ai/config.json setting and this project has no "
+                         f".ai/orchestrator.yaml (legacy mode); start one with `agent-bridge "
+                         f"config-init`. config.json keys: {', '.join(config_keys)}")
+    if first == "accounts":
+        return orchestrator.MANAGED_FILE
+    if first in _ORCH_KEYS:
+        return orchestrator.ORCHESTRATOR_FILE
+    if first in config_keys:
+        return "config.json"
+    raise ValueError(f"unknown setting {first!r}; the first segment must be one of: accounts "
+                     f"(.ai/accounts.yaml), {', '.join(_ORCH_KEYS)} (.ai/orchestrator.yaml), "
+                     f"{', '.join(config_keys)} (.ai/config.json)")
+
+
+def _dig(data: Any, parts: list[str]) -> Any:
+    for part in parts:
+        if not isinstance(data, dict) or part not in data:
+            return _MISSING
+        data = data[part]
+    return data
+
+
+def _put(data: dict, parts: list[str], value: Any) -> None:
+    node = data
+    for depth, part in enumerate(parts[:-1]):
+        nxt = node.get(part)
+        if nxt is None:
+            nxt = node[part] = {}
+        elif isinstance(nxt, str) and parts[0] == "roles" and depth == 1:
+            nxt = node[part] = {"agents": [nxt]}  # `executor: codex` -> `{agents: [codex]}`
+        if not isinstance(nxt, dict):
+            raise ValueError(f"cannot set {'.'.join(parts)}: {'.'.join(parts[:depth + 1])} "
+                             f"is {type(nxt).__name__}, not a mapping")
+        node = nxt
+    node[parts[-1]] = value
+
+
+def _drop(data: dict, parts: list[str]) -> None:
+    chain = [data]
+    for part in parts[:-1]:
+        chain.append(chain[-1][part])
+    del chain[-1][parts[-1]]
+    # A mapping left empty below the top level goes too (limits: {} means nothing).
+    for depth in range(len(parts) - 1, 1, -1):
+        if chain[depth] != {}:
+            break
+        del chain[depth - 1][parts[depth - 1]]
+
+
+def _config_change(args: argparse.Namespace, unset: bool) -> dict[str, Any]:
+    """`config-set` and `config-unset`: change one key in the file that owns it, validated as a
+    whole before anything is written."""
+    import yaml
+    root = find_root()
+    ai = root / AI_DIR
+    parts = args.key.split(".")
+    if not all(parts):
+        raise ValueError(f"bad key {args.key!r}: use a dotted path such as roles.executor.default")
+    last = parts[-1].lower()
+    if last != "token_env" and any(w in last for w in ("token", "secret", "password")):
+        raise ValueError(f"refused: {args.key} looks like a secret; .ai files are tracked and "
+                         "hold no secrets (a variable name goes in token_env)")
+    value: Any = None
+    if not unset:
+        try:
+            value = yaml.safe_load(args.value)
+        except yaml.YAMLError as e:
+            raise ValueError(f"value is not valid YAML: {e}") from None
+    legacy = not (ai / orchestrator.ORCHESTRATOR_FILE).exists()
+    name = _file_of(parts[0], legacy)
+    names = (orchestrator.ORCHESTRATOR_FILE, orchestrator.MANAGED_FILE, "config.json")
+    texts = {n: _read_text(ai / n) for n in names}
+    try:
+        old_orch, old_cfg = _load_layout(texts)
+    except ValueError:
+        old_orch = old_cfg = None  # an already broken config may be what this change repairs
+    try:
+        if name == "config.json":
+            data = json.loads(texts[name] or "{}")
+        else:
+            data = yaml.safe_load(texts[name] or "") or {}
+    except ValueError as e:  # JSONDecodeError and, below, YAMLError
+        raise ValueError(f".ai/{name}: invalid JSON: {e}") from None
+    except yaml.YAMLError as e:
+        raise ValueError(f".ai/{name}: invalid YAML: {e}") from None
+    if not isinstance(data, dict):
+        raise ValueError(f".ai/{name}: expected a mapping at the top level")
+    if parts[0] == "accounts" and len(parts) > 1:
+        account = parts[1]
+        raw_orch = yaml.safe_load(texts[orchestrator.ORCHESTRATOR_FILE] or "") or {}
+        declared_here = isinstance(raw_orch.get("accounts"), dict) and account in raw_orch["accounts"]
+        from_registry = (old_orch is not None and account in old_orch.accounts_from_registry
+                         and account not in (data.get("accounts") or {}))
+        if declared_here or (from_registry and (unset or len(parts) > 2)):
+            owner = (f"accounts.{account} in .ai/orchestrator.yaml" if declared_here else
+                     "the machine registry")
+            raise ValueError(f"account {account} is declared outside .ai/accounts.yaml (owner: "
+                             f"{owner}); run `agent-bridge config-migrate` to move it there")
+    old = _dig(data, parts)
+    if unset:
+        if old is _MISSING:
+            return {"file": f".ai/{name}", "key": args.key, "changed": False, "applied": False,
+                    "removed": False, "old": None,
+                    "note": "the key is not set; nothing written"}
+        _drop(data, parts)
+    else:
+        if old is not _MISSING and old == value:
+            return {"file": f".ai/{name}", "key": args.key, "changed": False, "applied": False,
+                    "old": old, "new": value, "note": "unchanged; nothing written"}
+        _put(data, parts, value)
+    if name == "config.json":
+        new_text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    elif name == orchestrator.MANAGED_FILE:
+        new_text = _MANAGED_HEADER + yaml.safe_dump(data, sort_keys=True)
+    else:
+        new_text = yaml.safe_dump(data, sort_keys=False)
+    new_texts = {**texts, name: new_text}
+    new_orch, new_cfg = _load_layout(new_texts)
+    before = (set(orchestrator.deprecated(old_orch, old_cfg)) if old_orch is not None else set())
+    created = [d for d in orchestrator.deprecated(new_orch, new_cfg) if d not in before]
+    if created:
+        raise ValueError("refused: this change would create an outdated layout: "
+                         + "; ".join(created))
+    out: dict[str, Any] = {"file": f".ai/{name}", "key": args.key, "changed": True,
+                           "old": None if old is _MISSING else old,
+                           "removed": unset, "applied": bool(args.apply)}
+    if not unset:
+        out["new"] = value
+    if name == "config.json" and parts[0] in _SECURITY_KEYS:
+        out["security"] = True
+        out["security_note"] = _SECURITY_NOTE
+    if name != "config.json":
+        out["comments_note"] = f"comments in .ai/{name} are not kept"
+    if args.apply:
+        backup = _backup_and_write(root, {name: new_text})
+        out["backup"] = str(backup) if backup else None
+    else:
+        out["note"] = ("Nothing was written. --apply backs the file up to .ai/backup-<UTC "
+                       "stamp>/ and writes it.")
+    return out
 
 
 def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
@@ -487,6 +702,8 @@ async def _run(args: argparse.Namespace) -> Any:
         return None
     if args.cmd == "config-migrate":
         return _config_migrate(args)
+    if args.cmd in ("config-set", "config-unset"):
+        return _config_change(args, unset=args.cmd == "config-unset")
     if args.cmd == "account-set-token":
         return _set_token(args)
     if args.cmd == "project-account-add":
@@ -639,6 +856,17 @@ def main(argv: list[str] | None = None) -> None:
                                           "agents/roles to orchestrator.yaml; previews "
                                           "unless --apply").add_argument(
         "--apply", action="store_true", help="write the files after a backup")
+    cset = sub.add_parser("config-set", help="HUMAN ONLY: set one setting (dotted key, YAML "
+                                             "value) in the .ai file that owns it; previews "
+                                             "unless --apply")
+    cset.add_argument("key", help="e.g. roles.executor.default, accounts.cx.limits.weekly_pct, "
+                                  "verify_sandbox")
+    cset.add_argument("value", help="parsed as YAML: 5, true, null, [a, b], {k: v} or a string")
+    cunset = sub.add_parser("config-unset", help="HUMAN ONLY: remove one setting from the .ai "
+                                                 "file that owns it; previews unless --apply")
+    cunset.add_argument("key")
+    for cmd in (cset, cunset):
+        cmd.add_argument("--apply", action="store_true", help="write the file after a backup")
     sub.add_parser("agents", help="list agents, roles and availability")
     sub.add_parser("usage", help="per-account usage, limits, remaining quota and reset "
                                  "times").add_argument("account", nargs="?")

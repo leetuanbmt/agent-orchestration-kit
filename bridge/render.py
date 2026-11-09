@@ -293,6 +293,30 @@ def migrate_view(m: dict[str, Any]) -> Group:
     return Group(*parts)
 
 
+def config_change_view(c: dict[str, Any]) -> Group:
+    import json
+    head = Text()
+    head.append(f"{c['file']}  ", style="bold")
+    head.append(f"{c['key']}\n", style="bold cyan")
+    if not c["changed"]:
+        head.append(c["note"] + "\n", style="green")
+        return Group(head)
+    head.append(f"  old  {json.dumps(c['old'], default=str) if c['old'] is not None else '(not set)'}\n")
+    head.append("  new  (removed)\n" if c["removed"]
+                else f"  new  {json.dumps(c['new'], default=str)}\n")
+    parts: list[RenderableType] = [head]
+    if c.get("security"):
+        parts.append(Text(c["security_note"] + "\n", style="bold yellow"))
+    if c.get("comments_note"):
+        parts.append(Text(c["comments_note"] + "\n", style="dim"))
+    if c["applied"]:
+        parts.append(Text(f"Written. Backup  {c['backup'] or '(file was new)'}\n", style="green"))
+        return Group(*parts, *_steps(["agent-bridge config-check"]))
+    parts.append(Text("Nothing was written.", style="yellow"))
+    return Group(*parts, *_steps(["repeat the command with --apply  "
+                                  "(backs up the file to .ai/backup-<stamp>/)"]))
+
+
 def account_added_view(a: dict[str, Any]) -> Group:
     head = Text()
     head.append("Account added  ", style="bold green")

@@ -278,7 +278,10 @@ Ba file tùy chọn trong thư mục `.ai/` của project, mỗi cài đặt ch�
 | `.ai/config.json` | Cài đặt bridge: sandbox, sandbox verification, timeout, quy tắc path, allowlist verification. Được commit, nên mọi thay đổi trong file này cần review như thay đổi bảo mật. |
 
 Layout cũ (account trong `orchestrator.yaml`) vẫn load được; `config-check` liệt kê những gì cần
-chuyển và `agent-bridge config-migrate` (chỉ người chạy) sẽ chuyển chúng.
+chuyển và `agent-bridge config-migrate` (chỉ người chạy) sẽ chuyển chúng. Để đổi một thiết lập mà
+không sửa file, chạy `agent-bridge config-set <key> <value> --apply` (ví dụ
+`config-set roles.executor.default codex-a --apply`; chỉ người chạy, không có `--apply` thì chỉ
+xem trước).
 [Hướng dẫn cấu hình](docs/configuration-guide.md) (tiếng Anh) đi qua từng bước cho các thiết lập
 thường gặp.
 
