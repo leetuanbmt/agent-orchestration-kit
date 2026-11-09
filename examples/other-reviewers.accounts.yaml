@@ -1,0 +1,7 @@
+# Accounts for the other-reviewers example; config-init writes it to .ai/accounts.yaml.
+# opencode uses its global login (no home); agy's account home is a whole HOME
+# (create one with `agent-bridge account-add gm --provider google`).
+accounts:
+  codex-work: {provider: openai, home: ~/.agent-bridge/homes/work}
+  gm: {provider: google}
+  oc: {provider: opencode}

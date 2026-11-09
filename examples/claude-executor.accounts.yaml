@@ -1,0 +1,4 @@
+# Accounts for the claude-executor example; config-init writes it to .ai/accounts.yaml.
+accounts:
+  codex-work: {provider: openai, home: ~/.codex-accounts/homes/work}
+  claude-main: {provider: anthropic, home: ~/.claude-accounts/main}

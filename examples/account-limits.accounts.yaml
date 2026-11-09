@@ -1,0 +1,26 @@
+# Accounts for the account-limits example; config-init writes it to .ai/accounts.yaml.
+# Each account stops taking work at its own thresholds.
+# Limits are human-owned: no agent or MCP tool can change them. Inspect with: agent-bridge usage
+accounts:
+  claude-main:
+    provider: anthropic
+    home: ~/.claude-accounts/main
+    limits:
+      five_hour_pct: 85            # stop at 85 % of the 5-hour window
+      weekly_pct: 90               # stop at 90 % of the weekly window
+      budget_usd: {day: 20, month: 300}
+      reserve_usd: 2               # held per run until Claude reports its cost
+  claude-backup:
+    provider: anthropic
+    home: ~/.claude-accounts/backup
+    limits:
+      any_window_pct: 95           # every window the provider reports
+  codex-work:
+    provider: openai
+    home: ~/.codex-accounts/homes/work
+    limits:
+      budget_usd: {week: 50}
+      # Codex reports tokens, not cost: without pricing or reserve_usd a budget fails closed.
+      # Use your own contract prices; the kit ships none.
+      pricing: {input_per_mtok: 1.25, output_per_mtok: 10, cached_input_per_mtok: 0.125}
+      cooldown_s: 3600             # lift a QUOTA mark after 1 h when no reset time is known

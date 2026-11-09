@@ -1,16 +1,20 @@
 """Orchestrator config: schema validation, legacy mapping, account isolation and slots."""
 
+import argparse
+import asyncio
 import json
 import os
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
+import yaml
 
 from bridge import cli, server
 from bridge.accounts import Account, AccountLock, resolve_profile
 from bridge.config import BridgeConfig
 from bridge.executor import AGENT_ENV
-from bridge.orchestrator import legacy, load, parse
+from bridge.orchestrator import legacy, load, load_managed, parse
 from bridge.state import ConflictError
 
 EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
@@ -31,20 +35,67 @@ roles:
 
 # @pt.id KIT-ORCH-001-examples
 # @pt.item Shipped example configurations
-# @pt.condition Every examples/*.yaml is parsed
-# @pt.expected All parse; the main example maps planner/reviewer to Claude, executor to two Codex agents
-# @pt.target bridge.orchestrator.parse
+# @pt.condition Every examples/<name>.yaml is parsed together with its <name>.accounts.yaml
+# @pt.expected All parse with no accounts in orchestrator.yaml and no agents in accounts.yaml; the main example maps planner/reviewer to Claude, executor to two Codex agents
+# @pt.target bridge.orchestrator.parse, bridge.orchestrator.load_managed
 # @pt.method unit
 # @pt.legacy none
 def test_examples():
-    files = sorted(EXAMPLES.glob("*.yaml"))
+    files = sorted(p for p in EXAMPLES.glob("*.yaml") if not p.name.endswith(".accounts.yaml"))
     assert len(files) >= 4
     for path in files:
-        parse(path.read_text(), str(path))
-    main = parse((EXAMPLES / "orchestrator.yaml").read_text())
+        accounts = path.with_suffix(".accounts.yaml")
+        assert accounts.exists()
+        assert "accounts" not in yaml.safe_load(path.read_text())
+        assert set(yaml.safe_load(accounts.read_text())) == {"accounts"}
+        orch = parse(path.read_text(), str(path), managed=load_managed(accounts),
+                     managed_source=str(accounts))
+        assert not orch.accounts_in_orchestrator
+        assert not orch.agents_in_accounts_file
+    path = EXAMPLES / "orchestrator.yaml"
+    main = parse(path.read_text(), managed=load_managed(path.with_suffix(".accounts.yaml")))
     assert main.role("executor").agents == ["codex-a", "codex-b"]
     assert main.agent(main.role("reviewer").agents[0]).adapter == "claude-cli"
     assert main.max_attempts == 3
+
+
+# @pt.id KIT-ORCH-001c-config-init-layout
+# @pt.item config-init writes the one-owner layout
+# @pt.condition config-init <example> runs in an empty project, then again, then with only one of the two files present
+# @pt.expected .ai/orchestrator.yaml and .ai/accounts.yaml are written from the example pair; either file existing refuses and writes nothing; the listing names only the orchestrator examples
+# @pt.target bridge.cli._run
+# @pt.method unit
+# @pt.legacy none
+def test_config_init_writes_both_files(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "proj"
+    (root / ".ai").mkdir(parents=True)
+    monkeypatch.setattr(cli, "find_root", lambda *a, **k: root)
+    monkeypatch.setattr(cli.sys, "stdin", Mock(isatty=lambda: True))
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)  # keep stdout capturable
+    orch, accounts = root / ".ai" / "orchestrator.yaml", root / ".ai" / "accounts.yaml"
+
+    def init(example="single-agent"):
+        return asyncio.run(cli._run(argparse.Namespace(cmd="config-init", example=example)))
+
+    init(None)
+    names = [line.split()[0] for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert names[:6] == sorted(p.stem for p in EXAMPLES.glob("*.yaml")
+                               if not p.name.endswith(".accounts.yaml"))
+    assert not any(n.endswith(".accounts") for n in names)
+    init()
+    assert orch.read_text() == (EXAMPLES / "single-agent.yaml").read_text()
+    assert accounts.read_text() == (EXAMPLES / "single-agent.accounts.yaml").read_text()
+    for keep, other in ((orch, accounts), (accounts, orch)):
+        other.unlink()
+        before = keep.read_text()
+        with pytest.raises(SystemExit) as exc:
+            init("orchestrator")
+        assert exc.value.code == 1
+        assert keep.read_text() == before and not other.exists()
+        other.write_text("# mine\n")
+    with pytest.raises(SystemExit):  # both exist again: nothing is overwritten
+        init("orchestrator")
+    assert orch.read_text() == accounts.read_text() == "# mine\n"
 
 
 # @pt.id KIT-ORCH-001b-config-example

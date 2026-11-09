@@ -58,6 +58,13 @@ HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove", "account
 _PROVIDER_ADAPTER = {"openai": "codex-cli", "anthropic": "claude-cli", "google": "agy-cli",
                      "opencode": "opencode-cli"}
 EXAMPLES = install.KIT / "examples"
+
+
+def _example_files() -> list[Path]:
+    """The orchestrator examples, sorted; each `<name>.accounts.yaml` is their companion."""
+    return sorted(p for p in EXAMPLES.glob("*.yaml") if not p.name.endswith(".accounts.yaml"))
+
+
 # Commands that drive agent runs: a stop signal lets them kill their agent and park the task.
 RUN_CMDS = {"execute", "resume", "plan", "run-workflow"}
 # A caller's timeout (SIGALRM from `alarm`, SIGTERM from `timeout`) or Ctrl-C; the default action
@@ -443,7 +450,7 @@ async def _run(args: argparse.Namespace) -> Any:
             out |= {"ok": False, "errors": errors}
         return out
     if args.cmd == "config-init" and args.example is None:
-        for path in sorted(EXAMPLES.glob("*.yaml")):
+        for path in _example_files():
             header = []
             for line in path.read_text().splitlines():
                 if not line.startswith("#"):
@@ -459,13 +466,22 @@ async def _run(args: argparse.Namespace) -> Any:
         raise SystemExit(2)
     if args.cmd == "config-init":
         root = find_root()
-        target = root / AI_DIR / "orchestrator.yaml"
-        if target.exists():
-            print(f"refused: {target} exists; edit it or remove it first", file=sys.stderr)
-            raise SystemExit(1)
+        target = root / AI_DIR / orchestrator.ORCHESTRATOR_FILE
+        accounts_target = root / AI_DIR / orchestrator.MANAGED_FILE
+        for existing in (target, accounts_target):
+            if existing.exists():
+                print(f"refused: {existing} exists; edit it or remove it first", file=sys.stderr)
+                raise SystemExit(1)
         ensure_ai_dir(root)
         shutil.copyfile(EXAMPLES / f"{args.example}.yaml", target)
-        print(f"wrote {target}\nEdit its accounts and agents, then run: agent-bridge config-check")
+        written = [target]
+        accounts_source = EXAMPLES / f"{args.example}.accounts.yaml"
+        if accounts_source.exists():
+            shutil.copyfile(accounts_source, accounts_target)
+            written.append(accounts_target)
+        print("wrote " + "\nwrote ".join(map(str, written)) +
+              f"\nEdit accounts in {accounts_target} and agents in {target}, "
+              "then run: agent-bridge config-check")
         return None
     if args.cmd == "config-migrate":
         return _config_migrate(args)
@@ -616,7 +632,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("config-check", help="validate .ai/orchestrator.yaml (or the legacy config)")
     sub.add_parser("config-init", help="HUMAN ONLY: start .ai/orchestrator.yaml from an "
                                        "example; without one, list the examples").add_argument(
-        "example", nargs="?", choices=sorted(p.stem for p in EXAMPLES.glob("*.yaml")))
+        "example", nargs="?", choices=[p.stem for p in _example_files()])
     sub.add_parser("config-migrate", help="HUMAN ONLY: move accounts to .ai/accounts.yaml and "
                                           "agents/roles to orchestrator.yaml; previews "
                                           "unless --apply").add_argument(

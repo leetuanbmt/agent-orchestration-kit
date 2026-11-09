@@ -1,24 +1,12 @@
 # Claude headless plans and reviews; Codex on two accounts implements, in fallback order.
 # Start from it with: agent-bridge config-init orchestrator. Validate with: agent-bridge config-check
 #
-# Role != agent != provider != account != model:
-#   accounts  - isolated logins (one auth home each), with a concurrency limit
+# Role != agent != provider != account != model. Accounts (isolated logins) live in
+# .ai/accounts.yaml; this file holds the rest:
 #   agents    - an adapter (CLI) bound to one account, an optional model and capabilities
 #   roles     - which agents play planner / executor / reviewer, in fallback order
 #   workflow  - the stages every task goes through
 version: 1
-
-accounts:
-  codex-work:
-    provider: openai
-    home: ~/.codex-accounts/homes/work   # a human runs: agent-bridge account-login codex-work
-  codex-personal:
-    provider: openai
-    home: ~/.codex-accounts/homes/personal
-  claude-main:
-    provider: anthropic
-    home: ~/.claude-accounts/main        # a human runs: agent-bridge account-login claude-main
-    max_concurrency: 1
 
 agents:
   claude:                 # the Claude Code session driving this bridge over MCP
