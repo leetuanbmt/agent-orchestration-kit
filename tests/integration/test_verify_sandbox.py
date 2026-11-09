@@ -155,6 +155,24 @@ def test_writable_validation():
         "/var/cache/x", "~/.cache/uv"]
 
 
+# @pt.id KIT-SEC-SBX-005-seatbelt-git-config
+# @pt.item Under Seatbelt a check cannot write the repository's config even though the worktree is writable
+# @pt.condition verify_sandbox auto on macOS; a check appends a line to .git/config
+# @pt.expected the write is refused (Operation not permitted) and .git/config is unchanged
+# @pt.target bridge.review.run_verification, bridge.sandbox.wrap
+# @pt.method integration
+# @pt.legacy audit F-01: .git was writable inside the worktree
+@pytest.mark.skipif(sandbox.backend() != "seatbelt", reason="Seatbelt unavailable or nested")
+def test_seatbelt_denies_git_config_write(make_orch, repo, monkeypatch):
+    monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n")
+    before = (repo / ".git" / "config").read_text()
+    b = make_orch(flow("auto"))
+    _, check = check_output(
+        b, "python3 -c \"open('.git/config', 'a').write('[core]\\n')\"")
+    assert not check["passed"] and "Operation not permitted" in check["output_tail"], check
+    assert (repo / ".git" / "config").read_text() == before
+
+
 # @pt.id KIT-SEATBELT-006-verification
 # @pt.item Verification provisions confined worktree and TMPDIR writes on macOS
 # @pt.condition Seatbelt available, auto mode and a sibling outside the worktree

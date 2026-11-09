@@ -54,6 +54,30 @@ def test_seatbelt_profile(monkeypatch, tmp_path, mode):
     )
 
 
+# @pt.id KIT-SEATBELT-009-git-internals
+# @pt.item The profile keeps the repository's config, hooks and info unwritable inside the worktree
+# @pt.condition a worktree root allowed for writes and the deny paths of its repository
+# @pt.expected the root stays in the allow rule; config, config.worktree, hooks and info are denied after it; the whole .git is not
+# @pt.target bridge.sandbox.wrap, bridge.review.git_write_denies
+# @pt.method unit
+# @pt.legacy F-01: a check could rewrite .git/config inside the writable worktree
+def test_seatbelt_denies_git_internals(monkeypatch, tmp_path):
+    from bridge import review
+    monkeypatch.setattr(sandbox, "backend", lambda: "seatbelt")
+    root = (tmp_path / "worktree").resolve()
+    (root / ".git" / "hooks").mkdir(parents=True)
+    denies = review.git_write_denies(root)
+    profile = sandbox.wrap(["true"], [str(root)], "auto", denies)[2]
+    git_dir = root / ".git"
+    allow = profile.index(f'(allow file-write* (subpath "{root}")')
+    deny = profile.index("(deny file-write* (subpath")
+    assert allow < deny
+    for name in ("config", "config.worktree", "hooks", "info"):
+        assert f'(subpath "{git_dir / name}")' in profile[deny:]
+    assert f'(subpath "{git_dir}")' not in profile
+    assert "(deny file-write* (subpath" not in sandbox.wrap(["true"], [str(root)], "auto")[2]
+
+
 # @pt.id KIT-SEATBELT-002-path-validation
 # @pt.item Writable paths cannot inject profile rules
 # @pt.condition a quote, backslash or control character in a writable path

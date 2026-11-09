@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from . import osutil, sandbox
-from .config import BridgeConfig
+from .config import DEFAULT_ENV_DENY, BridgeConfig
 from .executor import AGENT_ENV
 from .models import PROTECTED_VIOLATION
 from .security import clean_env, literal_prefix, matches, redact
@@ -29,9 +29,21 @@ class EvidenceError(RuntimeError):
 
 def _git(root: Path, *args: str, env: dict[str, str] | None = None,
          required: bool = True) -> str:
+    """Run git in `root` with the repository's code-running config switched off (core.fsmonitor
+    and core.hooksPath, passed through GIT_CONFIG_COUNT/KEY/VALUE so the argv stays
+    `git -C root <subcommand>`; they take -c precedence, git >= 2.31) and the credential-shaped
+    environment variables dropped. Defence in depth: tampering is also caught by hashing the git
+    internals before git runs."""
+    if args and args[0] == "diff":
+        args = (args[0], "--no-ext-diff", "--no-textconv", *args[1:])
+    clean = clean_env(os.environ, DEFAULT_ENV_DENY, [])
+    overrides = {"GIT_CONFIG_COUNT": "2",
+                 "GIT_CONFIG_KEY_0": "core.fsmonitor", "GIT_CONFIG_VALUE_0": "false",
+                 "GIT_CONFIG_KEY_1": "core.hooksPath", "GIT_CONFIG_VALUE_1": "/dev/null"}
     try:
-        out = subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=False,
-                             env={**os.environ, **env} if env else None)
+        out = subprocess.run(["git", "-C", str(root), *args],
+                             capture_output=True, check=False,
+                             env={**clean, **overrides, **(env or {})})
     except OSError as e:
         raise EvidenceError(f"git {args[0]}: {e}") from e
     if out.returncode != 0:
@@ -116,15 +128,88 @@ def snapshot(root: Path, protected: list[str]) -> dict[str, Any]:
     }
 
 
+def _git_dirs(root: Path) -> tuple[Path, Path] | None:
+    """(git dir, common git dir) found on disk without running git; None when the layout is
+    not recognised. Main checkout: `.git/` is a directory. Linked worktree: `.git` is a file
+    `gitdir: <path>` whose directory has a `commondir` file; config and hooks live in the common
+    directory."""
+    dot = root / ".git"
+    if dot.is_dir():
+        return dot, dot
+    if not dot.is_file():
+        return None
+    try:
+        line = dot.read_text(errors="replace").splitlines()[0]
+    except (OSError, IndexError):
+        return None
+    if not line.startswith("gitdir:"):
+        return None
+    gitdir = Path(line[len("gitdir:"):].strip())
+    gitdir = (gitdir if gitdir.is_absolute() else root / gitdir).resolve()
+    if not gitdir.is_dir():
+        return None
+    common = gitdir
+    marker = gitdir / "commondir"
+    if marker.is_file():
+        try:
+            rel = Path(marker.read_text().strip())
+        except OSError:
+            return None
+        common = (rel if rel.is_absolute() else gitdir / rel).resolve()
+        if not common.is_dir():
+            return None
+    return gitdir, common
+
+
+def git_dirs(root: Path) -> tuple[Path, Path]:
+    """_git_dirs, asking git only when the layout is unrecognisable."""
+    found = _git_dirs(root)
+    if found:
+        return found
+
+    def ask(flag: str) -> Path:
+        return Path(_git(root, "rev-parse", "--path-format=absolute", flag).strip())
+    return ask("--git-dir"), ask("--git-common-dir")
+
+
+def git_internal_path(root: Path, key: str) -> Path:
+    """Where a `.git/...` key lives on disk (per-worktree config.worktree is in the git dir)."""
+    gitdir, common = git_dirs(root)
+    name = key[len(".git/"):]
+    return (gitdir if name == "config.worktree" else common) / name
+
+
+def git_write_denies(root: Path) -> list[str]:
+    """Paths a verification command must not write: the repository's config, hooks and info.
+    Not the whole git dir: the index must stay writable."""
+    gitdir, common = git_dirs(root)
+    return [str(common / "config"), str(gitdir / "config.worktree"), str(common / "hooks"),
+            str(common / "info")]
+
+
 def _git_internals(root: Path) -> dict[str, str | None]:
-    """Hooks and config of the repository, keyed as .git/... (a protected path). Anything that can
-    write the worktree can write them in a main checkout, and git runs hooks outside any sandbox."""
-    hooks = Path(_git(root, "rev-parse", "--path-format=absolute", "--git-path", "hooks").strip())
-    config = Path(_git(root, "rev-parse", "--path-format=absolute", "--git-path", "config").strip())
-    found = {".git/config": _hash(config)}
+    """Hooks, config and attributes of the repository, keyed as .git/... (a protected path).
+    Anything that can write the worktree can write them in a main checkout, and git runs hooks
+    (and config commands such as core.fsmonitor) outside any sandbox. Read from disk, no git."""
+    gitdir, common = git_dirs(root)
+    found = {".git/config": _hash(common / "config")}
+    if (gitdir / "config.worktree").is_file():
+        found[".git/config.worktree"] = _hash(gitdir / "config.worktree")
+    if (common / "info" / "attributes").is_file():
+        found[".git/info/attributes"] = _hash(common / "info" / "attributes")
+    hooks = common / "hooks"
     if hooks.is_dir():
         found.update({f".git/hooks/{p.name}": _hash(p) for p in hooks.iterdir() if p.is_file()})
     return found
+
+
+def tampered_internals(root: Path, before: dict[str, Any]) -> list[str]:
+    """`.git/...` keys whose content differs from the baseline, found without running git."""
+    b = {k: v for k, v in before["files"].items() if k.startswith(".git/")}
+    if not b:
+        return []  # a baseline stored before git internals were recorded
+    now = _git_internals(root)
+    return sorted(k for k in set(b) | set(now) if b.get(k) != now.get(k))
 
 
 def _ignored(root: Path) -> dict[str, tuple[int, int] | None]:
@@ -185,6 +270,11 @@ def bounded_patch(patch: str, limit: int) -> tuple[str, bool, list[str]]:
 
 
 def diff(root: Path, before: dict[str, Any], protected: list[str]) -> Changes:
+    if tampered := tampered_internals(root, before):
+        # Never run git against a repository whose config or hooks changed: report only that.
+        return {"files": tampered, "head_before": before["head"], "head_after": before["head"],
+                "head_changed": False, "stat": "", "patch": "", "patch_truncated": False,
+                "patch_omitted_files": [], "ignored_files": []}
     after = snapshot(root, protected)
     b, a = before["files"], after["files"]
     # Clean before and dirty now => changed. Dirty before => compare with the current content.
@@ -292,13 +382,17 @@ def protected_after(root: Path, violations: list[str]) -> dict[str, dict[str, st
 
 
 def protected_hashes(root: Path, paths: list[str]) -> dict[str, str | None]:
-    """Like content_hashes, but `.git/...` keys (from _git_internals) resolve through git, since
-    `.git` is a file in a linked worktree."""
+    """Like content_hashes, but `.git/...` keys (from _git_internals) resolve through the git
+    directory (no git run), since `.git` is a file in a linked worktree."""
     def where(f: str) -> Path:
-        if not f.startswith(".git/"):
-            return root / f
-        return Path(_git(root, "rev-parse", "--path-format=absolute", "--git-path", f[5:]).strip())
+        return git_internal_path(root, f) if f.startswith(".git/") else root / f
     return {f: _hash(where(f)) for f in paths}
+
+
+def protected_git_left(root: Path, left: list[dict[str, str | None]]) -> list[str]:
+    """`.git/...` paths a stopped run changed that still hold what it left (checked on disk)."""
+    return sorted({f for entry in left for f, h in entry.items()
+                   if f.startswith(".git/") and protected_hashes(root, [f])[f] == h})
 
 
 def current_head(root: Path) -> str | None:
@@ -378,7 +472,7 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
     try:
         await _verify(cmds, root, cfg, should_cancel, on_start, confine,
                       [str(root), tmp, *(str(Path(p).expanduser()) for p in writable or [])],
-                      tmp, results)
+                      tmp, results, git_write_denies(root) if confine != "none" else [])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return results
@@ -387,7 +481,8 @@ async def run_verification(cmds: list[str], root: Path, cfg: BridgeConfig,
 async def _verify(cmds: list[str], root: Path, cfg: BridgeConfig,
                   should_cancel: Callable[[], bool] | None,
                   on_start: Callable[[int | None], None] | None, confine: sandbox.Mode,
-                  writable: list[str], tmp: str, results: list[dict[str, Any]]) -> None:
+                  writable: list[str], tmp: str, results: list[dict[str, Any]],
+                  deny_write: list[str] | None = None) -> None:
     # No .pyc litter from the bridge's own checks in the next attempt's baseline; temp files go
     # to a private directory removed afterwards (the only temp location a confined check has).
     env = {**clean_env(os.environ, cfg.env_deny, []), "PYTHONDONTWRITEBYTECODE": "1",
@@ -398,7 +493,7 @@ async def _verify(cmds: list[str], root: Path, cfg: BridgeConfig,
             break
         r: dict[str, Any] = {"command": cmd, "passed": False}
         try:
-            argv = sandbox.wrap(parse_command(cmd, cfg), writable, confine)
+            argv = sandbox.wrap(parse_command(cmd, cfg), writable, confine, deny_write)
             if argv is None:
                 raise ValueError("verify_sandbox is strict but no verification sandbox is available here: "
                                  "the check was not run")

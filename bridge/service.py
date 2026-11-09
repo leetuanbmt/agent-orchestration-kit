@@ -33,7 +33,7 @@ from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
 from .registry import remember_project
 from .review import EvidenceError, content_hashes, current_head, diff, parse_command, protected_dirty, \
-    escaping_symlinks, protected_after, protected_hashes, scope_violations, snapshot, untracked
+    escaping_symlinks, protected_after, protected_git_left, protected_hashes, scope_violations, snapshot, untracked
 from .runner import _write_attempt_log_line as _write_attempt_log_line
 from .sandbox import describe as describe_sandbox
 from .runner import TaskRunner
@@ -463,7 +463,9 @@ class Bridge:
             storage_fix = ("stop the old agent-bridge process (close the Claude sessions that "
                            "still run it), then check `agent-bridge storage status`")
         try:
-            dirty = protected_dirty(self.root, self.cfg)
+            # A tampered git config or hook is never exercised by running git against it.
+            dirty = ([] if protected_git_left(self.root, self.store.protected_left())
+                     else protected_dirty(self.root, self.cfg))
         except EvidenceError as e:  # cannot tell: do not report the project as fine
             dirty = [f"(git status failed: {redact(str(e), 200)})"]
         # Git cannot see a git-ignored protected file (.ai/orchestrator.yaml): report every one a
@@ -620,8 +622,16 @@ class Bridge:
         row, dup = self._insert(*self._prepare(spec))
         return {**self._summary(row), "duplicate": dup}
 
+    def _refuse_tampered_git(self) -> None:
+        """No run starts while a git config or hook a stopped run changed is still as it left it."""
+        if left := protected_git_left(self.root, self.store.protected_left()):
+            raise ValueError(f"{', '.join(left)} was changed by a stopped run and still has that "
+                             "content: git would run it. A human must restore it (e.g. from a "
+                             "clean clone or `git config --edit`) before any task runs")
+
     async def execute_task(self, task_id: str, wait: bool = False,
                            actor: Actor = Actor.CLIENT) -> dict[str, Any]:
+        self._refuse_tampered_git()
         row = self.store.get(task_id)
         if row["state"] == State.BACKLOG:
             raise TransitionError(f"{task_id} has unfinished dependencies: "
@@ -642,6 +652,7 @@ class Bridge:
 
     async def resume_task(self, task_id: str, feedback: str = "", wait: bool = False,
                           actor: Actor = Actor.CLIENT) -> dict[str, Any]:
+        self._refuse_tampered_git()
         row = self.store.get(task_id)
         expect = {State.REWORK, State.FAILED, State.PAUSED}
         if row["state"] not in expect:
