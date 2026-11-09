@@ -36,10 +36,11 @@ const I18N = {
     shortcutSearch: 'Focus the search box',
     live: 'Live · every 3 s', offline: 'Disconnected · retrying in 5 s', loading: 'Loading…',
     running: 'Running', project: 'Project', updated: 'Updated', done: 'Done', cancelled: 'Cancelled',
-    needs: 'Needs you', runner_dead: 'Runner stopped', blocked: 'Blocked', failed: 'Failed', paused: 'Paused', review_wait: 'Waiting for review',
+    needs: 'Needs you', runner_dead: 'Runner stopped', blocked: 'Blocked', failed: 'Failed', paused: 'Paused', review_wait: 'Waiting for review', rework_wait: 'Waiting for resume',
     QUOTA: 'out of quota', AUTH: 'login needed', NETWORK: 'network down', INTERRUPTED: 'interrupted',
     MISSING_BINARY: 'CLI missing', OTHER: 'other',
     rootMissing: 'folder deleted, history kept',
+    orphanedTasks: '{n} unfinished tasks from a deleted folder (not counted)',
     noProjects: 'No project yet. Run `agent-bridge init` in a project.', unreadable: 'Cannot read right now',
     viewOnly: 'View only', unknown: 'unknown', dash: '–',
     taskCount: '{n} tasks', taskCountOne: '{n} task', seconds: '{n}s', minutes: '{n}m', hours: '{n}h', days: '{n}d', ago: '{time} ago', now: 'just now',
@@ -124,10 +125,11 @@ const I18N = {
     shortcutSearch: 'Chuyển đến ô tìm kiếm',
     live: 'Trực tiếp · mỗi 3 giây', offline: 'Mất kết nối · thử lại sau 5 giây', loading: 'Đang tải…',
     running: 'Đang chạy', project: 'Dự án', updated: 'Cập nhật', done: 'Xong', cancelled: 'Đã hủy',
-    needs: 'Cần bạn', runner_dead: 'Runner đã dừng', blocked: 'Bị chặn', failed: 'Lỗi', paused: 'Tạm dừng', review_wait: 'Chờ duyệt',
+    needs: 'Cần bạn', runner_dead: 'Runner đã dừng', blocked: 'Bị chặn', failed: 'Lỗi', paused: 'Tạm dừng', review_wait: 'Chờ duyệt', rework_wait: 'Chờ chạy lại',
     QUOTA: 'hết quota', AUTH: 'lỗi đăng nhập', NETWORK: 'mất mạng', INTERRUPTED: 'bị ngắt',
     MISSING_BINARY: 'thiếu CLI', OTHER: 'khác',
     rootMissing: 'thư mục đã xoá, lịch sử vẫn còn',
+    orphanedTasks: '{n} task dở dang từ thư mục đã xoá (không tính)',
     noProjects: 'Chưa có dự án nào. Chạy `agent-bridge init` trong một dự án.', unreadable: 'Không đọc được lúc này',
     viewOnly: 'Chỉ xem', unknown: 'chưa rõ', dash: '–',
     taskCount: '{n} tác vụ', taskCountOne: '{n} tác vụ', seconds: '{n} giây', minutes: '{n} phút', hours: '{n} giờ', days: '{n} ngày', ago: '{time} trước', now: 'vừa xong',
@@ -195,14 +197,14 @@ const narrow = window.matchMedia('(max-width: 1023px)');
 const ACCOUNT_STATES = {available: ['done', 'stateAvailable'], quota: ['paused', 'stateQuota'], auth: ['blocked', 'stateAuth']};
 const CAPACITY_ROWS = 6;
 let scrollToProjects = false;
-const NEEDS_KINDS = ['needs', 'runner_dead', 'failed', 'blocked', 'paused'];
+const NEEDS_KINDS = ['needs', 'runner_dead', 'failed', 'blocked', 'paused', 'rework_wait'];
 // Board lanes, left to right, with the heading key of each.
 const LANES = [['needsYou', 'needsAction'], ['awaitingReview', 'inReview'], ['running', 'running'], ['waiting', 'queued']];
 // The needsYou group keeps its key and hash value; its label is "Needs action", so it does not read
 // like the "Waiting on you" queue, which also counts reviews.
 const groupLabel = group => tr(group === 'needsYou' ? 'needsAction' : group);
 // One glyph per state family, so a status reads without color.
-const GLYPHS = {needs: '!', runner_dead: '!', review_wait: '◐', running: '▶', queued: '○', done: '✓', failed: '✕', blocked: '✕', paused: '‖', cancelled: '–'};
+const GLYPHS = {needs: '!', runner_dead: '!', review_wait: '◐', rework_wait: '‖', running: '▶', queued: '○', done: '✓', failed: '✕', blocked: '✕', paused: '‖', cancelled: '–'};
 const SUMMARY = [['needsYou', 'needs'], ['awaitingReview', 'review_wait'], ['running', 'running'], ['done24h', 'done']];
 let queueExpanded = false, homeProjectsExpanded = false;
 let attentionShown = [], lastOpened = '', lastNeeds = null;
@@ -303,11 +305,11 @@ function projectGroups() {
   }));
 }
 function matches(task, group) {
-  if (group === 'open') return !['DONE', 'CANCELLED'].includes(task.state);
-  if (group === 'needsYou') return ['needs', 'runner_dead', 'failed', 'blocked', 'paused'].includes(task.exception);
+  if (group === 'open') return !task.orphaned && !['DONE', 'CANCELLED'].includes(task.state);
+  if (group === 'needsYou') return ['needs', 'runner_dead', 'failed', 'blocked', 'paused', 'rework_wait'].includes(task.exception);
   if (group === 'awaitingReview') return task.exception === 'review_wait';
   if (group === 'running') return ['RUNNING', 'VERIFYING'].includes(task.state);
-  if (group === 'waiting') return ['BACKLOG', 'READY', 'REWORK'].includes(task.state) || task.state === 'APPROVED' && !task.needs_human;
+  if (group === 'waiting') return ['BACKLOG', 'READY'].includes(task.state) || task.state === 'APPROVED' && !task.needs_human;
   if (group === 'done') return task.state === 'DONE';
   if (group === 'cancelled') return task.state === 'CANCELLED';
   return true;
@@ -883,6 +885,7 @@ function renderProjects(groups, tasks) {
     title.append(el('h2', project.name), root, el('p', tr('projectCounts', count)));
     head.append(title, button(tr('viewTasks'), () => setState({view: 'tasks', p: project.pid, w: '', s: 'open', q: ''}))); card.append(head);
     if (project.root_missing) card.append(el('p', tr('rootMissing'), 'muted'));
+    if (project.orphaned > 0) card.append(el('p', tr('orphanedTasks', {n: project.orphaned}), 'muted'));
     if (project.error) card.append(el('p', tr('unreadable'), 'muted'));
     const scroll = el('div', undefined, 'table-scroll'), table = el('table'), thead = el('thead'), columns = el('tr');
     headers(columns, ['worktree', 'branch', 'needsAction', 'open', 'done', 'updated']); thead.append(columns);

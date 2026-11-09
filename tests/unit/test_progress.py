@@ -179,13 +179,14 @@ def test_stage_mapping_covers_every_state():
 def test_exceptions_and_pause_reason():
     assert progress.exception_of("APPROVED", True, None) == "needs"
     assert progress.exception_of("APPROVED", False, None) is None
-    for state, expected in (("REVIEW", "review_wait"), ("BLOCKED", "blocked"),
+    for state, expected in (("REVIEW", "review_wait"), ("REWORK", "rework_wait"), ("BLOCKED", "blocked"),
                             ("FAILED", "failed"), ("PAUSED", "paused")):
         assert progress.exception_of(state, False, None) == expected
-    for state in ("BACKLOG", "READY", "RUNNING", "REWORK", "VERIFYING", "DONE", "CANCELLED"):
+    for state in ("BACKLOG", "READY", "RUNNING", "VERIFYING", "DONE", "CANCELLED"):
         assert progress.exception_of(state, True, "AUTH: error") is None
     for reason in ("QUOTA", "AUTH", "NETWORK", "INTERRUPTED", "MISSING_BINARY"):
         assert progress.pause_reason(reason + ": detail") == reason
+    assert progress._ORDER.index("rework_wait") == progress._ORDER.index("review_wait") + 1
     assert progress.pause_reason("weird") == "OTHER"
     assert progress.pause_reason(None) == "OTHER"
 
@@ -717,7 +718,7 @@ def test_snapshot_tasks_and_worktree_metadata(repo, store):
             (progress.project_id(str(tree)), middle, 200),
             (progress.project_id(str(repo)), older, 100)]
         expected = {"pid", "task_id", "objective", "state", "stage", "exception", "needs_human",
-                    "updated_at", "agent", "account", "reason", "workflow_id", "command"}
+                    "updated_at", "agent", "account", "reason", "workflow_id", "command", "orphaned"}
         assert all(set(task) == expected for task in snap["tasks"])
         assert snap["projects"][0]["branch"] == branch
         assert [p["updated_at"] for p in snap["projects"]] == [300, 200]
@@ -739,6 +740,9 @@ def test_task_account_reason_and_rework_command(repo, store):
     tasks = {t["task_id"]: t for t in progress.snapshot([str(repo)])["tasks"]}
     assert tasks[paused]["account"] == "legacy"
     assert tasks[paused]["reason"] == "QUOTA"
+    assert tasks[rework]["exception"] == "rework_wait"
+    attention = progress.snapshot([str(repo)])["attention"]
+    assert next(t for t in attention if t["task_id"] == rework)["command"] == f"agent-bridge resume {rework}"
     assert tasks[rework]["reason"] is None
     assert tasks[rework]["command"] == f"agent-bridge resume {rework}"
 
@@ -1002,3 +1006,66 @@ def test_snapshot_available_account_not_lifted(repo, store, monkeypatch):
     work = next(a for a in snap["accounts"] if a["name"] == "work")
     assert work["state"] == "available" and work["lifted"] is None
     assert all("lifted" in a and a["lifted"] is None for a in snap["accounts"])
+
+
+# @pt.id T0136-terminal-request
+# @pt.item Terminal request stages
+# @pt.condition BLOCKED from VERIFYING with DONE and CANCELLED members, or REWORK-only and PAUSED-only requests
+# @pt.expected Non-progressing requests have done or None while task stepper stays check
+# @pt.target bridge.progress.snapshot
+# @pt.method unit
+# @pt.legacy None
+def test_terminal_request_has_no_active_stage(repo, store):
+    workflow = store.create_workflow("Stopped request", None, "READY")["id"]
+    blocked = add(store, "BLOCKED", workflow=workflow)
+    add(store, "DONE", workflow=workflow)
+    add(store, "CANCELLED", workflow=workflow)
+    lone = add(store, "BLOCKED")
+    rework = add(store, "REWORK")
+    paused = add(store, "PAUSED")
+    store.db.execute(
+        "INSERT INTO events(ts,task_id,actor,kind,from_state,to_state) "
+        "VALUES (100,?,'bridge','transition','VERIFYING','BLOCKED')", (blocked,))
+    snap = progress.snapshot([str(repo)])
+    requests = {r["id"]: r for r in snap["requests"]}
+    assert requests[workflow]["stage"] == "done"
+    assert requests[lone]["stage"] is None
+    assert requests[rework]["stage"] is None
+    assert requests[paused]["stage"] is None
+    assert next(t for t in snap["tasks"] if t["task_id"] == blocked)["stage"] == "check"
+
+
+# @pt.id T0136-orphaned
+# @pt.item Deleted folder tasks excluded from current work
+# @pt.condition Live review rework blocked tasks and a missing root with retained store
+# @pt.expected Orphan counts exclude terminal tasks and history remains readable without attention or requests
+# @pt.target bridge.progress.snapshot, task_detail, request_detail
+# @pt.method unit
+# @pt.legacy None
+def test_orphaned_tasks_keep_history_without_current_work(repo, store, tmp_path, monkeypatch):
+    for state in ("REVIEW", "REWORK", "BLOCKED"):
+        add(store, state)
+    missing = tmp_path / "deleted"
+    other = Store(tmp_path / "retained.db")
+    try:
+        ids = [add(other, state) for state in
+               ("READY", "REVIEW", "REWORK", "BLOCKED", "DONE", "CANCELLED")]
+        original = progress._store
+        monkeypatch.setattr(progress, "_store",
+                            lambda root: tmp_path / "retained.db" if root == str(missing) else original(root))
+        roots = [str(repo), str(missing)]
+        snap = progress.snapshot(roots)
+        pid = progress.project_id(str(missing))
+        project = next(p for p in snap["projects"] if p["pid"] == pid)
+        assert project["root_missing"] is True
+        assert project["orphaned"] == snap["orphaned"] == 3
+        assert project["badge"] is None
+        assert next(p for p in snap["projects"] if p["pid"] != pid)["orphaned"] == 0
+        assert all(t["orphaned"] == (t["pid"] == pid) for t in snap["tasks"])
+        assert all(t["pid"] != pid for t in snap["attention"])
+        assert all(r["pid"] != pid for r in snap["requests"])
+        assert snap["running"] == []
+        assert progress.task_detail(pid, ids[0], roots)["state"] == "READY"
+        assert progress.request_detail(pid, ids[0], roots) is not None
+    finally:
+        other.db.close()

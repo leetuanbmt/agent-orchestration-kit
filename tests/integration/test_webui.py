@@ -98,7 +98,7 @@ def test_overview_shape(server, repo, monkeypatch):
     assert headers["Content-Type"] == "application/json; charset=utf-8"
     overview = json.loads(body)
     assert set(overview) == {"generated_at", "projects", "attention", "running", "activity", "requests", "tasks",
-                             "accounts", "switches", "actions"}
+                             "accounts", "switches", "actions", "orphaned"}
     assert isinstance(overview["accounts"], list) and isinstance(overview["switches"], list)
     pid = progress.project_id(str(repo))
     for kind in ("tasks", "requests"):
