@@ -33,7 +33,7 @@ packages = ["bridge"]
 ".claude/rules/delegation.md" = "bridge/kit/.claude/rules/delegation.md"
 ".claude/rules/security.md" = "bridge/kit/.claude/rules/security.md"
 ".claude/skills/agent-orchestration" = "bridge/kit/.claude/skills/agent-orchestration"
-".claude/settings.json" = "bridge/kit/.claude/settings.json"
+"templates/claude-settings.json" = "bridge/kit/templates/claude-settings.json"
 "examples" = "bridge/kit/examples"
 ".ai/config.example.json" = "bridge/kit/.ai/config.example.json"
 

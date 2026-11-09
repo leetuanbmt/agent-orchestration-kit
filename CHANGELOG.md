@@ -57,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   meaningful progress events on stderr.
 
 ### Changed
+- `agent-bridge init` now takes the installed deny list from `templates/claude-settings.json`, so the kit repository's own `.claude/settings.json` no longer changes what projects get.
 - The MCP server reloads `.ai/config.json`, `.ai/orchestrator.yaml`, `.ai/accounts.yaml` and the machine account registry on its next tool call instead of needing a `/mcp` reconnect. It defers while one of its own tasks runs, and an invalid edit keeps the previous settings and shows as `config_reload_failed` in `health`.
 - `config-check`, `config-migrate` and `project-account-add` print a readable view in a terminal (moves, proposed files, the line to paste, next commands) instead of raw JSON. `--json`, or output that is not a terminal, still prints the same JSON.
 - Every setting has one owner. `.ai/accounts.yaml` holds the project's accounts and their limits, `.ai/orchestrator.yaml` holds agents, roles, routing and workflow, and `.ai/config.json` holds safety and runtime settings, now including `verify_sandbox` and `verify_writable`. Older layouts load unchanged; `config-check` lists them under `deprecated` and `health` warns `config_deprecated`. A name, or a verify key, declared in two places is an error naming both files instead of a silent override.

@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_kit_files_in_wheel():
     mapping = tomllib.loads((ROOT / "pyproject.toml").read_text())[
         "tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    shipped = [".claude/settings.json", ".ai/config.example.json",
+    shipped = ["templates/claude-settings.json", ".ai/config.example.json",
                *(str(p.relative_to(ROOT)) for p in (ROOT / "examples").glob("*.yaml")),
                *(f".claude/rules/{n}.md" for n in ("orchestration", "delegation", "security")),
                *(str(p.relative_to(ROOT)) for p in
@@ -26,6 +26,48 @@ def test_kit_files_in_wheel():
                       None)
         assert source, f"{name} is not in the wheel"
         assert mapping[source] == f"bridge/kit/{source}"
+
+
+# @pt.id KIT-PKG-005-settings-template-denies
+# @pt.item Installed deny list template
+# @pt.condition templates/claude-settings.json, the file init merges into a project's .claude/settings.json
+# @pt.expected deny list contains the approve and reassign Bash denies and Edit(/.ai/**)
+# @pt.target templates/claude-settings.json, bridge.install.install
+# @pt.method unit
+# @pt.legacy none
+def test_settings_template_denies_human_only_commands():
+    import json
+
+    deny = json.loads((ROOT / "templates/claude-settings.json").read_text())["permissions"]["deny"]
+    for entry in ("Bash(*agent-bridge approve*)", "Bash(*agent-bridge reassign*)", "Edit(/.ai/**)"):
+        assert entry in deny
+
+
+# @pt.id KIT-PKG-006-credential-denies-from-template
+# @pt.item Claude adapter credential Read denies in a wheel-shaped kit
+# @pt.condition a kit directory containing only templates/claude-settings.json
+# @pt.expected _claude_credential_denies returns the template's Read( rules, including ~/.codex/auth.json
+# @pt.target bridge.executor._claude_credential_denies
+# @pt.method unit
+# @pt.legacy none
+def test_credential_denies_read_settings_template(monkeypatch, tmp_path):
+    import json
+
+    import bridge.install
+    from bridge.executor import _claude_credential_denies
+
+    template = ROOT / "templates/claude-settings.json"
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "templates/claude-settings.json").write_text(template.read_text())
+    expected = [rule for rule in json.loads(template.read_text())["permissions"]["deny"]
+                if rule.startswith("Read(")]
+    monkeypatch.setattr(bridge.install, "KIT", tmp_path)
+    _claude_credential_denies.cache_clear()
+    try:
+        assert _claude_credential_denies() == expected
+        assert "Read(~/.codex/auth.json)" in expected
+    finally:
+        _claude_credential_denies.cache_clear()
 
 
 # @pt.id KIT-PKG-002-dashboard-assets

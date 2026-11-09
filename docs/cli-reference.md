@@ -103,8 +103,8 @@ See [State and storage](configuration.md#state-and-storage). Every command previ
 
 ### Human-only commands
 
-These need an interactive terminal and a typed confirmation (or the TUI). The kit's
-`.claude/settings.json` denies them to Claude Code.
+These need an interactive terminal and a typed confirmation (or the TUI). The
+`.claude/settings.json` that `agent-bridge init` installs denies them to Claude Code.
 
 | Command | Description |
 |---|---|
