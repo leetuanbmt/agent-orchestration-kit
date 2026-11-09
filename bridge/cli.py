@@ -132,7 +132,8 @@ def _set_token(args: argparse.Namespace) -> dict[str, Any]:
     name = _pick(args, _providers(orch))
     acc = resolve_account(orch, cfg, root, name)
     if acc.credential != "keychain":
-        raise ValueError(f"account {name} needs `credential: keychain` in .ai/orchestrator.yaml")
+        raise ValueError(f"account {name} needs `credential: keychain` in "
+                         f"{orchestrator.account_owner(orch, name)}")
     item = ["-s", KEYCHAIN_SERVICE, "-a", keychain_account(acc)]
     if args.delete:
         done = keychain("delete-generic-password", *item)
@@ -163,10 +164,45 @@ def _write_managed(yaml_path: Path, path: Path, data: dict) -> None:
     import yaml
     orchestrator.parse(yaml_path.read_text(), str(yaml_path), load_registry(), data, str(path))
     tmp = path.with_suffix(".yaml.tmp")
-    tmp.write_text("# Managed by `agent-bridge project-account-add` / `project-account-remove`.\n"
-                   "# Entries in orchestrator.yaml win on a name clash.\n"
+    tmp.write_text("# Project accounts. Managed by `agent-bridge project-account-*`; agents and "
+                   "roles live in orchestrator.yaml.\n"
                    + yaml.safe_dump(data, sort_keys=True))
     os.replace(tmp, path)
+
+
+_MANAGED_HEADER = ("# Project accounts. Managed by `agent-bridge project-account-*`; agents and "
+                   "roles live in orchestrator.yaml.\n")
+
+
+def _config_migrate(args: argparse.Namespace) -> dict[str, Any]:
+    import datetime
+
+    import yaml
+    root = find_root()
+    plan = orchestrator.migration_plan(root, load_config(root))
+    accounts_text = _MANAGED_HEADER + yaml.safe_dump(plan["accounts_yaml"], sort_keys=True)
+    orch_text = yaml.safe_dump(plan["orchestrator_yaml"], sort_keys=False)
+    if not plan["changed"]:
+        return {"changed": False, "applied": False, "moves": [],
+                "note": "already on the one-owner layout; nothing written"}
+    if not args.apply:
+        return {"changed": True, "applied": False, "moves": plan["moves"],
+                ".ai/accounts.yaml": accounts_text, ".ai/orchestrator.yaml": orch_text,
+                "note": "comments in orchestrator.yaml are not kept; the original goes to "
+                        ".ai/backup-<UTC stamp>/ on --apply. Nothing was written."}
+    ai = root / AI_DIR
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    backup = ai / f"backup-{stamp}"
+    backup.mkdir(parents=True)
+    for name in (orchestrator.ORCHESTRATOR_FILE, orchestrator.MANAGED_FILE):
+        if (ai / name).exists():
+            shutil.copy2(ai / name, backup / name)
+    for name, text in ((orchestrator.MANAGED_FILE, accounts_text),
+                       (orchestrator.ORCHESTRATOR_FILE, orch_text)):
+        tmp = (ai / name).with_suffix(".yaml.tmp")
+        tmp.write_text(text)
+        os.replace(tmp, ai / name)
+    return {"changed": True, "applied": True, "backup": str(backup), "moves": plan["moves"]}
 
 
 def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
@@ -174,16 +210,37 @@ def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
     data = orchestrator.load_managed(path)
     current = orchestrator.load(root, load_config(root))
     agent = args.agent or f"agent-{args.name}"
-    for kind, name, known in (("account", args.name, current.accounts),
-                              ("agent", agent, current.agents)):
-        if name in known:
-            raise ValueError(f"{kind} {name} already exists; pick another name")
-    home = Path(args.home).expanduser() if args.home else None
-    if home is None and args.provider != "opencode":
-        home = registry_dir() / "homes" / args.name  # a fresh login home, like account-add
-    account: dict[str, Any] = {"provider": args.provider}
-    if home is not None:
-        account["home"] = str(home.resolve())
+    if args.name in current.accounts_in_orchestrator or args.name in (data.get("accounts") or {}):
+        raise ValueError(f"account {args.name} already exists; pick another name "
+                         f"(change it in {orchestrator.account_owner(current, args.name)})")
+    if agent in current.agents:
+        raise ValueError(f"agent {agent} already exists; pick another name")
+    login = getattr(args, "login", None)
+    provider = args.provider
+    home = None
+    if login:
+        target = load_registry().get(login)
+        if target is None:
+            raise ValueError(f"unknown login {login!r}; registry logins: "
+                             f"{sorted(load_registry())}")
+        if provider not in (None, target.get("provider")):
+            raise ValueError(f"--provider {provider} does not match login {login} "
+                             f"({target.get('provider')})")
+        if args.home:
+            raise ValueError("--login supplies the home; drop --home")
+        provider = target.get("provider")
+        account: dict[str, Any] = {"login": login}
+        resolve_home = target.get("home")
+    else:
+        if provider is None:
+            raise ValueError("give --provider (or --login to use a machine registry login)")
+        home = Path(args.home).expanduser() if args.home else None
+        if home is None and provider != "opencode":
+            home = registry_dir() / "homes" / args.name  # a fresh login home, like account-add
+        account = {"provider": provider}
+        if home is not None:
+            account["home"] = str(home.resolve())
+        resolve_home = account.get("home")
     if args.credential:
         account["credential"] = args.credential
     if args.token_env:
@@ -192,23 +249,24 @@ def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
         account["credential_kind"] = args.credential_kind
     if limits := _window_limits(args):
         account["limits"] = limits
-    adapter = _PROVIDER_ADAPTER[args.provider]
+    adapter = _PROVIDER_ADAPTER[provider]
     spec: dict[str, Any] = {"adapter": adapter, "account": args.name}
     if adapter not in orchestrator.READ_ONLY_ADAPTERS:
         spec["allow_write"] = True
     if args.model:
         spec["model"] = args.model
-    data = {**data, "accounts": {**(data.get("accounts") or {}), args.name: account},
-            "agents": {**(data.get("agents") or {}), agent: spec}}
+    # Only the account goes into accounts.yaml; agents and roles are the human's to paste.
+    data = {**data, "accounts": {**(data.get("accounts") or {}), args.name: account}}
+    paste = {"agents": f"{agent}: {json.dumps(spec)}"}
     if args.executor:
-        data["executor"] = list(dict.fromkeys([agent, *(data.get("executor") or [])]))
+        paste["roles.executor"] = f"put {agent} first in the agents list of roles.executor"
     # The isolation check routing applies, before anything is written.
-    resolve_profile(args.name, args.provider, account.get("home"), root, args.token_env,
+    resolve_profile(args.name, provider, resolve_home, root, args.token_env,
                     args.credential, args.credential_kind)
     _write_managed(yaml_path, path, data)
     if home is not None and not home.exists():
         home.mkdir(mode=0o700, parents=True)
-        if args.provider == "openai":
+        if provider == "openai":
             (home / "config.toml").write_text('cli_auth_credentials_store = "file"\n')
     if args.credential == "keychain":
         step = f"agent-bridge account-set-token {args.name}"
@@ -216,8 +274,19 @@ def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
         step = f"export {args.token_env}=... in the shell that starts Claude Code"
     else:
         step = f"agent-bridge account-login {args.name}"
-    return {"account": args.name, "agent": agent, "home": account.get("home"),
-            "executor": args.executor, "file": str(path), "next": step}
+    return {"account": args.name, "agent": agent, "home": resolve_home,
+            "executor": args.executor, "file": str(path), "paste": paste, "next": step}
+
+
+def _own_account(name: str, accounts: dict, path: Path, root: Path) -> None:
+    """Refuse an account accounts.yaml does not own, saying which file does."""
+    if name in accounts:
+        return
+    orch = orchestrator.load(root, load_config(root))
+    if name in orch.accounts_in_orchestrator or name in orch.accounts_from_registry:
+        raise ValueError(f"{name} is not in {path}; change it in "
+                         f"{orchestrator.account_owner(orch, name)}")
+    raise ValueError(f"{name} is not in {path}")
 
 
 def _window_limits(args: argparse.Namespace) -> dict[str, float]:
@@ -229,12 +298,10 @@ def _window_limits(args: argparse.Namespace) -> dict[str, float]:
 def _project_account_limits(args: argparse.Namespace) -> dict[str, Any]:
     """Set or clear the 5-hour and weekly limits of an account in .ai/accounts.yaml; other
     limit keys (budget_usd, pricing, ...) are kept."""
-    _, yaml_path, path = _managed_paths()
+    root, yaml_path, path = _managed_paths()
     data = orchestrator.load_managed(path)
     accounts = dict(data.get("accounts") or {})
-    if args.name not in accounts:
-        raise ValueError(f"{args.name} is not in {path}; accounts declared in orchestrator.yaml "
-                         "are edited there")
+    _own_account(args.name, accounts, path, root)
     entry = dict(accounts[args.name])
     limits = dict(entry.get("limits") or {})
     if args.clear:
@@ -257,9 +324,7 @@ def _project_account_remove(args: argparse.Namespace) -> dict[str, Any]:
     root, yaml_path, path = _managed_paths()
     data = orchestrator.load_managed(path)
     accounts = dict(data.get("accounts") or {})
-    if args.name not in accounts:
-        raise ValueError(f"{args.name} is not in {path}; accounts declared in orchestrator.yaml "
-                         "are edited there")
+    _own_account(args.name, accounts, path, root)
     typed = input(f"Type the account name to remove {args.name}: ").strip()
     if typed != args.name:
         raise SystemExit(2)
@@ -269,8 +334,9 @@ def _project_account_remove(args: argparse.Namespace) -> dict[str, Any]:
     agents = {k: v for k, v in (data.get("agents") or {}).items()
               if v.get("account") != args.name}
     gone = set(data.get("agents") or {}) - set(agents)
-    data = {"accounts": accounts, "agents": agents,
-            "executor": [a for a in data.get("executor") or [] if a not in gone]}
+    executor = [a for a in data.get("executor") or [] if a not in gone]
+    data = {"accounts": accounts, **({"agents": agents} if agents else {}),
+            **({"executor": executor} if executor else {})}
     _write_managed(yaml_path, path, data)
     deleted = False
     if entry.get("credential") == "keychain":
@@ -357,13 +423,16 @@ async def _run(args: argparse.Namespace) -> Any:
         return project_tasks(args.state, args.limit, here)
     if args.cmd == "config-check":
         root = find_root()
-        orch = orchestrator.load(root, load_config(root))
+        cfg_here = load_config(root)
+        orch = orchestrator.load(root, cfg_here)
         out: dict[str, Any] = {
             "ok": True, "source": orch.source, "stages": orch.workflow.stages,
             "accounts": sorted(orch.accounts), "agents": sorted(orch.agents),
             "roles": {r: orch.role(r).agents for r in orch.roles}}
         if warnings := _limit_warnings(orch):
             out["warnings"] = warnings
+        if moved := orchestrator.deprecated(orch, cfg_here):
+            out["deprecated"] = moved
         errors = []
         for name in sorted(orch.accounts):
             try:  # the same isolation check routing applies, so a bad home fails here first
@@ -384,7 +453,7 @@ async def _run(args: argparse.Namespace) -> Any:
         print(f"\nBridge settings for .ai/config.json: {install.KIT / AI_DIR / 'config.example.json'}")
         return None
     # Choosing roles, accounts and fallback is the user's decision, like the account commands.
-    if ((args.cmd in HUMAN_ACCOUNT_CMDS or args.cmd == "config-init")
+    if ((args.cmd in HUMAN_ACCOUNT_CMDS or args.cmd in ("config-init", "config-migrate"))
             and not (sys.stdin.isatty() and sys.stdout.isatty())):
         print(f"refused: {args.cmd} needs an interactive terminal (human only)", file=sys.stderr)
         raise SystemExit(2)
@@ -398,6 +467,8 @@ async def _run(args: argparse.Namespace) -> Any:
         shutil.copyfile(EXAMPLES / f"{args.example}.yaml", target)
         print(f"wrote {target}\nEdit its accounts and agents, then run: agent-bridge config-check")
         return None
+    if args.cmd == "config-migrate":
+        return _config_migrate(args)
     if args.cmd == "account-set-token":
         return _set_token(args)
     if args.cmd == "project-account-add":
@@ -546,6 +617,10 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("config-init", help="HUMAN ONLY: start .ai/orchestrator.yaml from an "
                                        "example; without one, list the examples").add_argument(
         "example", nargs="?", choices=sorted(p.stem for p in EXAMPLES.glob("*.yaml")))
+    sub.add_parser("config-migrate", help="HUMAN ONLY: move accounts to .ai/accounts.yaml and "
+                                          "agents/roles to orchestrator.yaml; previews "
+                                          "unless --apply").add_argument(
+        "--apply", action="store_true", help="write the files after a backup")
     sub.add_parser("agents", help="list agents, roles and availability")
     sub.add_parser("usage", help="per-account usage, limits, remaining quota and reset "
                                  "times").add_argument("account", nargs="?")
@@ -574,9 +649,13 @@ def main(argv: list[str] | None = None) -> None:
                                     "home) instead of creating one")
     add.add_argument("--device-auth", action="store_true")
     padd = sub.add_parser("project-account-add", help="HUMAN ONLY: add an account and its agent "
-                                                      "to this project (.ai/accounts.yaml)")
+                                                      "to .ai/accounts.yaml and print the agent to paste into "
+                                                      "orchestrator.yaml")
     padd.add_argument("name")
-    padd.add_argument("--provider", required=True, choices=sorted(_PROVIDER_ADAPTER))
+    padd.add_argument("--provider", choices=sorted(_PROVIDER_ADAPTER),
+                      help="required unless --login names a registry login")
+    padd.add_argument("--login", help="use this machine registry login (provider and home come "
+                                      "from it; no new home is created)")
     padd.add_argument("--home", help="auth home (default: a new ~/.agent-bridge/homes/<name>)")
     cred = padd.add_mutually_exclusive_group()
     cred.add_argument("--credential", choices=["keychain"],

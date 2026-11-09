@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from .accounts import AccountLock, account_key
+from .orchestrator import account_owner
 from .executor import REVIEW_SCHEMA, RunRequest, RunResult, build_review_prompt, describe_event
 from .models import ACTIVE, Actor, ReviewDecision, State, leftover_failure, run_failure_state, \
     verdict
@@ -86,7 +87,7 @@ class TaskRunner:
                 f"account {account.name} over its configured limit: {e}. It takes work again "
                 "after the reset; with routing.quota_fallback enabled the bridge moves the task "
                 "to another eligible agent; a human can change the limit in "
-                ".ai/orchestrator.yaml") from None
+                f"{account_owner(b.orch, account.name)}") from None
         except BaseException:
             lock.release()
             raise

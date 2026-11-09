@@ -7,6 +7,7 @@ projects keep their behaviour.
 
 from __future__ import annotations
 
+import copy
 import re
 from pathlib import Path
 from typing import Literal
@@ -411,6 +412,31 @@ def legacy(cfg: BridgeConfig, registry: dict | None = None) -> OrchestratorConfi
     )
 
 
+def account_owner(orch: OrchestratorConfig, name: str) -> str:
+    """Where a human changes this account's settings."""
+    if name in orch.accounts_in_orchestrator:
+        return f"accounts.{name} in .ai/orchestrator.yaml (move it to .ai/accounts.yaml)"
+    if name in orch.accounts_from_registry:
+        return (f"the machine registry; declare it for this project: `{name}: {{login: {name}}}` "
+                "in .ai/accounts.yaml (or run `agent-bridge config-migrate`)")
+    if orch.source.startswith("legacy"):
+        return ".ai/config.json"
+    return f"accounts.{name} in .ai/accounts.yaml (`agent-bridge project-account-limits {name}`)"
+
+
+def deprecated(orch: OrchestratorConfig, cfg: BridgeConfig) -> list[str]:
+    """Settings layouts that still load but should move; empty for a clean config."""
+    out = [f"{n}: declared in orchestrator.yaml; move it to .ai/accounts.yaml"
+           for n in orch.accounts_in_orchestrator]
+    out += [f"{n}: registry login used without a project declaration; its limits come from "
+            "the machine registry" for n in orch.accounts_from_registry]
+    out += [f"{n}: agent or executor entry in .ai/accounts.yaml; move it to orchestrator.yaml"
+            for n in orch.agents_in_accounts_file]
+    if not orch.source.startswith("legacy") and "max_attempts" in cfg.model_fields_set:
+        out.append("max_attempts in .ai/config.json is ignored; use workflow.max_rework")
+    return out
+
+
 def load_managed(path: Path) -> dict:
     """The CLI-managed `.ai/accounts.yaml`: {accounts, agents, executor}, all optional."""
     if not path.exists():
@@ -488,8 +514,9 @@ def parse(text: str, source: str = ORCHESTRATOR_FILE,
         raise ValueError(f"{source}: invalid YAML: {e}") from e
     if not isinstance(data, dict):
         raise ValueError(f"{source}: expected a mapping at the top level")
-    managed = managed or {}
-    registry = registry or {}
+    # Never mutate the caller's arguments: login resolution fills provider and home in place.
+    managed = copy.deepcopy(managed or {})
+    registry = copy.deepcopy(registry or {})
     own_accounts = list(data.get("accounts") or {})
     managed_accounts, managed_agents = _with_managed(data, managed, source, managed_source)
     logins = (_resolve_logins(data["accounts"], registry, managed_accounts,
@@ -546,6 +573,69 @@ def parse(text: str, source: str = ORCHESTRATOR_FILE,
     orch.agents_in_accounts_file = list(dict.fromkeys(
         [*managed_agents, *(managed.get("executor") or [])]))
     return orch
+
+
+def migration_plan(root: Path, cfg: BridgeConfig) -> dict:
+    """The one-owner layout for this project; writes nothing.
+
+    Accounts end up only in accounts.yaml (registry logins as `login:` entries that carry the
+    registry limits), agents and roles only in orchestrator.yaml. The effective configuration
+    must be unchanged, else ValueError and the plan is never to be written."""
+    path = root / AI_DIR / ORCHESTRATOR_FILE
+    if not path.exists():
+        raise ValueError("nothing to migrate: legacy setup")
+    managed_path = root / AI_DIR / MANAGED_FILE
+    registry = load_registry()
+    current = load(root, cfg)
+    managed = load_managed(managed_path)
+    try:
+        data = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as e:
+        raise ValueError(f"{path}: invalid YAML: {e}") from e
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: expected a mapping at the top level")
+    data = copy.deepcopy(data)
+    moves: list[str] = []
+
+    accounts = copy.deepcopy(managed.get("accounts") or {})
+    for name, entry in (data.pop("accounts", None) or {}).items():
+        accounts[name] = copy.deepcopy(entry)
+        moves.append(f"account {name}: {ORCHESTRATOR_FILE} -> {MANAGED_FILE}")
+    for name in current.accounts_from_registry:
+        reg = registry.get(name) or {}
+        entry: dict = {"login": name}
+        for key in ("max_concurrency", "limits"):
+            if reg.get(key) is not None:
+                entry[key] = copy.deepcopy(reg[key])
+        accounts[name] = entry
+        moves.append(f"account {name}: machine registry -> {MANAGED_FILE} as `login: {name}`"
+                     " (registry limits copied)")
+
+    extra = {k: copy.deepcopy(managed[k]) for k in ("agents", "executor") if managed.get(k)}
+    for name in extra.get("agents") or {}:
+        moves.append(f"agent {name}: {MANAGED_FILE} -> {ORCHESTRATOR_FILE}")
+    for name in extra.get("executor") or []:
+        moves.append(f"executor entry {name}: {MANAGED_FILE} -> roles.executor in "
+                     f"{ORCHESTRATOR_FILE}")
+    if extra:
+        _with_managed(data, extra)
+        data.pop("accounts", None)
+
+    plan_accounts = {"accounts": accounts}
+    text = yaml.safe_dump(data, sort_keys=False)
+    planned = parse(text, str(path), registry, plan_accounts, str(managed_path))
+    if planned.model_dump() != current.model_dump():
+        raise ValueError("migration would change the effective configuration; nothing "
+                         "written. Differences in: " + ", ".join(
+                             k for k, v in current.model_dump().items()
+                             if planned.model_dump().get(k) != v))
+    if (planned.accounts_in_orchestrator or planned.accounts_from_registry
+            or planned.agents_in_accounts_file):
+        left = [*planned.accounts_in_orchestrator, *planned.accounts_from_registry,
+                *planned.agents_in_accounts_file]
+        raise ValueError(f"migration would leave settings in the old layout: {left}")
+    return {"accounts_yaml": plan_accounts, "orchestrator_yaml": data, "moves": moves,
+            "changed": bool(moves)}
 
 
 def load(root: Path, cfg: BridgeConfig) -> OrchestratorConfig:

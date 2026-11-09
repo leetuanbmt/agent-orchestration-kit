@@ -19,7 +19,8 @@ from bridge import cli, osutil, quota
 from bridge import state as state_module
 from bridge.executor import RunResult
 from bridge.models import Actor, TaskSpec
-from bridge.orchestrator import AccountLimits, TokenPricing, UsdBudget
+from bridge.config import BridgeConfig
+from bridge.orchestrator import AccountLimits, TokenPricing, UsdBudget, account_owner, parse
 from bridge.service import Bridge
 from bridge.state import LimitExceeded, Store
 from tests.conftest import run, spec
@@ -338,9 +339,100 @@ def test_config_check_warnings(tmp_path, monkeypatch):
     out = check("{budget_usd: {day: 1.0}, reserve_usd: 0.5}",
                 "{budget_usd: {day: 1.0}, pricing: {input_per_mtok: 1, output_per_mtok: 1}}")
     assert out["warnings"] == [f"accounts.cl1.limits: {estimate}", f"accounts.cl2.limits: {estimate}"]
-    assert set(out) == {"ok", "source", "stages", "accounts", "agents", "roles", "warnings"}
+    assert set(out) == {"ok", "source", "stages", "accounts", "agents", "roles", "warnings",
+                        "deprecated"}
     out = check("{enabled: false, budget_usd: {day: 1.0}}", "{five_hour_pct: 80}")
     assert "warnings" not in out
+
+
+REGISTRY_YAML = """version: 1
+agents:
+  claude1: {adapter: claude-cli, account: reg1, allow_write: true}
+roles: {executor: claude1}
+workflow: {stages: [execute, test]}
+"""
+
+
+def bridge_for(repo, fake_codex, orch):
+    """A Bridge over a parsed config whose account homes exist and look logged in."""
+    for profile in orch.accounts.values():
+        if profile.home:
+            home = Path(profile.home)
+            home.mkdir(parents=True, exist_ok=True)
+            (home / ".credentials.json").touch()
+    return Bridge(repo, BridgeConfig(retry_backoff_s=0, lock_dir=str(fake_codex / "locks")), orch)
+
+
+def registry_bridge(repo, fake_codex):
+    """A project that uses the registry login reg1 without declaring it."""
+    home = fake_codex.parent / "homes" / "reg1"
+    registry = {"reg1": {"provider": "anthropic", "home": str(home)}}
+    return bridge_for(repo, fake_codex, parse(REGISTRY_YAML, registry=registry))
+
+
+# @pt.id KIT-HARDEN-012-limit-owner
+# @pt.item The over-limit message names the file that owns the account
+# @pt.condition a project that only uses the registry login reg1 (no project declaration) is over its limit
+# @pt.expected the LimitExceeded text carries account_owner's registry text and never says .ai/orchestrator.yaml
+# @pt.target bridge.runner.TaskRunner, bridge.orchestrator.account_owner
+# @pt.method integration
+# @pt.legacy the message always said .ai/orchestrator.yaml
+def test_limit_message_names_owner(repo, fake_codex, fake_claude, fake_others, monkeypatch):
+    b = registry_bridge(repo, fake_codex)
+
+    def refuse(name, task_id):
+        raise LimitExceeded("five_hour_pct reached")
+
+    monkeypatch.setattr(b, "_reserve", refuse)
+    t = task(b, "Set x to 2")
+    with pytest.raises(LimitExceeded) as error:
+        run(b.execute_task(t, wait=True))
+    assert account_owner(b.orch, "reg1") in str(error.value)
+    assert ".ai/orchestrator.yaml" not in str(error.value)
+
+
+# @pt.id KIT-HARDEN-013-config-deprecated
+# @pt.item config-check lists settings that sit in a deprecated place
+# @pt.condition an orchestrator.yaml account, an implicit registry account, an agent in accounts.yaml and max_attempts in config.json; then a config that only declares accounts in accounts.yaml
+# @pt.expected the first lists 4 deprecated entries and stays ok; the clean one has no deprecated key
+# @pt.target bridge.cli._run, bridge.orchestrator.deprecated
+# @pt.method integration
+# @pt.legacy none
+def test_config_check_deprecated(tmp_path, monkeypatch):
+    from bridge.accounts import register
+    root = tmp_path / "proj"
+    (root / ".ai").mkdir(parents=True)
+    monkeypatch.setattr(cli, "find_root", lambda *a, **k: root)
+    register("reg1", "anthropic")
+    homes = tmp_path / "homes"
+    ai = root / ".ai"
+    (ai / "orchestrator.yaml").write_text(f"""version: 1
+accounts:
+  own: {{provider: anthropic, home: '{homes / "own"}'}}
+agents:
+  a-own: {{adapter: claude-cli, account: own, allow_write: true}}
+  a-reg: {{adapter: claude-cli, account: reg1, allow_write: true}}
+roles: {{executor: a-own}}
+workflow: {{stages: [execute, test]}}
+""")
+    (ai / "accounts.yaml").write_text(
+        "agents: {a-man: {adapter: claude-cli, account: own}}\n")
+    (ai / "config.json").write_text('{"max_attempts": 2}')
+    out = asyncio.run(cli._run(argparse.Namespace(cmd="config-check")))
+    assert out["ok"] is True and len(out["deprecated"]) == 4, out
+    assert any("max_attempts in .ai/config.json is ignored" in d for d in out["deprecated"])
+
+    (ai / "config.json").unlink()
+    (ai / "accounts.yaml").write_text(
+        f"accounts: {{own: {{provider: anthropic, home: '{homes / 'own'}'}}}}\n")
+    (ai / "orchestrator.yaml").write_text("""version: 1
+agents:
+  a-own: {adapter: claude-cli, account: own, allow_write: true}
+roles: {executor: a-own}
+workflow: {stages: [execute, test]}
+""")
+    clean = asyncio.run(cli._run(argparse.Namespace(cmd="config-check")))
+    assert clean["ok"] is True and "deprecated" not in clean
 
 
 def _dead_pid() -> int:
