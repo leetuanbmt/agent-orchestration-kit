@@ -59,6 +59,11 @@ Accounts:
   `~/.claude`; two accounts never share a home. `account-add` and `account-remove` are
   human-only; `account-use` only prints shell lines and Claude does not run it for the user.
   claude-switch and codex-switch profiles hold copied tokens: list them, never use them.
+- A project uses an account only by declaring it in `.ai/accounts.yaml`: its own home, or
+  `login: <name>` for a machine registry login. Its limits live there, so a project need is
+  never solved by changing machine-wide settings. When telling a human where to change an
+  account, name the file the bridge's error or `config-check` names; `config-migrate` and
+  `project-account-*` are human-only.
 - A task stays on its agent and account; retries and resumes stay on it. Two things can move
   it, both starting a new session: a human (`agent-bridge reassign <id> <agent>`), or the bridge
   itself when the user enabled quota fallback (only to the configured candidates, logged as an

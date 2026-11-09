@@ -28,6 +28,13 @@ Every `bridge_create_task` call must give:
 A planner agent (`bridge_plan`) produces the same fields; the bridge validates every planned
 task before creating any.
 
+Docs travel with behaviour. When a task changes anything a user sees or configures (a command,
+flag, config key, default, file location, error message they act on), search the project's docs
+for the names it touches. Put the matching doc files in `allowed_paths`, and make "docs describe
+the new behaviour" an acceptance criterion. If the docs are not the executor's to change, update
+them yourself after the task, while no task runs. In review, a behaviour change without its docs
+is a rework.
+
 Execution: `bridge_execute_task`, then `bridge_task_status(wait_s=55)` in a loop (or
 `bridge_workflow_status(wait_s=55)` for a workflow). Do not poll faster and do not read the
 result before the task leaves RUNNING/VERIFYING.

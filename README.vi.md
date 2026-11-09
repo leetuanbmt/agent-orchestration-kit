@@ -10,7 +10,7 @@
   <a href="https://github.com/leetuanbmt/agent-orchestration-kit/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/leetuanbmt/agent-orchestration-kit/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="platform: macOS | Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
   <img alt="python: &gt;=3.12" src="https://img.shields.io/badge/python-%E2%89%A53.12-blue">
-  <img alt="dependencies: mcp | pyyaml | textual" src="https://img.shields.io/badge/dependencies-mcp%20%7C%20pyyaml%20%7C%20textual-brightgreen">
+  <img alt="dependencies: mcp | pyyaml | textual" src="https://img.shields.io/static/v1?label=dependencies&message=mcp%20%7C%20pyyaml%20%7C%20textual&color=brightgreen">
   <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="version: 0.1.0 + unreleased" src="https://img.shields.io/badge/version-0.1.0%20%2B%20unreleased-blue">
 </p>
@@ -241,7 +241,7 @@ terminal.
 
 ```bash
 agent-bridge config-init                # liệt kê các ví dụ đi kèm
-agent-bridge config-init orchestrator   # ghi .ai/orchestrator.yaml; không bao giờ ghi đè
+agent-bridge config-init orchestrator   # ghi .ai/orchestrator.yaml và .ai/accounts.yaml; không bao giờ ghi đè
 agent-bridge config-check               # validate
 agent-bridge agents                     # ai plan, execute, review; ai đang sẵn sàng
 ```
@@ -269,18 +269,27 @@ agent plans:  bridge_plan → bridge_workflow_status(wait_s) → bridge_run_work
 
 ## Cấu hình
 
-Hai file tùy chọn trong thư mục `.ai/` của project:
+Ba file tùy chọn trong thư mục `.ai/` của project, mỗi cài đặt chỉ có một file sở hữu:
 
 | File | Mục đích |
 |---|---|
-| `.ai/orchestrator.yaml` | Account, agent, role, định tuyến, các stage của workflow. Bị git-ignore (vì chứa đường dẫn home riêng của máy). |
-| `.ai/config.json` | Cài đặt bridge: sandbox, timeout, quy tắc path, allowlist verification. Được commit. |
+| `.ai/accounts.yaml` | Các account project này dùng (home riêng, hoặc `login:` trỏ tới một login toàn máy) và limit của chúng. Bị git-ignore (vì chứa đường dẫn home riêng của máy). |
+| `.ai/orchestrator.yaml` | Agent, role, định tuyến, các stage của workflow. Bị git-ignore. |
+| `.ai/config.json` | Cài đặt bridge: sandbox, sandbox verification, timeout, quy tắc path, allowlist verification. Được commit, nên mọi thay đổi trong file này cần review như thay đổi bảo mật. |
+
+Layout cũ (account trong `orchestrator.yaml`) vẫn load được; `config-check` liệt kê những gì cần
+chuyển và `agent-bridge config-migrate` (chỉ người chạy) sẽ chuyển chúng.
 
 ```yaml
-version: 1
+# .ai/accounts.yaml
 accounts:
   codex-work:  {provider: openai,    home: ~/.codex-accounts/homes/work}
   claude-main: {provider: anthropic, home: ~/.claude-accounts/main, max_concurrency: 1}
+```
+
+```yaml
+# .ai/orchestrator.yaml
+version: 1
 agents:
   claude:          {adapter: client}                         # the MCP caller
   claude-headless: {adapter: claude-cli, account: claude-main, model: sonnet}
@@ -417,8 +426,8 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   `allowed_paths` đều là vi phạm (trừ cache của công cụ).
 - **Verification.** Bridge tự chạy lại, chỉ dùng argv (không toán tử shell, không dùng đường dẫn
   làm chương trình), file thực thi phải nằm trong allowlist, có timeout. Dưới Landlock (Linux) hoặc Seatbelt (macOS),
-  lệnh kiểm tra chỉ ghi được vào worktree, một `TMPDIR` riêng và `workflow.verify_writable`
-  (`workflow.verify_sandbox`: mặc định `auto`, `strict` chặn thêm TCP, `none` để tắt); sau đó
+  lệnh kiểm tra chỉ ghi được vào worktree, một `TMPDIR` riêng và `verify_writable`
+  (`verify_sandbox` trong `.ai/config.json`: mặc định `auto`, `strict` chặn thêm TCP, `none` để tắt); sau đó
   worktree được diff lại và những gì lệnh kiểm tra thay đổi được xét như thay đổi của agent. Không
   tiến trình nào do agent hay lệnh kiểm tra khởi động sống lâu hơn nó (process group bị kết thúc).
 - **Bằng chứng.** Lệnh git lỗi sẽ làm task tạm dừng (`EVIDENCE_ERROR`) thay vì cho ra diff rỗng.

@@ -2,7 +2,11 @@
 
 Roles map to agents in `.ai/orchestrator.yaml` (legacy without it: `client` plans and reviews,
 one Codex agent per `config.json` account executes). Each agent has one adapter and one account;
-an account has its own auth home and `max_concurrency`.
+an account is declared in `.ai/accounts.yaml` with its own auth home (or `login:` naming a
+machine registry login), `max_concurrency` and `limits`. Each setting has one owner:
+`accounts.yaml` for accounts, `orchestrator.yaml` for agents, roles, routing and workflow,
+`config.json` for safety and runtime (including `verify_sandbox`). Older placements still load
+and `config-check` lists them under `deprecated`; a name declared in two places is an error.
 
 - **Routing.** A task pinned with `agent` (or `account`) runs there. An unpinned task gets the
   role's `default`, else the first eligible executor in role order, when it first starts: enabled, CLI installed, can write,
