@@ -332,7 +332,7 @@ thái có trong [docs/configuration.md](docs/configuration.md) (tiếng Anh).
 | Adapter | Provider | Ghi được | Cơ chế cô lập | Account home |
 |---|---|---|---|---|
 | `codex-cli` | `openai` | Có (mặc định) | OS sandbox của Codex (`workspace-write` / `read-only`), không có mạng | `CODEX_HOME` |
-| `claude-cli` | `anthropic` | Chỉ khi `allow_write: true` | Permission rule của CLI; không có OS sandbox | `CLAUDE_CONFIG_DIR` |
+| `claude-cli` | `anthropic` | Chỉ khi `allow_write: true` | Permission rule của CLI; OS sandbox cho Bash | `CLAUDE_CONFIG_DIR` |
 | `client` | — | Không | Chính MCP caller; bridge không bao giờ khởi chạy nó | — |
 | `opencode-cli` | `opencode` | Không (config từ chối) | Chặn tool qua config; không có OS sandbox | Chỉ login global |
 | `agy-cli` | `google` | Không (config từ chối) | `--mode plan --sandbox`; không có OS sandbox | Cả một `HOME` |
@@ -461,14 +461,19 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
 - **Codex CLI** chạy trong OS sandbox của nó (`workspace-write` hoặc `read-only`; không thể cấu
   hình `danger-full-access`), không có mạng, `/tmp` và `$TMPDIR` không ghi được, bỏ qua
   `~/.codex/config.toml`. Lượt plan và review chạy `read-only`.
-- **Claude CLI** không có OS sandbox. Bridge chạy nó với `--strict-mcp-config` (không MCP server
-  nào), `--setting-sources ""` (không nạp settings, allow rule hay hook của user lẫn project),
-  `--permission-mode dontAsk` và allowlist Read/Glob/Grep. Khi `allow_write: true`, nó có thêm
-  Edit/Write giới hạn trong `allowed_paths` của task, còn path bị loại trừ và path protected bị
-  chặn. Việc đọc credential của Codex/agent-bridge/agy, `~/.claude/.credentials.json`, home của mọi
-  account đã cấu hình và file `.env*`/key của project bị chặn; các file khác mà user của bạn đọc
-  được vẫn đọc được, và `allow_bash: true` hoàn toàn không bị giới hạn path. Nên dùng Codex làm executor và không bao giờ bật `allow_bash` cho việc
-  không đáng tin cậy.
+- **Claude CLI** dùng `--strict-mcp-config` (không MCP server), `--setting-sources ""`
+  (không nạp settings của user/project), `--permission-mode dontAsk` và quyền Read/Glob/Grep.
+  Với `allow_write: true`, Edit/Write vẫn giới hạn trong path của task, chặn path protected.
+  Read/Edit giữ các permission rule hiện có, kể cả rule chặn đọc credential.
+  Với `allow_bash: true`, Bash và tiến trình con chạy trong OS sandbox của Claude Code:
+  không đọc được path credential (home của mọi account, registry homes, thư mục credential CLI
+  global và file account/orchestrator riêng của project), chỉ ghi vào thư mục làm việc và
+  `$TMPDIR`, không có mạng. Sandbox phải khả dụng; không được retry ngoài sandbox hay loại
+  trừ lệnh. macOS Keychain vẫn truy cập được: `security` và `/usr/bin/security` chỉ bị chặn
+  bằng permission rule, là trở ngại nhỏ chứ không phải ranh giới bảo mật. Các file khác mà
+  user đọc được vẫn đọc được.
+  Nên dùng Codex làm executor cho công việc không đáng tin cậy, vì các tool Read của Claude và
+  chính tiến trình claude không bị OS sandbox giới hạn, và Bash trong sandbox vẫn truy cập được Keychain.
 - **opencode và agy** chỉ đọc. opencode chạy với edit, bash, webfetch và thư mục bên ngoài bị
   chặn qua `OPENCODE_CONFIG_CONTENT`; agy chạy `--mode plan --sandbox` và vẫn giữ các tool trình
   duyệt mà CLI không tắt được. Probe không ghi file nào với cả hai; cả hai đều không có OS sandbox.

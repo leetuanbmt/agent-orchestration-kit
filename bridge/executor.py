@@ -29,7 +29,7 @@ from typing import Any
 from . import osutil
 from .accounts import Account, account_env, claude_token, codex_overrides
 from .config import BridgeConfig, state_dir
-from .security import PathError, clean_env, process_started, redact, rule_unsafe
+from .security import PathError, clean_env, hook_settings_error, process_started, redact, rule_unsafe
 
 # Set in every agent process; the bridge entry points refuse to start under it, so an agent
 # cannot orchestrate other agents.
@@ -449,8 +449,7 @@ class CodexAdapter(Adapter):
 
 
 class ClaudeAdapter(Adapter):
-    """Claude Code headless. No OS sandbox: tools are limited by an allowlist instead, MCP
-    servers are disabled (no recursive orchestration) and writing needs `allow_write`."""
+    """Claude Code headless with sandboxed Bash and permission-scoped Read/Edit tools."""
 
     name, provider = "claude-cli", "anthropic"
 
@@ -467,13 +466,44 @@ class ClaudeAdapter(Adapter):
                 raise PathError(f"not expressible as Claude permission rules: {bad}")
             tools += [f"{t}(./{p})" for p in req.write_paths for t in _CLAUDE_WRITE_TOOLS]
             denied += [f"{t}(./{p})" for p in req.deny_paths for t in _CLAUDE_WRITE_TOOLS]
+        settings_path = req.hook_settings
         if req.allow_bash:
+            from .review import verification_read_denies
+
             tools.append("Bash")
-        # No user/project settings files; only the owner-configured hooks-only file is loaded.
+            denied += ["Bash(security:*)", "Bash(/usr/bin/security:*)"]
+            settings: dict[str, Any] = {}
+            if req.hook_settings:
+                if error := hook_settings_error(req.hook_settings, self.root):
+                    raise ValueError(f"claude_hook_settings: {error}")
+                try:
+                    settings = json.loads(Path(req.hook_settings).read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, ValueError) as exc:
+                    raise ValueError("claude_hook_settings: file must be readable and contain valid JSON") from exc
+                if not isinstance(settings, dict) or set(settings) != {"hooks"} \
+                        or not isinstance(settings["hooks"], dict):
+                    raise ValueError("claude_hook_settings: JSON must contain only a hooks object")
+            deny_read = verification_read_denies(self.root, req.read_deny)
+            deny_read += [str(Path.home() / name) for name in (
+                ".codex", ".claude", ".codex-accounts", ".claude-accounts", ".gemini",
+                ".agent-bridge/homes",
+            )]
+            settings["sandbox"] = {
+                "enabled": True,
+                "allowUnsandboxedCommands": False,
+                "autoAllowBashIfSandboxed": True,
+                "failIfUnavailable": True,
+                "filesystem": {"denyRead": list(dict.fromkeys(deny_read))},
+                "network": {"allowedDomains": []},
+            }
+            settings_file = tmp / "claude_settings.json"
+            settings_file.write_text(json.dumps(settings), encoding="utf-8")
+            settings_path = str(settings_file)
+        # No user/project settings; merge owner hooks with mandatory Bash confinement.
         a = [self.binary, "-p", "--output-format", "stream-json", "--verbose",
              "--strict-mcp-config", "--setting-sources", ""]
-        if req.hook_settings:
-            a += ["--settings", req.hook_settings]
+        if settings_path:
+            a += ["--settings", settings_path]
         a += ["--permission-mode", "dontAsk", "--allowedTools", ",".join(tools),
              "--json-schema", json.dumps(req.schema)]
         a += ["--disallowedTools", ",".join(denied)]
