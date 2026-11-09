@@ -186,6 +186,10 @@ elif scenario == "network":
     emit({"type": "turn.failed", "error": {"message":
           "stream disconnected before completion: error sending request"}})
     sys.exit(1)
+elif scenario == "writecrash":
+    write_files()
+    print("thread 'main' panicked", file=sys.stderr)
+    sys.exit(139)
 elif scenario == "crash":
     print("thread 'main' panicked", file=sys.stderr)
     sys.exit(139)

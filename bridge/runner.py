@@ -16,7 +16,7 @@ from .executor import REVIEW_SCHEMA, RunRequest, RunResult, build_review_prompt,
 from .models import ACTIVE, Actor, ReviewDecision, State, leftover_failure, run_failure_state, \
     verdict
 from .review import EvidenceError, content_hashes, current_head, diff, protected_after, recheck, \
-    run_verification, scope_violations, touches_sensitive
+    run_verification, scope_violations, touches_sensitive, verification_read_denies
 from .security import process_started, redact
 from .state import LimitExceeded
 
@@ -236,6 +236,8 @@ class TaskRunner:
                                           "checks": [], "interrupted": True,
                                           **protected_after(b.root, leftover)}
             self.store.finish_attempt(task_id, n, **record)
+            if touches_sensitive(self._all_touched(task_id, n, changes["files"]), b.cfg):
+                self.store.update(task_id, needs_human=1)  # latched for the final approval
             if leftover and self.store.get(task_id)["state"] in ACTIVE:
                 self.store.transition(task_id, State.BLOCKED, Actor.BRIDGE,
                                       {"outcome": res.outcome, "scope_violations": leftover},
@@ -277,7 +279,9 @@ class TaskRunner:
         flow = b.orch.workflow
         checks = (await run_verification(commands, b.root, b.cfg, should_cancel=cancelled,
                                          on_start=check_started, confine=flow.verify_sandbox,
-                                         writable=flow.verify_writable) if commands else [])
+                                         writable=flow.verify_writable,
+                                         read_deny=verification_read_denies(
+                                             b.root, b._account_homes())) if commands else [])
         stopped = cancelled()  # checks cut short (or never started) prove nothing
         touched, later = changes["files"], []
         if commands:  # the checks ran code in the worktree: judge what they changed too
@@ -295,16 +299,28 @@ class TaskRunner:
                                   **({"interrupted": True} if stopped else {}),
                                   **protected_after(b.root, violations)}
         # What a later approval is bound to: the verified content of every file the attempt touched.
-        changes["after_hashes"] = content_hashes(b.root, touched)
+        # Earlier attempts' files stay part of the evidence: they are in this attempt's baseline.
+        touched_all = self._all_touched(task_id, n, touched)
+        changes["after_hashes"] = content_hashes(b.root, touched_all)
         changes["verified_head"] = current_head(b.root)
         self.store.finish_attempt(task_id, n, **record)
-        needs_human = bool(row["needs_human"]) or touches_sensitive(touched, b.cfg)
+        needs_human = bool(row["needs_human"]) or touches_sensitive(touched_all, b.cfg)
         if self._park_if_stopping(task_id, used):
             return  # stopped while verifying: the checks were cut short, not failed
         if self.store.get(task_id)["state"] != State.VERIFYING:
             return  # cancelled while verifying
         self.store.transition(task_id, dst, Actor.BRIDGE, record["verification"],
                               failure=failure, needs_human=int(needs_human))
+
+    def _all_touched(self, task_id: str, n: int, current: list[str]) -> list[str]:
+        """`current` plus every other attempt's changed files and files changed by its checks."""
+        files = set(current)
+        for att in self.store.attempts(task_id):
+            if att.get("n") == n:
+                continue
+            files.update((att.get("changes") or {}).get("files") or [])
+            files.update((att.get("verification") or {}).get("changed_by_verification") or [])
+        return sorted(f for f in files if not f.startswith(".git/"))
 
     async def _rescue(self, task_id: str, error: Exception) -> None:
         """Take a task out of RUNNING/VERIFYING after a bridge error. The database may be the
@@ -360,9 +376,17 @@ class TaskRunner:
                 return  # the MCP client reviews through bridge_review_task
             row = self.store.get(task_id)
             prompt = build_review_prompt(task_id, row["spec"], self.store.attempts(task_id)[-1])
-            res = await b._consult(
-                name, prompt, REVIEW_SCHEMA, task_id,
-                lambda: b._stopping or self.store.get(task_id)["state"] != State.REVIEW)
+            try:
+                res = await b._consult(
+                    name, prompt, REVIEW_SCHEMA, task_id,
+                    lambda: b._stopping or self.store.get(task_id)["state"] != State.REVIEW,
+                    on_start=lambda pid: self.store.update(
+                        task_id, codex_pid=pid, codex_started=process_started(pid),
+                        runner_pid=os.getpid(), runner_started=self.store._started))
+            finally:
+                with contextlib.suppress(Exception):
+                    self.store.update(task_id, codex_pid=None, codex_started=None,
+                                      runner_pid=None, runner_started=None)
             if res is None:
                 return
             try:

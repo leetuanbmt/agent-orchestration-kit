@@ -23,13 +23,7 @@ Location = NamedTuple("Location", [("dir", Path), ("kind", str)])
 
 
 def home(root: Path | None = None) -> Path:
-    path = Path(os.environ.get(HOME_ENV) or Path.home() / ".agent-bridge")
-    if not path.is_absolute():
-        raise ValueError(f"{HOME_ENV} must be absolute")
-    if path.is_symlink() or (path.exists() and not path.is_dir()):
-        raise ValueError("bridge home must be a directory, not a symlink")
-    if path.exists() and hasattr(os, "getuid") and path.stat().st_uid != os.getuid():
-        raise ValueError("bridge home must belong to the current user")
+    path = registry.bridge_home()
     if root is not None and path.resolve().is_relative_to(root.resolve()):
         raise ValueError("bridge home must be outside the worktree")
     return path

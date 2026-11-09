@@ -37,7 +37,13 @@ States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED →
   stops at APPROVED until a human runs `agent-bridge approve <id>` in a terminal.
 - Environment failures (PAUSED) do not consume the attempt budget; code failures do.
 - A runner that dies mid-run is detected on the next bridge start: the task becomes PAUSED
-  (`INTERRUPTED`) and keeps its session id, so `bridge_resume_task` continues it.
+  (`INTERRUPTED`) and keeps its session id, so `bridge_resume_task` continues it. What the
+  interrupted attempt changed is recorded, and a sensitive file it wrote forces human approval.
+  Recovery also kills an orphaned reviewer agent of a REVIEW task (the task stays in REVIEW) and
+  an orphaned planner before its PLANNING workflow becomes FAILED.
+- Approval binds to the verified HEAD and the content of every file touched by any attempt of the
+  task (and files its checks changed); new untracked files also refuse it. So before a human
+  approve: no commits, no parallel task creating files, no edits to those files.
 - One writer per git worktree; an account runs at most `max_concurrency` agents at once.
   Parallel writes need separate worktrees, each with its own bridge state.
 - Workflows (`bridge_plan`): PLANNING → READY (or FAILED, with nothing created) →

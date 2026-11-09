@@ -31,9 +31,9 @@ from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, Tr
 from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
-from .registry import remember_project
+from .registry import remember_project, with_worktrees
 from .review import EvidenceError, content_hashes, current_head, diff, parse_command, protected_dirty, \
-    escaping_symlinks, protected_after, protected_hashes, scope_violations, snapshot, untracked
+    escaping_symlinks, protected_after, protected_git_left, protected_hashes, scope_violations, snapshot, touches_sensitive, untracked
 from .runner import _write_attempt_log_line as _write_attempt_log_line
 from .sandbox import describe as describe_sandbox
 from .runner import TaskRunner
@@ -463,7 +463,9 @@ class Bridge:
             storage_fix = ("stop the old agent-bridge process (close the Claude sessions that "
                            "still run it), then check `agent-bridge storage status`")
         try:
-            dirty = protected_dirty(self.root, self.cfg)
+            # A tampered git config or hook is never exercised by running git against it.
+            dirty = ([] if protected_git_left(self.root, self.store.protected_left())
+                     else protected_dirty(self.root, self.cfg))
         except EvidenceError as e:  # cannot tell: do not report the project as fine
             dirty = [f"(git status failed: {redact(str(e), 200)})"]
         # Git cannot see a git-ignored protected file (.ai/orchestrator.yaml): report every one a
@@ -513,6 +515,21 @@ class Bridge:
                                  "run the bridge on a Linux kernel with Landlock and set "
                                  "workflow.verify_sandbox: auto in .ai/orchestrator.yaml "
                                  "to confine verification commands"))
+        if self.legacy:
+            try:
+                here = Path(self.root).resolve()
+                configured = next((w for w in with_worktrees([str(self.root)])
+                                   if Path(w).resolve() != here
+                                   and (Path(w) / ".ai" / "orchestrator.yaml").is_file()), None)
+            except Exception:  # a git failure must never break health
+                configured = None
+            if configured:
+                warnings.append(item("legacy_config",
+                                     "this worktree runs the legacy setup (Codex executes) but "
+                                     f"another worktree has .ai/orchestrator.yaml: {configured}",
+                                     f"a human copies .ai/orchestrator.yaml from {configured} into "
+                                     "this worktree (it is git-ignored, so worktrees do not share "
+                                     "it)"))
         for name in self.orch.accounts:
             try:
                 key = account_key(self._account(name))
@@ -620,8 +637,16 @@ class Bridge:
         row, dup = self._insert(*self._prepare(spec))
         return {**self._summary(row), "duplicate": dup}
 
+    def _refuse_tampered_git(self) -> None:
+        """No run starts while a git config or hook a stopped run changed is still as it left it."""
+        if left := protected_git_left(self.root, self.store.protected_left()):
+            raise ValueError(f"{', '.join(left)} was changed by a stopped run and still has that "
+                             "content: git would run it. A human must restore it (e.g. from a "
+                             "clean clone or `git config --edit`) before any task runs")
+
     async def execute_task(self, task_id: str, wait: bool = False,
                            actor: Actor = Actor.CLIENT) -> dict[str, Any]:
+        self._refuse_tampered_git()
         row = self.store.get(task_id)
         if row["state"] == State.BACKLOG:
             raise TransitionError(f"{task_id} has unfinished dependencies: "
@@ -642,6 +667,7 @@ class Bridge:
 
     async def resume_task(self, task_id: str, feedback: str = "", wait: bool = False,
                           actor: Actor = Actor.CLIENT) -> dict[str, Any]:
+        self._refuse_tampered_git()
         row = self.store.get(task_id)
         expect = {State.REWORK, State.FAILED, State.PAUSED}
         if row["state"] not in expect:
@@ -698,7 +724,8 @@ class Bridge:
     # ---- review ----------------------------------------------------------------------------
 
     async def _consult(self, name: str, prompt: str, schema: dict[str, Any],
-                       task_id: str | None, cancel: Callable[[], bool]) -> RunResult | None:
+                       task_id: str | None, cancel: Callable[[], bool],
+                       on_start: Callable[[int], None] | None = None) -> RunResult | None:
         """One read-only run of a planner or reviewer agent; None when its account is busy or
         over its limit."""
         agent = self.orch.agents[name]
@@ -728,7 +755,7 @@ class Bridge:
                                schema=schema, model=agent.model, hook_settings=hook_settings,
                                read_deny=self._account_homes(),
                                keep_fds=() if (fd := lock.fileno()) is None else (fd,)),
-                    should_cancel=cancel)
+                    should_cancel=cancel, on_start=on_start)
             finally:
                 lock.release()
             self._record_account(account.name, res, usage_id, task_id)
@@ -939,7 +966,14 @@ class Bridge:
     async def _plan(self, wid: str, name: str, objective: str, context: str) -> None:
         try:
             prompt = build_plan_prompt(objective, context, self.cfg.protected_paths)
-            res = await self._consult(name, prompt, PLAN_SCHEMA, None, lambda: self._stopping)
+            try:
+                res = await self._consult(
+                    name, prompt, PLAN_SCHEMA, None, lambda: self._stopping,
+                    on_start=lambda pid: self.store.set_workflow_agent(wid, pid,
+                                                                       process_started(pid)))
+            finally:
+                with contextlib.suppress(Exception):
+                    self.store.set_workflow_agent(wid, None, None)
             if res is None or res.outcome != "ok" or not isinstance(res.final, dict):
                 why = (res.outcome + ": " + res.error if res
                        else "account busy or over its limit")
@@ -1116,16 +1150,18 @@ class Bridge:
 
     # ---- lifecycle -------------------------------------------------------------------------
 
-    def _leftover(self, row: dict[str, Any], baseline: dict[str, Any] | None) -> list[str]:
-        """Scope violations an interrupted attempt left, diffed against its stored baseline."""
+    def _leftover(self, row: dict[str, Any], baseline: dict[str, Any] | None
+                  ) -> tuple[dict[str, Any] | None, list[str]]:
+        """What an interrupted attempt changed (diffed against its stored baseline) and which of
+        that is a scope violation."""
         if not baseline:
-            return []  # attempts from older versions: nothing to compare with
+            return None, []  # attempts from older versions: nothing to compare with
         try:
             changes = diff(self.root, baseline, self.cfg.protected_paths)
         except EvidenceError:
-            return []
-        return scope_violations(changes["files"], row["spec"], self.cfg,
-                                changes["head_changed"], root=self.root)
+            return None, []
+        return changes, scope_violations(changes["files"], row["spec"], self.cfg,
+                                         changes["head_changed"], root=self.root)
 
     @staticmethod
     def _runner_alive(row: dict[str, Any]) -> bool:
@@ -1137,6 +1173,14 @@ class Bridge:
         """Park tasks and workflows whose process died mid-run (crash, kill, closed session)."""
         recovered = []
         for row in self.store.list(limit=10_000):
+            if (row["state"] == State.REVIEW and row["codex_pid"]
+                    and row["runner_pid"] != os.getpid() and not self._runner_alive(row)):
+                killed = kill_stale(row["codex_pid"], row["codex_started"])
+                self.store.update(row["id"], codex_pid=None, codex_started=None,
+                                  runner_pid=None, runner_started=None)
+                self.store.log(row["id"], Actor.BRIDGE, "reviewer_orphan_killed",
+                               {"killed": bool(killed)})
+                continue
             if row["state"] not in ACTIVE:
                 continue
             if row["runner_pid"] != os.getpid() and self._runner_alive(row):
@@ -1145,12 +1189,16 @@ class Bridge:
             leftover: list[str] = []
             for a in self.store.attempts(row["id"]):
                 if a["ended_at"] is None:
-                    leftover = self._leftover(row, a.get("baseline"))
-                    self.store.finish_attempt(row["id"], a["n"], outcome="interrupted", **(
-                        {"verification": {"passed": False, "scope_violations": leftover,
-                                          "checks": [], "interrupted": True,
-                                          **protected_after(self.root, leftover)}}
-                        if leftover else {}))
+                    changes, leftover = self._leftover(row, a.get("baseline"))
+                    self.store.finish_attempt(
+                        row["id"], a["n"], outcome="interrupted",
+                        **({"changes": changes} if changes is not None else {}),
+                        **({"verification": {"passed": False, "scope_violations": leftover,
+                                             "checks": [], "interrupted": True,
+                                             **protected_after(self.root, leftover)}}
+                           if leftover else {}))
+                    if changes and touches_sensitive(changes["files"], self.cfg):
+                        self.store.update(row["id"], needs_human=1)
             if leftover:  # resuming would take these changes as the next attempt's baseline
                 self.store.transition(row["id"], State.BLOCKED, Actor.BRIDGE,
                                       {"reason": "runner died", "killed_orphan": killed,
@@ -1168,6 +1216,9 @@ class Bridge:
                     and wf["runner_started"] in (None, process_started(owner))):
                 continue  # its owner is alive (a reused pid has another start time)
             planning = wf["state"] == "PLANNING"
+            if planning and wf.get("agent_pid"):
+                kill_stale(wf["agent_pid"], wf.get("agent_started"))
+            self.store.set_workflow_agent(wf["id"], None, None)
             self.store.set_workflow(wf["id"], "FAILED" if planning else "WAITING", {
                 "error": f"interrupted: the process {'planning' if planning else 'driving'} "
                          "it exited; " + ("plan again" if planning else "run it again")})

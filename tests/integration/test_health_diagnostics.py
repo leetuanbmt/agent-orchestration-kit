@@ -204,6 +204,44 @@ def test_cli_prints_fixes(make_bridge, repo, capsys, monkeypatch):
     assert "agent-bridge account-login default" in fixes
 
 
+# @pt.id KIT-CFG-LEGACY-001
+# @pt.item A legacy worktree warns when a sibling worktree has an orchestrator.yaml
+# @pt.condition the main worktree has .ai/orchestrator.yaml; a linked worktree has none
+# @pt.expected health of the linked worktree lists legacy_config naming the main worktree; ok is unchanged
+# @pt.target bridge.service.Bridge.health
+# @pt.method integration
+# @pt.legacy the legacy fallback ran silently with a different configuration
+def test_legacy_worktree_warns_about_sibling_config(repo, fake_codex, tmp_path):
+    from bridge.config import BridgeConfig
+    from bridge.service import Bridge
+    (repo / ".ai").mkdir(exist_ok=True)
+    (repo / ".ai" / "orchestrator.yaml").write_text("version: 1\n")
+    linked = tmp_path / "linked"
+    git(repo, "worktree", "add", "-q", str(linked), "-b", "other")
+    cfg = BridgeConfig(retry_backoff_s=0, lock_dir=str(fake_codex / "locks"))
+    b = Bridge(linked.resolve(), cfg)
+    assert b.legacy
+    h = _health(b)
+    warning, = [e for e in h["warnings"] if e["code"] == "legacy_config"]
+    assert str(repo) in warning["message"] and "copy" not in warning["message"]
+    assert ".ai/orchestrator.yaml" in warning["fix"] and str(repo) in warning["fix"]
+    assert "legacy_config" not in _codes(h["problems"])
+    assert h["ok"] is True
+
+
+# @pt.id KIT-CFG-LEGACY-002
+# @pt.item A legacy repository without other worktrees gets no legacy_config warning
+# @pt.condition legacy setup, a single worktree
+# @pt.expected warnings list no legacy_config
+# @pt.target bridge.service.Bridge.health
+# @pt.method integration
+# @pt.legacy none
+def test_legacy_alone_has_no_legacy_config_warning(make_bridge):
+    b = make_bridge()
+    assert b.legacy
+    assert "legacy_config" not in _codes(_health(b)["warnings"])
+
+
 # @pt.id KIT-HEALTH-DIAG-TEST04
 # @pt.item A CLI newer than the probed version is a health warning
 # @pt.condition the codex adapter reports 0.163.0 (probed), then 0.200.1 and a non-semver string

@@ -54,6 +54,72 @@ def test_seatbelt_profile(monkeypatch, tmp_path, mode):
     )
 
 
+# @pt.id KIT-SEATBELT-009-git-internals
+# @pt.item The profile keeps the repository's config, hooks and info unwritable inside the worktree
+# @pt.condition a worktree root allowed for writes and the deny paths of its repository
+# @pt.expected the root stays in the allow rule; config, config.worktree, hooks and info are denied after it; the whole .git is not
+# @pt.target bridge.sandbox.wrap, bridge.review.git_write_denies
+# @pt.method unit
+# @pt.legacy F-01: a check could rewrite .git/config inside the writable worktree
+def test_seatbelt_denies_git_internals(monkeypatch, tmp_path):
+    from bridge import review
+    monkeypatch.setattr(sandbox, "backend", lambda: "seatbelt")
+    root = (tmp_path / "worktree").resolve()
+    (root / ".git" / "hooks").mkdir(parents=True)
+    denies = review.git_write_denies(root)
+    profile = sandbox.wrap(["true"], [str(root)], "auto", denies)[2]
+    git_dir = root / ".git"
+    allow = profile.index(f'(allow file-write* (subpath "{root}")')
+    deny = profile.index("(deny file-write* (subpath")
+    assert allow < deny
+    for name in ("config", "config.worktree", "hooks", "info"):
+        assert f'(subpath "{git_dir / name}")' in profile[deny:]
+    assert f'(subpath "{git_dir}")' not in profile
+    assert "(deny file-write* (subpath" not in sandbox.wrap(["true"], [str(root)], "auto")[2]
+
+
+# @pt.id KIT-SEATBELT-010-read-denies
+# @pt.item The profile denies reads of credential paths and validates them
+# @pt.condition deny_read paths (one not yet existing), a worktree root, and a path with a double quote
+# @pt.expected each path gets a file-read* subpath deny; the root is not read-denied; the quote raises ValueError
+# @pt.target bridge.sandbox.wrap
+# @pt.method unit
+# @pt.legacy F-03: verification code could read account tokens
+def test_seatbelt_read_denies(monkeypatch, tmp_path):
+    monkeypatch.setattr(sandbox, "backend", lambda: "seatbelt")
+    root = (tmp_path / "worktree").resolve()
+    root.mkdir()
+    paths = [tmp_path / "home-a", tmp_path / "auth.json"]
+    profile = sandbox.wrap(["true"], [str(root)], "auto", None, [str(p) for p in paths])[2]
+    for p in paths:
+        assert f'(deny file-read* (subpath "{p.resolve()}"))' in profile
+    assert f'(deny file-read* (subpath "{root}"))' not in profile
+    with pytest.raises(ValueError):
+        sandbox.wrap(["true"], [str(root)], "auto", None, [str(tmp_path / 'bad"x')])
+
+
+# @pt.id KIT-SEC-READDENY-001
+# @pt.item Credential paths denied to verification code
+# @pt.condition two account homes and a project root
+# @pt.expected homes, registry homes dir, both global credential files and both .ai token files listed; .ai/config.json not
+# @pt.target bridge.review.verification_read_denies
+# @pt.method unit
+# @pt.legacy F-03: nothing was read-denied
+def test_verification_read_denies(tmp_path):
+    from bridge import review
+    from bridge.registry import registry_dir
+    root = tmp_path / "proj"
+    homes = [str(tmp_path / "h1"), str(tmp_path / "h2")]
+    denies = review.verification_read_denies(root, homes)
+    home = Path.home()
+    expected = [*homes, str(registry_dir() / "homes"), str(home / ".codex" / "auth.json"),
+                str(home / ".claude" / ".credentials.json"),
+                str(root / ".ai" / "orchestrator.yaml"), str(root / ".ai" / "accounts.yaml")]
+    assert denies == expected
+    assert str(root / ".ai" / "config.json") not in denies
+    assert str(root / ".ai") not in denies
+
+
 # @pt.id KIT-SEATBELT-002-path-validation
 # @pt.item Writable paths cannot inject profile rules
 # @pt.condition a quote, backslash or control character in a writable path

@@ -27,6 +27,16 @@
 - Verification commands run under Landlock where available (`workflow.verify_sandbox` in
   `.ai/orchestrator.yaml`, `auto` by default): writes only to the worktree, a private TMPDIR and
   `verify_writable`; the worktree is diffed again after them. Never weaken this setting yourself.
+  On macOS (Seatbelt) a check also cannot write the repository's git config, `config.worktree`,
+  `hooks/` or `info/`, and cannot read any configured account home, the registry's `homes/`,
+  `~/.codex/auth.json`, `~/.claude/.credentials.json`, `.ai/orchestrator.yaml` or
+  `.ai/accounts.yaml`. Landlock (Linux) restricts writes only.
+- Git config is code the bridge would run (`core.fsmonitor`, filters, hooks). After every run the
+  bridge hashes the repository's config, `config.worktree`, hooks and `info/attributes` from disk
+  before any git call; a change BLOCKs the task without running git, and while it is still on
+  disk execute/resume are refused and `health` is NOT OK until a human restores it. Bridge git
+  calls run with `core.fsmonitor=false` and `core.hooksPath=/dev/null` (via `GIT_CONFIG_*`),
+  `--no-ext-diff --no-textconv` and a scrubbed environment.
 - The bridge starts processes with argv lists only, scrubs credential-shaped env vars, kills the
   whole process group on timeout or cancel, and redacts secrets from stored output.
 - Path rules are checked twice: at task creation (traversal, absolute paths, symlink escape,

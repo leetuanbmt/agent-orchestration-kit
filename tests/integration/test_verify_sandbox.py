@@ -155,6 +155,51 @@ def test_writable_validation():
         "/var/cache/x", "~/.cache/uv"]
 
 
+# @pt.id KIT-SEC-SBX-005-seatbelt-git-config
+# @pt.item Under Seatbelt a check cannot write the repository's config even though the worktree is writable
+# @pt.condition verify_sandbox auto on macOS; a check appends a line to .git/config
+# @pt.expected the write is refused (Operation not permitted) and .git/config is unchanged
+# @pt.target bridge.review.run_verification, bridge.sandbox.wrap
+# @pt.method integration
+# @pt.legacy audit F-01: .git was writable inside the worktree
+@pytest.mark.skipif(sandbox.backend() != "seatbelt", reason="Seatbelt unavailable or nested")
+def test_seatbelt_denies_git_config_write(make_orch, repo, monkeypatch):
+    monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 2\n")
+    before = (repo / ".git" / "config").read_text()
+    b = make_orch(flow("auto"))
+    _, check = check_output(
+        b, "python3 -c \"open('.git/config', 'a').write('[core]\\n')\"")
+    assert not check["passed"] and "Operation not permitted" in check["output_tail"], check
+    assert (repo / ".git" / "config").read_text() == before
+
+
+# @pt.id KIT-SEC-SBX-006-read-deny
+# @pt.item Under Seatbelt a check cannot read account credentials or the project's private bridge config files
+# @pt.condition an account home holding auth.json and .ai/orchestrator.yaml; checks read each of them and src/app.py
+# @pt.expected the credential reads fail with Operation not permitted; the src/app.py read passes
+# @pt.target bridge.review.run_verification, bridge.review.verification_read_denies, bridge.sandbox.wrap
+# @pt.method integration
+# @pt.legacy audit F-03: verification code could read every account's token
+@pytest.mark.skipif(sandbox.backend() != "seatbelt", reason="Seatbelt unavailable or nested")
+def test_seatbelt_denies_credential_reads(make_orch, repo, tmp_path):
+    from bridge.review import run_verification, verification_read_denies
+    b = make_orch(flow("auto"))
+    account_home = tmp_path / "acct-home"
+    account_home.mkdir()
+    (account_home / "auth.json").write_text("{}")
+    (repo / ".ai").mkdir(exist_ok=True)
+    (repo / ".ai" / "orchestrator.yaml").write_text("workflow: {stages: [execute]}\n")
+    secrets = [account_home / "auth.json", repo / ".ai" / "orchestrator.yaml"]
+    cmds = [f"python3 -c \"open('{p}').read()\"" for p in secrets]
+    cmds.append("python3 -c \"open('src/app.py').read()\"")
+    checks = run(run_verification(
+        cmds, b.root, b.cfg, confine="auto",
+        read_deny=verification_read_denies(b.root, [str(account_home)])))
+    for check in checks[:2]:
+        assert not check["passed"] and "Operation not permitted" in check["output_tail"], check
+    assert checks[2]["passed"], checks[2]
+
+
 # @pt.id KIT-SEATBELT-006-verification
 # @pt.item Verification provisions confined worktree and TMPDIR writes on macOS
 # @pt.condition Seatbelt available, auto mode and a sibling outside the worktree
