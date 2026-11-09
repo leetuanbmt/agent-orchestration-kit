@@ -55,6 +55,25 @@ reconnect. It defers the reload while one of its own tasks is running. An invali
 previous settings and shows as NOT OK in `health` (`config_reload_failed`) until you correct the
 file. After upgrading the kit's code, reconnect `agent-bridge` with `/mcp`.
 
+## Change one setting
+
+Every key in `.ai/orchestrator.yaml`, `.ai/accounts.yaml` and `.ai/config.json` can be changed
+from the terminal; the first part of the key picks the file. The command previews, and only
+`--apply` backs the file up to `.ai/backup-<UTC stamp>/` and writes it:
+
+```bash
+agent-bridge config-set roles.executor.default codex-b           # preview
+agent-bridge config-set roles.executor.default codex-b --apply
+agent-bridge config-unset roles.executor.default --apply         # back to the default
+```
+
+The value is parsed as YAML: `5`, `true`, `null`, `[a, b]`, `{five_hour_pct: 80}` or plain text.
+The whole configuration is checked before anything is written, and a change that would put a
+setting in an outdated place is refused. Comments in a YAML file are not kept (they stay in the
+backup). Keys named `token`, `secret` or `password` are refused; `token_env` is allowed. Both
+commands need an interactive terminal. The YAML and JSON shown below stay the reference for what
+each key means; the matching `config-set` command is next to each.
+
 ## Start a new project
 
 ```bash
@@ -75,7 +94,8 @@ examples:
 | `other-reviewers` | agy | Codex | opencode |
 | `account-limits` | Claude Code session | Claude on two accounts, then Codex, with limits | Claude Code session |
 
-Then edit the account homes in `.ai/accounts.yaml`, log each account in, and run `config-check`.
+Then edit the account homes in `.ai/accounts.yaml` (or `agent-bridge config-set
+accounts.<name>.home <dir> --apply`), log each account in, and run `config-check`.
 
 ## Add an account
 
@@ -126,6 +146,13 @@ accounts:
   codex-work:  {provider: openai, home: ~/.codex-accounts/homes/work}
   claude-main: {provider: anthropic, home: ~/.claude-accounts/main, max_concurrency: 1}
   codex-global: {provider: openai}   # no home: the CLI's own global login, used read-only
+```
+
+The same entries from the terminal:
+
+```bash
+agent-bridge config-set accounts.codex-work '{provider: openai, home: ~/.codex-accounts/homes/work}' --apply
+agent-bridge config-set accounts.claude-main.max_concurrency 1 --apply
 ```
 
 Homes must be absolute (or `~/...`), outside the project and outside `~/.codex` and
@@ -192,6 +219,14 @@ accounts:
       reserve_usd: 2
 ```
 
+The same from the terminal, for any limit key:
+
+```bash
+agent-bridge config-set accounts.claude-main.limits.weekly_pct 90 --apply
+agent-bridge config-set accounts.claude-main.limits.budget_usd '{day: 20, month: 300}' --apply
+agent-bridge config-unset accounts.claude-main.limits --apply
+```
+
 An account over a limit is skipped by routing, and a task pinned to it is refused with the
 limit and its reset time. It takes work again after the reset. See
 [Per-account limits](configuration.md#per-account-limits-opt-in) for budgets, pricing and how
@@ -216,6 +251,19 @@ workflow:
   stages: [execute, test, review]
   max_rework: 2
 ```
+
+The same changes with `config-set`:
+
+```bash
+agent-bridge config-set roles.executor.agents '[codex-a, codex-b]' --apply
+agent-bridge config-set roles.executor.default codex-b --apply
+agent-bridge config-set agents.reviewer.model sonnet --apply
+agent-bridge config-set workflow.max_rework 2 --apply
+agent-bridge config-set routing.quota_fallback.enabled true --apply
+```
+
+A role written as a bare agent name (`reviewer: reviewer`) becomes `{agents: [reviewer]}` when you
+set a key under it.
 
 - **Executor order.** An unpinned task goes to `default` first, then to the first eligible agent
   in `agents` order: enabled, CLI installed, logged in, under its limits and its
@@ -249,6 +297,16 @@ The bridge re-runs each task's verification commands itself and confines them. S
 | `auto` (default) | Checks may write only to the worktree, a private temp dir and `verify_writable`. |
 | `strict` | As `auto`, and network connections are denied. Checks are refused where no sandbox exists. |
 | `none` | No confinement. `health` keeps warning. |
+
+```bash
+agent-bridge config-set verify_sandbox strict --apply
+agent-bridge config-set verify_writable '[~/.cache/uv]' --apply
+agent-bridge config-set verify_timeout_s 900 --apply
+```
+
+These keys change what the bridge allows and `.ai/config.json` is tracked, so the command prints
+"security setting: .ai/config.json is tracked, so this applies to every clone". Do not use
+`workflow.verify_sandbox`: it is refused, because the key belongs in `config.json`.
 
 If a check fails with `Permission denied` on a cache directory outside the project, add that
 directory to `verify_writable` (absolute or `~/...`). Commands a check may start are listed in
@@ -291,7 +349,7 @@ agent-bridge config-check
 ## What only a human does
 
 These commands need an interactive terminal, and Claude Code is told not to run them:
-- `config-init` and `config-migrate`;
+- `config-init`, `config-migrate`, `config-set` and `config-unset`;
 - `project-account-add`, `project-account-limits` and `project-account-remove`;
 - `account-add`, `account-login`, `account-remove` and `account-set-token`;
 - `approve` and `reassign`.

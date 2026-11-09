@@ -54,9 +54,11 @@ exposes these tools.
 | `list [--state S] [--limit N] [--json]` | Tasks of this project (default limit 50); tasks that need you are marked `●` with the next command |
 | `tasks [--state S] [--limit N] [--json]` | Tasks of every project and worktree on this machine, grouped by project (default 10 per project) |
 
-The monitoring views above, plus `config-check`, `config-migrate` and `project-account-add`, print
+The monitoring views above, plus `config-check`, `config-migrate`, `config-set`, `config-unset` and
+`project-account-add`, print
 a readable view in a terminal, and the same JSON the MCP tools return with `--json` or when the
-output is piped. (`config-migrate` and `project-account-add` still need a terminal to run.)
+output is piped. (`config-migrate`, `config-set`, `config-unset` and `project-account-add` still need a terminal to
+run.)
 
 ### Tasks and workflows
 
@@ -115,3 +117,33 @@ These need an interactive terminal and a typed confirmation (or the TUI). The ki
 | `project-account-add <name> (--provider P \| --login L) [--home DIR] [--credential keychain] [--token-env VAR] [--executor] [--json]` | Declare an account in `.ai/accounts.yaml` (a new home, or a reference to a registry login); prints the agent line to paste into `orchestrator.yaml` |
 | `project-account-limits <name> [--five-hour-pct N] [--weekly-pct N] [--clear]` | Set or clear an account's window limits in `.ai/accounts.yaml` |
 | `project-account-remove <name>` | Remove an account `accounts.yaml` owns and its Keychain token; keeps the home |
+| `config-set <key> <value> [--apply] [--json]` | Set one setting in the `.ai` file that owns it, after validating the whole configuration. Previews unless `--apply`, which backs the file up to `.ai/backup-<stamp>/` and writes it atomically |
+| `config-unset <key> [--apply] [--json]` | Remove one setting the same way (it falls back to its default) |
+
+`config-set` and `config-unset` take a dotted key. The first segment picks the file: `accounts` is
+`.ai/accounts.yaml`; `version`, `agents`, `roles`, `routing`, `workflow` and `security` are
+`.ai/orchestrator.yaml`; a bridge setting such as `verify_sandbox` is `.ai/config.json`. Without an
+`orchestrator.yaml` only `config.json` keys are accepted. The value is parsed as YAML, so `5`,
+`true`, `null`, `[a, b]`, `{five_hour_pct: 80}` and plain text all work. Examples:
+
+```bash
+agent-bridge config-set roles.executor.default codex-b --apply
+agent-bridge config-set roles.executor.agents "[codex-a, codex-b]" --apply
+agent-bridge config-set agents.codex-a.model gpt-5 --apply
+agent-bridge config-set accounts.cx.limits.weekly_pct 90 --apply
+agent-bridge config-set accounts.cx.max_concurrency 2 --apply
+agent-bridge config-set routing.quota_fallback.enabled true --apply
+agent-bridge config-set workflow.max_rework 1 --apply
+agent-bridge config-set verify_sandbox strict --apply     # .ai/config.json: flagged as a security setting
+agent-bridge config-unset accounts.cx.limits --apply
+```
+
+Refused, with nothing written: an invalid result (the message names the problem), a change that
+would create an outdated layout (for example `workflow.verify_sandbox`, which belongs in
+`config.json`), an account declared in `orchestrator.yaml` (change it there, or run
+`config-migrate`), and any key ending in `token`, `secret` or `password` (`token_env` is allowed;
+no secrets in `.ai` files). A value equal to the current one writes nothing. Comments in a YAML
+file are not kept; the original is in the backup. `config.json` keys marked as security settings
+(`sandbox`, `verify_*`, `protected_paths`, `sensitive_paths`, `env_deny`, `env_allow`,
+`claude_hook_settings`, `ignore_user_config`) print "security setting: .ai/config.json is tracked,
+so this applies to every clone".

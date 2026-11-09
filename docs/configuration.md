@@ -46,8 +46,14 @@ agent-bridge config-check               # schema and account-home isolation; err
 agent-bridge agents                     # resolved roles, agents and availability
 ```
 
-`config-init`, `config-migrate`, `project-account-add`, `project-account-limits` and
-`project-account-remove` are meant to be run by a human: they refuse to run without a terminal,
+To change one setting without editing a file, use `agent-bridge config-set <key> <value>` and
+`config-unset <key>` (human only). The first segment of the dotted key picks the file, the value is
+parsed as YAML, the whole configuration is validated first, and nothing is written without
+`--apply`; the changed file is backed up to `.ai/backup-<UTC stamp>/`. See the
+[CLI reference](cli-reference.md#human-only-commands).
+
+`config-init`, `config-migrate`, `config-set`, `config-unset`, `project-account-add`,
+`project-account-limits` and `project-account-remove` are meant to be run by a human: they refuse to run without a terminal,
 and the kit's `.claude/settings.json` also denies `config-init` to Claude Code.
 
 `.ai/accounts.yaml`:
