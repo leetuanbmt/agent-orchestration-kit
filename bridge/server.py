@@ -40,6 +40,8 @@ def bridge() -> Bridge:
     if _bridge is None:
         _bridge = Bridge()
         _bridge.recover()
+    else:
+        _bridge.reload_config()
     return _bridge
 
 
@@ -58,7 +60,7 @@ async def bridge_list_accounts() -> dict[str, Any]:
 async def bridge_account_usage(account: str | None = None) -> dict[str, Any]:
     """Read-only per-account usage: state, configured limit checks (used, threshold,
     remaining, reset time, source), spend by day/week/month and provider quota. Pass `account`
-    to narrow it to one account. Limits are human-owned config in .ai/orchestrator.yaml;
+    to narrow it to one account. Limits are human-owned config in .ai/accounts.yaml (account limits);
     this tool cannot change them."""
     async def usage() -> dict[str, Any]:
         b = bridge()

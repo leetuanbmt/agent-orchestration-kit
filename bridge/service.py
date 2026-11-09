@@ -18,21 +18,24 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import yaml
+from pydantic import ValidationError
+
 from . import osutil, progress, storage
 from .accounts import Account, AccountLock, account_key, binary, credential_check, discover, \
     load_registry, login_status, resolve, resolve_profile
-from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
+from .config import AI_DIR, CONFIG_FILE, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
 from .executor import ADAPTERS, AGENT_ENV, PLAN_SCHEMA, Adapter, RunRequest, RunResult, \
     build_plan_prompt, build_prompt, build_rework_prompt, kill_stale
 from .gate import LIMIT_REPORT_TTL_S as LIMIT_REPORT_TTL_S
 from .gate import AccountGate
 from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, TransitionError, \
     leftover_failure
-from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig, \
-    account_owner, deprecated
+from .orchestrator import ADAPTER_PROVIDERS, MANAGED_FILE, ORCHESTRATOR_FILE, PROVIDERS, \
+    AgentConfig, OrchestratorConfig, account_owner, deprecated
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
-from .registry import remember_project, with_worktrees
+from .registry import registry_dir, remember_project, with_worktrees
 from .review import EvidenceError, content_hashes, current_head, diff, parse_command, protected_dirty, \
     escaping_symlinks, protected_after, protected_git_left, protected_hashes, scope_violations, snapshot, touches_sensitive, untracked
 from .runner import _write_attempt_log_line as _write_attempt_log_line
@@ -81,6 +84,10 @@ class Bridge:
             raise RuntimeError("agent-bridge refuses to run inside an agent it started "
                                f"({AGENT_ENV} is set)")
         self.root = find_root(root)
+        # Config read from disk can be reloaded in place; injected config (tests) never is.
+        self._config_print: dict[str, str | None] | None = \
+            None if cfg is not None or orch is not None else self._fingerprint()
+        self._reload_error: tuple[dict[str, str | None], str] | None = None
         self.cfg = cfg or load_config(self.root)
         self.orch = orch or load_orchestrator(self.root, self.cfg)
         # Legacy mode: agents are named after the `.ai/config.json` accounts and every task is
@@ -120,6 +127,61 @@ class Bridge:
         self._stopping = False
         self.gate = AccountGate(self)
         self.runner = TaskRunner(self)
+
+    # ---- config reload ---------------------------------------------------------------------
+
+    def _fingerprint(self) -> dict[str, str | None]:
+        """sha256 of each config file's bytes (None when missing). Reads the registry file
+        directly: load_registry() would run adopt_legacy()."""
+        files = {f"{AI_DIR}/{CONFIG_FILE}": self.root / AI_DIR / CONFIG_FILE,
+                 f"{AI_DIR}/{ORCHESTRATOR_FILE}": self.root / AI_DIR / ORCHESTRATOR_FILE,
+                 f"{AI_DIR}/{MANAGED_FILE}": self.root / AI_DIR / MANAGED_FILE,
+                 "registry/accounts.json": registry_dir() / "accounts.json"}
+        out: dict[str, str | None] = {}
+        for name, path in files.items():
+            try:
+                out[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            except FileNotFoundError:
+                out[name] = None
+            except OSError as e:
+                out[name] = f"unreadable:{type(e).__name__}"
+        return out
+
+    def reload_config(self) -> bool:
+        """Reload cfg and orch in place when their files changed. Never raises.
+
+        Deferred while this process has a live run or workflow, so one attempt never sees two
+        rule sets. An invalid edit keeps the previous config and shows in health()."""
+        old = self._config_print
+        if old is None:
+            return False
+        if any(not t.done() for t in (*self._runs.values(), *self._workflows.values())):
+            return False
+        new = self._fingerprint()
+        if new == old:
+            self._reload_error = None  # reverted to the loaded content: nothing to reload
+            return False
+        if self._reload_error is not None and self._reload_error[0] == new:
+            return False
+        changed = sorted(k for k in new if new[k] != old.get(k))
+        try:
+            cfg = load_config(self.root)
+            orch = load_orchestrator(self.root, cfg)
+        except (ValueError, ValidationError, OSError, yaml.YAMLError) as e:
+            self._reload_error = (new, redact(str(e), 300))
+            return False
+        except Exception as e:  # noqa: BLE001 - a bad edit must never break a tool call
+            self._reload_error = (new, redact(f"{type(e).__name__}: {e}", 300))
+            return False
+        self.cfg, self.orch = cfg, orch
+        self.legacy = orch.source.startswith("legacy")
+        self._adapters.clear()
+        self.gate._reports.clear()
+        self._config_print = new
+        self._reload_error = None
+        with contextlib.suppress(Exception):
+            self.store.log(None, "bridge", "config_reloaded", {"changed": changed})
+        return True
 
     # ---- helpers ---------------------------------------------------------------------------
 
@@ -564,6 +626,12 @@ class Bridge:
                                      f"account {name} is over its limits: {info['reason']}",
                                      "wait for the limit window to reset, or have a human "
                                      f"change its limits in {account_owner(self.orch, name)}"))
+        if self._reload_error is not None:
+            problems.append(item("config_reload_failed",
+                                 "the changed configuration was not loaded: "
+                                 f"{redact(self._reload_error[1], 200)}",
+                                 "correct the file (see `agent-bridge config-check`); the "
+                                 "server keeps the previous settings until then"))
         if moved := deprecated(self.orch, self.cfg):
             warnings.append(item("config_deprecated",
                                  f"{len(moved)} settings are in a deprecated place",

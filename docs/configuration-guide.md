@@ -49,9 +49,11 @@ agent-bridge health          # logins, quota, limits; exits 1 when something blo
 `config-check` prints a readable summary in a terminal and JSON with `--json`.
 
 The CLI, the terminal dashboard and the web dashboard read the files on each start. The MCP
-server Claude Code talks to reads them **once, when it starts**. After editing `.ai/`, reconnect
-it in Claude Code (`/mcp`, then reconnect `agent-bridge`), or Claude keeps using the old
-settings.
+server Claude Code talks to picks up edits to `.ai/config.json`, `.ai/orchestrator.yaml`,
+`.ai/accounts.yaml` and the machine account registry on its next tool call, with no `/mcp`
+reconnect. It defers the reload while one of its own tasks is running. An invalid edit keeps the
+previous settings and shows as NOT OK in `health` (`config_reload_failed`) until you correct the
+file. After upgrading the kit's code, reconnect `agent-bridge` with `/mcp`.
 
 ## Start a new project
 
@@ -283,7 +285,7 @@ agent-bridge config-check
 | `verify_sandbox is set in both .ai/config.json and ...` | The key is in both files | Keep it only in `.ai/config.json` |
 | `verify_writable needs absolute paths (or ~/...)` | A relative path | Use an absolute path or `~/...` |
 | `account x over its configured limit: weekly_pct: ...` | The account reached a limit | Wait for the reset shown, or raise it with `project-account-limits` |
-| Claude still reports an old limit or old roles after you edited `.ai/` | The MCP server keeps the settings it started with | `/mcp` in Claude Code, then reconnect `agent-bridge` |
+| Claude still reports an old limit or old roles after you edited `.ai/` | The MCP server reloads on its next tool call, but defers while one of its own tasks runs; an invalid edit keeps the previous settings and shows as NOT OK in `health` | Wait for the task to finish, or fix the file (`agent-bridge config-check`); `/mcp` reconnect is only needed after upgrading the kit's code |
 | `refused: <command> needs an interactive terminal (human only)` | A human-only command run from a script, a pipe or by Claude | Run it yourself in a terminal |
 
 ## What only a human does
