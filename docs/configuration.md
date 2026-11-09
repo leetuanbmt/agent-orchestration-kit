@@ -2,40 +2,64 @@
 
 [README](../README.md) · Configuration · [CLI and MCP reference](cli-reference.md)
 
-agent-bridge reads two optional files from the project's `.ai/` directory:
+agent-bridge reads three optional files from the project's `.ai/` directory. Each setting has
+one owner:
 
-| File | Purpose | Tracked by git |
+| File | Owns | Tracked by git |
 |---|---|---|
-| `.ai/orchestrator.yaml` | Accounts, agents, roles, routing and workflow stages | No (it names machine-specific auth homes) |
-| `.ai/config.json` | Bridge settings: timeouts, sandbox, path rules, verification allowlist | Yes (an agent changing it is a scope violation) |
+| `.ai/accounts.yaml` | The accounts this project uses: provider, home or a `login:` reference, credentials reference, `max_concurrency`, `limits` | No (it names machine-specific auth homes) |
+| `.ai/orchestrator.yaml` | Agents, roles, routing and workflow stages | No |
+| `.ai/config.json` | Safety and runtime: timeouts, Codex sandbox, verification sandbox, path rules, env rules, verification allowlist | Yes (an agent changing it is a scope violation) |
 
 `agent-bridge init` writes `.ai/.gitignore`, which ignores everything in `.ai/` except
 `config.json` and `.gitignore` itself.
+
+Because `.ai/config.json` is shared through git, a commit that loosens it (for example
+`"verify_sandbox": "none"` or a shorter `env_deny`) applies to everyone who pulls it. Review
+every change to that file as a security change.
+
+**Older layouts still load unchanged.** Accounts in `orchestrator.yaml`, agents or executor
+entries in `accounts.yaml`, `workflow.verify_*` in `orchestrator.yaml`, and registry logins used
+without a project declaration all keep working. `config-check` lists them under `deprecated`,
+and `health` reports a `config_deprecated` warning. `agent-bridge config-migrate` (human only)
+previews the move of accounts and agents. `--apply` backs up both files to
+`.ai/backup-<UTC stamp>/` and writes them; the effective configuration must stay identical, or
+nothing is written. Comments in `orchestrator.yaml` are not kept. `config-migrate` does not move
+`workflow.verify_*`; move those to `.ai/config.json` by hand. A name declared in two places is
+an error that names both files, never a silent override.
 
 Without `orchestrator.yaml` the **legacy setup** applies: the MCP client (your Claude Code
 session) plans and reviews, Codex executes, and accounts come from `.ai/config.json`. This is
 the 0.1 behaviour.
 
-## `.ai/orchestrator.yaml`
+## `.ai/orchestrator.yaml` and `.ai/accounts.yaml`
 
 Start from a shipped example and validate it:
 
 ```bash
 agent-bridge config-init                # list the examples
-agent-bridge config-init orchestrator   # write .ai/orchestrator.yaml; refuses to overwrite
+agent-bridge config-init orchestrator   # write .ai/orchestrator.yaml and .ai/accounts.yaml; refuses if either exists
 agent-bridge config-check               # schema and account-home isolation; errors name the field (exit 1)
 agent-bridge agents                     # resolved roles, agents and availability
 ```
 
-`config-init` is meant to be run by a human; the kit's `.claude/settings.json` denies it to
-Claude Code. The same holds for `project-account-add`, `project-account-limits` and
-`project-account-remove`: they refuse to run without a terminal.
+`config-init`, `config-migrate`, `project-account-add`, `project-account-limits` and
+`project-account-remove` are meant to be run by a human: they refuse to run without a terminal,
+and the kit's `.claude/settings.json` also denies `config-init` to Claude Code.
+
+`.ai/accounts.yaml`:
 
 ```yaml
-version: 1
 accounts:
   codex-work:  {provider: openai,    home: ~/.codex-accounts/homes/work}
   claude-main: {provider: anthropic, home: ~/.claude-accounts/main, max_concurrency: 1}
+  shared:      {login: work, limits: {weekly_pct: 90}}   # a machine registry login, see below
+```
+
+`.ai/orchestrator.yaml`:
+
+```yaml
+version: 1
 agents:
   claude:          {adapter: client}                         # the MCP caller
   claude-headless: {adapter: claude-cli, account: claude-main, model: sonnet}
@@ -54,12 +78,12 @@ workflow:
 | Section | Keys |
 |---|---|
 | `version` | Must be `1`. |
-| `accounts.<id>` | `provider`: `openai`, `anthropic`, `google` or `opencode`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode accepts no `home`). `max_concurrency`: 1–8, default 1. `token_env` (anthropic only): the name of a variable holding a `claude setup-token` token, see [Accounts](#accounts). `limits`: optional per-account limits, see [Per-account limits](#per-account-limits-opt-in). |
+| `accounts.<id>` (in `accounts.yaml`) | `provider`: `openai`, `anthropic`, `google` or `opencode`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode accepts no `home`). `login`: the name of a machine registry login instead; provider and home come from the registry (`home` is then refused, a `provider` must match). `max_concurrency`: 1–8, default 1. `token_env` (anthropic only): the name of a variable holding a `claude setup-token` token, see [Accounts](#accounts). `limits`: optional per-account limits, see [Per-account limits](#per-account-limits-opt-in). |
 | `agents.<id>` | `adapter`: `codex-cli`, `claude-cli`, `client`, `opencode-cli` or `agy-cli`. `account` (required except for `client`), optional `provider` (must match the adapter), `model`, `capabilities` (subset of `[read, write]`), `allow_write` (default true for `codex-cli`, false otherwise), `allow_bash` (`claude-cli` only), `timeout_s` (≥ 30), `enabled` (default true). |
 | `roles.<name>` | An agent id, or `{agents: [...], default: <agent>, strategy: ordered \| explicit \| quota, requires: read \| write}`. `default` is tried first; the other agents are fallbacks in list order. `quota` picks the eligible agent whose account has the most remaining quota (unknown quota last, ties in list order). `default` cannot be combined with `strategy: explicit` or `quota`. |
 | `routing.slot_wait_s` | 0–86400, default 1800. How long `bridge_run_workflow` keeps retrying, with backoff from 5 s to 60 s, a task whose account slots (or the worktree's writer slot) are held by another bridge process. `0` ends the workflow `WAITING` at once, as before. |
 | `routing.quota_fallback` | `enabled` (default false), `min_remaining_pct` (default 10), `agents` (candidates in order; default: the executor role's agents), `max_switches` (1–20, default 3), `keep_sessions` (default false). See [Per-account limits](#per-account-limits-opt-in). |
-| `workflow` | `stages`: ordered subset of `plan, execute, test, review`, default `[execute, test, review]`; must include `execute` and at least one of `test` / `review`. `max_rework`: 0–4, default 2. `verify_sandbox`: `auto` (default), `strict` or `none`, and `verify_writable`: extra directories checks may write; see [Verification sandbox](#verification-sandbox). |
+| `workflow` | `stages`: ordered subset of `plan, execute, test, review`, default `[execute, test, review]`; must include `execute` and at least one of `test` / `review`. `max_rework`: 0–4, default 2. `verify_sandbox` and `verify_writable` are still read here but are deprecated: set them in `.ai/config.json`, see [Verification sandbox](#verification-sandbox). |
 | `security` | `project_isolation` and `human_approval_for_sensitive_actions`. Both are fixed to `true`; the keys exist only to make the policy explicit. |
 
 Ids use `[a-z0-9_-]`, at most 32 characters. Validation rejects unknown keys, unknown ids, an
@@ -78,6 +102,9 @@ Role rules:
   bridge's own `test` stage.
 
 ### Shipped examples
+
+Each example is a pair: `examples/<name>.yaml` becomes `.ai/orchestrator.yaml` and
+`examples/<name>.accounts.yaml` becomes `.ai/accounts.yaml`.
 
 | Example | Planner | Executor | Reviewer |
 |---|---|---|---|
@@ -129,14 +156,20 @@ what applies here (`verify_sandbox`). The macOS profile allows everything except
 the writable paths, AppleEvents, LaunchServices and running `open`, `launchctl` or `osascript`.
 It is best-effort confinement, not a full sandbox.
 
-| `workflow.verify_sandbox` | Effect |
+Set both keys in `.ai/config.json` (`"verify_sandbox": "auto"`, `"verify_writable": [...]`).
+`workflow.verify_sandbox` / `workflow.verify_writable` in `orchestrator.yaml` still load as a
+deprecated location. A key set in both files is an error naming both, so moving a key can
+never silently weaken the sandbox.
+
+| `verify_sandbox` | Effect |
 |---|---|
 | `auto` (default) | A check may write only to the worktree, a private `TMPDIR` (removed afterwards) and `verify_writable`; reads and the network are not restricted. Without either (Windows, old Linux kernels, or a bridge that already runs inside a sandbox) checks run unconfined and `health` reports the `verify_unconfined` problem (NOT OK) until a human sets `none`. |
 | `strict` | As `auto`, and TCP connect/bind are denied (Landlock ABI 4+, kernel 6.7+, or Seatbelt). Without a sandbox, checks are refused rather than run unconfined. |
 | `none` | No confinement, accepted by a human; `health` keeps a `verify_unconfined` warning. |
 
 Test runners that write caches outside the project need them in `verify_writable`, for example
-`verify_writable: [~/.cache/uv]` for `uv run pytest` or `[~/.npm]` for `npm test`; the check's
+`"verify_writable": ["~/.cache/uv"]` for `uv run pytest` or `["~/.npm"]` for `npm test` (absolute
+paths or `~/...`); the check's
 output shows `Permission denied` for anything missing. Everything a check changes inside the
 worktree is diffed again after verification and judged like the agent's changes.
 
@@ -158,6 +191,8 @@ keys are rejected. The full file with every default is `config.example.json`;
 | `max_attempts` | `3` | Legacy setup only; with `orchestrator.yaml` use `workflow.max_rework`. |
 | `network_retries` / `retry_backoff_s` | `1` / `10` | Bounded retry for network errors only. |
 | `verify_timeout_s` | `900` | Limit per verification command. |
+| `verify_sandbox` | not set (`auto`) | Verification sandbox mode: `auto`, `strict` or `none`; see [Verification sandbox](#verification-sandbox). |
+| `verify_writable` | not set (`[]`) | Extra absolute directories (or `~/...`) verification commands may write. |
 | `verify_allowlist` | `pytest`, `uv`, `python`, `python3`, `ruff`, `mypy`, `make`, `npm`, `npx`, `pnpm`, `yarn`, `node`, `go`, `cargo`, `git`, `true`, `false` | Executables a verification command may start. |
 | `protected_paths` | `.env*`, `*.pem`, `*.key`, `.git/**`, `.ai/**`, `.mcp.json`, `.claude/settings*.json` | Never writable by a task and never allowed in `allowed_paths`. A project value adds to these defaults; it cannot remove them. |
 | `sensitive_paths` | migrations, `auth/`, `deploy/`, `.github/workflows/`, `*secret*`, `*credential*`, `Dockerfile` | A change under these requires human approval before `DONE`. |
@@ -167,8 +202,9 @@ keys are rejected. The full file with every default is `config.example.json`;
 
 ## Accounts
 
-An account is one login with its own auth home. Projects declare accounts in
-`orchestrator.yaml`; machine-wide accounts are created with `agent-bridge account-add`.
+An account is one login with its own auth home. A project declares the accounts it uses in
+`.ai/accounts.yaml`. Machine-wide logins are created with `agent-bridge account-add`, and a
+project uses one only by declaring it with `login:`.
 
 | Provider | Adapter | What `home` sets |
 |---|---|---|
@@ -208,26 +244,30 @@ An account is one login with its own auth home. Projects declare accounts in
   - Never write the token into `orchestrator.yaml`. The file lives in the worktree, and agents
     can read the worktree. Claude agents are denied `.ai/orchestrator.yaml`, but Codex agents
     are not.
-- **Adding an account from the CLI.** Instead of editing `orchestrator.yaml`, a human can
+- **Adding an account from the CLI.** Instead of editing `.ai/accounts.yaml`, a human can
   run:
 
   ```bash
   agent-bridge project-account-add claude-thuyseatch --provider anthropic --credential keychain --executor
   agent-bridge account-set-token claude-thuyseatch
+  agent-bridge project-account-add shared --login work   # declare a machine registry login
   ```
 
-  - The command writes `.ai/accounts.yaml`, which the CLI manages and git ignores. It never
-    rewrites `orchestrator.yaml`, and an entry there wins on a name clash.
+  - The command writes only the account to `.ai/accounts.yaml`. It never rewrites
+    `orchestrator.yaml`; a name that already exists in either file is refused.
   - It declares the account with its own new `0700` home (default
-    `~/.agent-bridge/homes/<name>`, or `--home`), plus an agent `agent-<name>`. Codex and
-    Claude agents get `allow_write`.
-  - With `--executor`, the agent goes first in `roles.executor`, but after a `default:` set in
-    `orchestrator.yaml`.
+    `~/.agent-bridge/homes/<name>`, or `--home`), or with `--login <name>` a reference to a
+    registry login.
+  - It prints, under `paste`, the agent line (`agent-<name>`; Codex and Claude agents get
+    `allow_write`) to add to `agents:` in `orchestrator.yaml`. With `--executor` it also says
+    to put that agent first in `roles.executor`.
   - The merged config is validated, including the home isolation check, before anything is
     written. `config-check` shows the result.
   - `agent-bridge project-account-remove <name>` asks you to type the name, then removes the
-    account, its agent and the stored Keychain token. It keeps the home, which may hold a
-    login.
+    account, any agent entries in `accounts.yaml` that use it (older layout) and the stored
+    Keychain token. It keeps the home, which may hold a login. An account it does not own is
+    refused with the file that does. Remove the agents in `orchestrator.yaml` that use the
+    account first: the merged config must still load, or nothing is written.
   - Usage limits per provider window, at creation (`--five-hour-pct 80 --weekly-pct 90`) or
     later:
 
@@ -287,8 +327,13 @@ An account is one login with its own auth home. Projects declare accounts in
 
 `agent-bridge account-add work --provider openai` (human only) creates
 `~/.agent-bridge/homes/work` (mode 0700), records it in `~/.agent-bridge/accounts.json` and runs
-the provider's own login inside it. `--home DIR` registers an existing home instead. Every
-project sees these accounts by name; an account the project declares itself takes precedence.
+the provider's own login inside it. `--home DIR` registers an existing home instead. The
+registry is a catalog of logins: a project uses one by declaring it in `.ai/accounts.yaml`
+(`shared: {login: work}`), with its own `max_concurrency` and `limits`. Registry logins no agent
+references do not appear in the project; machine-wide commands (`account-login`, `-use`,
+`-show`, `-verify`, `-clear`) still find every one. For compatibility, an agent whose
+`account:` names a registry login directly still runs with the registry's settings, listed as
+deprecated.
 
 One name can serve several providers: after `account-add work --provider openai`,
 `account-add work --provider google` creates the account `work@google` (home
@@ -343,10 +388,13 @@ onto it.
 ### Per-account limits (opt-in)
 
 An account can carry its own usage limits. An account without a `limits` block behaves exactly
-as before. Limits live in `.ai/orchestrator.yaml` or the machine-wide account registry; both are
-human-owned, and no agent, MCP tool or UI can change them.
+as before. Limits live with the account in `.ai/accounts.yaml` (still read from an account in
+`orchestrator.yaml` or a directly referenced registry login, both deprecated). They are
+human-owned, and no agent, MCP tool or UI can change them. `config-migrate` copies a registry
+login's limits into the project so no cap is lost.
 
 ```yaml
+# .ai/accounts.yaml
 accounts:
   claude-main:
     provider: anthropic
@@ -438,8 +486,8 @@ every account with limits.
   five-hour or weekly check (`any_window_pct` still applies).
 - Spend is shared machine-wide per login (provider plus auth home), but thresholds come from
   each project's config: two projects that set different limits for the same login each enforce
-  their own against the same spend. A project's own account declaration replaces a registry
-  account of the same name, limits included.
+  their own against the same spend. A `login:` entry uses only the project's limits, never the
+  registry's.
 
 **Troubleshooting.**
 
@@ -453,9 +501,10 @@ every account with limits.
 
 | Path | Tracked | Content |
 |---|---|---|
-| `.ai/config.json` | Yes | Bridge settings |
-| `.ai/orchestrator.yaml` | No | Roles, agents, accounts, workflow |
-| `.ai/backup-<UTC timestamp>/` | No | Copies of files `init` changed |
+| `.ai/config.json` | Yes | Bridge settings, including the verification sandbox |
+| `.ai/accounts.yaml` | No | The project's accounts and their limits |
+| `.ai/orchestrator.yaml` | No | Agents, roles, routing, workflow |
+| `.ai/backup-<UTC timestamp>/` | No | Copies of files `init` or `config-migrate --apply` changed |
 | `$AGENT_BRIDGE_HOME/projects/<project>/worktrees/<worktree>/` | Never | `bridge.db`, `logs/`, per-run temp files, `worktree.json`, `migration.json` after migration |
 | `$AGENT_BRIDGE_HOME/accounts.db`, `accounts.json`, `homes/`, `locks/` | Never | Machine-wide account marks, accounts and slot locks |
 | `<git-dir>/agent-bridge/install-manifest.json` | Never | What `init` installed, used by `uninstall` |

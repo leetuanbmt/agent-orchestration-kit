@@ -36,8 +36,9 @@ exposes these tools.
 |---|---|
 | `init [dir] [--force]` | Install the kit into a project (default: current directory) |
 | `uninstall [dir] [--purge]` | Remove what `init` added, keeping files you edited; `--purge` also deletes `.ai/` |
-| `config-init [example]` | Human only: write `.ai/orchestrator.yaml` from a shipped example (refuses to overwrite); without an argument, list the examples and the path of `config.example.json` |
-| `config-check` | Validate `.ai/orchestrator.yaml` (or the legacy config) |
+| `config-init [example]` | Human only: write `.ai/orchestrator.yaml` and `.ai/accounts.yaml` from a shipped example pair (refuses if either exists); without an argument, list the examples and the path of `config.example.json` |
+| `config-check` | Validate `.ai/orchestrator.yaml` and `.ai/accounts.yaml` (or the legacy config); `deprecated` lists settings in an older location |
+| `config-migrate [--apply]` | Human only: preview moving accounts to `.ai/accounts.yaml` and agents/roles to `orchestrator.yaml`; `--apply` backs both files up to `.ai/backup-<stamp>/` and writes them. Refuses if the effective configuration would change |
 | `serve` | MCP stdio server (what `.mcp.json` runs) |
 
 ### Monitoring
@@ -107,3 +108,6 @@ These need an interactive terminal and a typed confirmation (or the TUI). The ki
 | `account-login <name> [--device-auth]` | Fresh login into the account's own home (`codex login`, `claude auth login`, agy sign-in, `opencode auth login`) |
 | `account-add <name> --provider openai\|anthropic\|google\|opencode [--home DIR] [--device-auth]` | Create a machine-wide account under `~/.agent-bridge/homes/` (or register `--home`), then log in |
 | `account-remove <name>` | Forget a machine-wide account; deletes its home only if `account-add` created it |
+| `project-account-add <name> (--provider P \| --login L) [--home DIR] [--credential keychain] [--token-env VAR] [--executor]` | Declare an account in `.ai/accounts.yaml` (a new home, or a reference to a registry login); prints the agent line to paste into `orchestrator.yaml` |
+| `project-account-limits <name> [--five-hour-pct N] [--weekly-pct N] [--clear]` | Set or clear an account's window limits in `.ai/accounts.yaml` |
+| `project-account-remove <name>` | Remove an account `accounts.yaml` owns and its Keychain token; keeps the home |

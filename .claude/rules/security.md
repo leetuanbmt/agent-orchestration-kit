@@ -24,9 +24,11 @@
 - Every agent process gets `AGENT_BRIDGE_AGENT=1`; the CLI, the MCP server and the `Bridge`
   Python API refuse to start under it. Everything still runs as one user: human-only steps rely on
   the agents being confined, not on an OS boundary inside the bridge.
-- Verification commands run under Landlock where available (`workflow.verify_sandbox` in
-  `.ai/orchestrator.yaml`, `auto` by default): writes only to the worktree, a private TMPDIR and
-  `verify_writable`; the worktree is diffed again after them. Never weaken this setting yourself.
+- Verification commands run under Landlock where available (`verify_sandbox` in the tracked
+  `.ai/config.json`, `auto` by default; `workflow.verify_sandbox` in orchestrator.yaml is the
+  deprecated location, and setting both is an error): writes only to the worktree, a private
+  TMPDIR and `verify_writable`; the worktree is diffed again after them. Never weaken this
+  setting yourself, and treat any `.ai/config.json` change in a diff as a security change.
   On macOS (Seatbelt) a check also cannot write the repository's git config, `config.worktree`,
   `hooks/` or `info/`, and cannot read any configured account home, the registry's `homes/`,
   `~/.codex/auth.json`, `~/.claude/.credentials.json`, `.ai/orchestrator.yaml` or
