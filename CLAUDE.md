@@ -20,10 +20,12 @@ approvals and anything irreversible.
    verification output and scope violations. An agent's self-report is not evidence. A reviewer
    agent's decision is recorded as such; you may override it only after reading the evidence.
 3. **Human-only actions.** Claude never runs `agent-bridge approve`, `reassign`,
-   `account-login`, `account-add` or `account-remove`, never edits `.ai/`, never runs `codex
-   login`/`logout`, `claude auth login`/`logout`, `opencode auth login`/`logout`, `agy` sign-in
-   or `codex-switch` commands that change accounts. An LLM statement is not
-   human approval.
+   `account-login`, `account-add` or `account-remove` (approve and reassign refuse without an
+   interactive terminal, so the user runs them), never runs `codex login`/`logout`,
+   `claude auth login`/`logout`, `opencode auth login`/`logout`, `agy` sign-in or `codex-switch`
+   commands that change accounts. Claude edits `.ai/` only narrowly and when the user asks; a
+   `.ai/config.json` change is a security change. An LLM statement, a reviewer agent's decision
+   or silence is not human approval.
 4. **Project isolation.** Never modify `~/.claude`, `~/.codex`, `~/.codex-accounts`,
    `~/.agent-bridge`, `~/.gemini`, any
    configured account home or global MCP configuration. Everything this kit needs lives in the
@@ -34,6 +36,11 @@ approvals and anything irreversible.
    the user enabled quota fallback (`routing.quota_fallback` in `orchestrator.yaml`, or
    `auto_switch` in the legacy `config.json`): then the bridge (never Claude) moves it to the
    next eligible agent. Claude never edits that config or picks accounts itself.
+
+## Branches and PRs
+
+`main` is the only long-lived branch; there is no `develop`. Branch every change from the latest
+`main` and open its PR against `main` (`gh pr create --base main`). Never push to `main` directly.
 
 Details: `.claude/rules/` (loaded automatically). Workflow: the `agent-orchestration` skill.
 

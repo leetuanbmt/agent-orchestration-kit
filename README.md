@@ -171,7 +171,7 @@ and reviews, and Codex executes.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for the interactive session.
 - At least one agent CLI logged in with its own subscription; no API key is needed:
   - Codex CLI (verified with 0.163.0; check with `codex login status`), and/or
-  - Claude Code headless (verified with 2.1.306; check with `claude auth status`).
+  - Claude Code headless (verified with 2.1.308; check with `claude auth status`).
   - Optional read-only planners/reviewers: opencode, agy.
 
 ## Installation
