@@ -329,7 +329,40 @@ def account_added_view(a: dict[str, Any]) -> Group:
         _raw(paste["agents"])]
     if hint := paste.get("roles.executor"):
         parts.append(Text(f"\nExecutor: {hint}"))
-    return Group(*parts, *_steps([a["next"]]))
+    steps = [a["next"]]
+    if a.get("agent_command"):
+        parts.append(Text("\nOr let the bridge edit orchestrator.yaml:", style="bold"))
+        steps.insert(0, a["agent_command"])
+    return Group(*parts, *_steps(steps))
+
+
+def agent_change_view(c: dict[str, Any]) -> Group:
+    import json
+    head = Text()
+    head.append(f"{c['file']}  ", style="bold")
+    head.append(f"{c['action']} agent {c['agent']}\n", style="bold cyan")
+    if not c["changed"]:
+        head.append(c["note"] + "\n", style="green")
+        return Group(head)
+    if c.get("spec"):
+        head.append(f"  {c['agent']}: {json.dumps(c['spec'])}\n")
+    for role, agents in c["roles"].items():
+        head.append(f"  roles.{role}: {', '.join(agents)}\n")
+    if c.get("default"):
+        head.append(f"  roles default: {c['default']}\n")
+    parts: list[RenderableType] = [head]
+    for w in c.get("warnings") or []:
+        parts.append(Text(w + "\n", style="bold yellow"))
+    if c.get("pinned_tasks"):
+        parts.append(Text("Unfinished tasks pinned to this agent: "
+                          + ", ".join(c["pinned_tasks"]) + "\n", style="bold yellow"))
+    parts.append(Text(c["comments_note"] + "\n", style="dim"))
+    if c["applied"]:
+        parts.append(Text(f"Written. Backup  {c['backup'] or '(file was new)'}\n", style="green"))
+        return Group(*parts, *_steps(["agent-bridge config-check"]))
+    parts.append(Text("Nothing was written.", style="yellow"))
+    return Group(*parts, *_steps(["repeat the command with --apply  "
+                                  "(backs up the file to .ai/backup-<stamp>/)"]))
 
 
 def _next_for(task: dict[str, Any]) -> str | None:

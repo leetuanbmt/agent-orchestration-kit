@@ -55,9 +55,9 @@ exposes these tools.
 | `tasks [--state S] [--limit N] [--json]` | Tasks of every project and worktree on this machine, grouped by project (default 10 per project) |
 
 The monitoring views above, plus `config-check`, `config-migrate`, `config-set`, `config-unset` and
-`project-account-add`, print
+`project-account-add`, `project-agent-add` and `project-agent-remove`, print
 a readable view in a terminal, and the same JSON the MCP tools return with `--json` or when the
-output is piped. (`config-migrate`, `config-set`, `config-unset` and `project-account-add` still need a terminal to
+output is piped. (`config-migrate`, `config-set`, `config-unset`, `project-account-add` and the `project-agent-*` commands still need a terminal to
 run.)
 
 ### Tasks and workflows
@@ -116,7 +116,9 @@ These need an interactive terminal and a typed confirmation (or the TUI). The ki
 | `account-remove <name>` | Forget a machine-wide account; deletes its home only if `account-add` created it |
 | `project-account-add <name> (--provider P \| --login L) [--home DIR] [--credential keychain] [--token-env VAR] [--executor] [--json]` | Declare an account in `.ai/accounts.yaml` (a new home, or a reference to a registry login); prints the agent line to paste into `orchestrator.yaml` |
 | `project-account-limits <name> [--five-hour-pct N] [--weekly-pct N] [--clear]` | Set or clear an account's window limits in `.ai/accounts.yaml` |
-| `project-account-remove <name>` | Remove an account `accounts.yaml` owns and its Keychain token; keeps the home |
+| `project-agent-add <agent> (--account A \| --adapter client) [--model M] [--allow-bash] [--role R] [--default] [--apply] [--json]` | Add an agent to `.ai/orchestrator.yaml` (adapter from the account's provider) and, with `--role`, to that role (`--default` makes it first). Previews unless `--apply`, which backs the file up to `.ai/backup-<stamp>/`; comments are not kept |
+| `project-agent-remove <agent> [--apply] [--json]` | Remove an agent and its role entries; refuses a role it would empty; lists unfinished tasks pinned to it. Same preview and backup |
+| `project-account-remove <name>` | Remove an account `accounts.yaml` owns and its Keychain token; keeps the home. Refuses while an agent uses it, naming the agents and `project-agent-remove` |
 | `config-set <key> <value> [--apply] [--json]` | Set one setting in the `.ai` file that owns it, after validating the whole configuration. Previews unless `--apply`, which backs the file up to `.ai/backup-<stamp>/` and writes it atomically |
 | `config-unset <key> [--apply] [--json]` | Remove one setting the same way (it falls back to its default) |
 

@@ -116,7 +116,17 @@ This writes the account to `.ai/accounts.yaml` with a new home under
 agent-codex-work: {"adapter": "codex-cli", "account": "codex-work", "allow_write": true}
 ```
 
-Add that line, and the agent's name to a role (see [Choose who does what](#choose-who-does-what)).
+Let the bridge add that agent and put it first in the executor role (it previews unless
+`--apply`):
+
+```bash
+agent-bridge project-agent-add agent-codex-work --account codex-work --role executor --default --apply
+```
+
+The adapter comes from the account's provider (`allow_write: true` for `codex-cli` and
+`claude-cli`). The command backs `orchestrator.yaml` up to `.ai/backup-<stamp>/` and rewrites it;
+comments in `orchestrator.yaml` are not kept. Or add the line above by hand, and the agent's name
+to a role (see [Choose who does what](#choose-who-does-what)).
 `--home DIR` uses an existing home instead; `--agent NAME` and `--model M` change the printed
 agent line.
 
@@ -190,8 +200,15 @@ agent-bridge project-account-remove codex-work
 ```
 
 It asks you to type the name, removes the account and its Keychain token, and keeps the home.
-First remove the agents in `orchestrator.yaml` that use the account; otherwise the command
-refuses, because the config would no longer load.
+First remove the agents that use the account; otherwise the command refuses and names them:
+
+```bash
+agent-bridge project-agent-remove agent-codex-work --apply
+```
+
+That removes the agent from `agents:` and from every role (a role it would leave empty is
+refused), and lists unfinished tasks pinned to it. It previews unless `--apply`; the old file is
+kept in `.ai/backup-<stamp>/` and comments in `orchestrator.yaml` are not kept.
 
 ## Limit how much an account is used
 
@@ -252,7 +269,20 @@ workflow:
   max_rework: 2
 ```
 
-The same changes with `config-set`:
+Add or remove an agent, and its place in a role, with the human-only agent commands (preview
+unless `--apply`; the old file goes to `.ai/backup-<stamp>/` and comments in `orchestrator.yaml`
+are not kept):
+
+```bash
+agent-bridge project-agent-add codex-b --account shared --role executor [--default] --apply
+agent-bridge project-agent-add me --adapter client --role planner --apply
+agent-bridge project-agent-add reviewer --account claude-main --model sonnet --role reviewer --apply
+agent-bridge project-agent-remove codex-b --apply
+```
+
+`--allow-bash` (claude-cli only) lets the agent run Bash in Claude Code's sandbox (writes only to
+the worktree and `$TMPDIR`, no network); the macOS Keychain stays reachable, so give it trusted
+work only. Role order, `default` and `strategy` change with `config-set`:
 
 ```bash
 agent-bridge config-set roles.executor.agents '[codex-a, codex-b]' --apply
@@ -351,6 +381,7 @@ agent-bridge config-check
 These commands need an interactive terminal, and Claude Code is told not to run them:
 - `config-init`, `config-migrate`, `config-set` and `config-unset`;
 - `project-account-add`, `project-account-limits` and `project-account-remove`;
+- `project-agent-add` and `project-agent-remove`;
 - `account-add`, `account-login`, `account-remove` and `account-set-token`;
 - `approve` and `reassign`.
 
