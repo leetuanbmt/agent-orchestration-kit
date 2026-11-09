@@ -349,14 +349,18 @@ def _recover_after_runner_death(make_bridge, fake_codex, repo, monkeypatch, max_
     runner = subprocess.Popen([sys.executable, "-m", "bridge", "execute", t], env=env,
                               cwd=Path(__file__).parents[2], stdout=subprocess.DEVNULL,
                               stderr=subprocess.DEVNULL)
+    # self.pid appears before the runner has stored the session id from the stream; killing
+    # in between would leave nothing for recovery to keep.
+    def started():
+        return (fake_codex / "self.pid").exists() and b.store.get(t)["session_id"]
     for _ in range(300):
-        if (fake_codex / "self.pid").exists():
+        if started():
             break
         time.sleep(0.1)
-    if not (fake_codex / "self.pid").exists():
+    if not started():
         runner.kill()
         runner.wait()
-        pytest.fail("child bridge did not start fake codex within 30s (self.pid missing)")
+        pytest.fail("child bridge did not start fake codex and store its session within 30s")
     codex_pid = int((fake_codex / "self.pid").read_text())
     runner.send_signal(signal.SIGKILL)
     runner.wait()
