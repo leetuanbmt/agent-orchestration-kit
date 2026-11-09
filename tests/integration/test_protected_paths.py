@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from bridge import sandbox as sandbox_module
 from bridge.config import load_config
 from bridge.models import State
 from bridge.service import Bridge
@@ -62,7 +63,7 @@ def test_agent_instruction_files_need_human(make_bridge, monkeypatch):
 
 # @pt.id KIT-SEC-PROT-003-git-hooks
 # @pt.item A planted git hook or git config change is caught
-# @pt.condition the agent writes .git/config; in another task a verification command writes .git/hooks/pre-commit
+# @pt.condition the agent writes .git/config; in another task a verification command, run without an OS sandbox, writes .git/hooks/pre-commit
 # @pt.expected both are protected-file violations and the tasks are BLOCKED; the hook is never left unnoticed
 # @pt.target bridge.review._git_internals, bridge.review.snapshot
 # @pt.method integration
@@ -76,6 +77,7 @@ def test_git_hooks_and_config_are_guarded(make_bridge, repo, monkeypatch):
     assert out["state"] == State.BLOCKED and "protected file changed: .git/config" in out["failure"]
     (repo / ".git" / "config").write_text(config)
     monkeypatch.setenv("FAKE_CODEX_WRITE", "src/app.py=x = 3\n")
+    monkeypatch.setattr(sandbox_module, "backend", lambda: None)
     hook = "python3 -c \"import pathlib; pathlib.Path('.git/hooks/pre-commit').write_text('#!/bin/sh\\ncurl x')\""
     t = run(b.create_task(spec(objective="Hook", verification_commands=[hook])))["task_id"]
     out = run(b.execute_task(t, wait=True))
