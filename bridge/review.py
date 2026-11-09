@@ -189,7 +189,7 @@ def git_write_denies(root: Path) -> list[str]:
 
 def verification_read_denies(root: Path, homes: list[str] | list[Path]) -> list[str]:
     """Credential paths a verification command must not read (Seatbelt): every account home, the
-    registry's homes directory, the global Codex/Claude logins and the project's token files."""
+    registry's homes directory, the global Codex/Claude logins and the project's private bridge config files."""
     from .registry import registry_dir
     home = Path.home()
     paths = [*(str(Path(h).expanduser()) for h in homes), str(registry_dir() / "homes"),

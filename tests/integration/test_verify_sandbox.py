@@ -174,7 +174,7 @@ def test_seatbelt_denies_git_config_write(make_orch, repo, monkeypatch):
 
 
 # @pt.id KIT-SEC-SBX-006-read-deny
-# @pt.item Under Seatbelt a check cannot read account credentials or the project's token files
+# @pt.item Under Seatbelt a check cannot read account credentials or the project's private bridge config files
 # @pt.condition an account home holding auth.json and .ai/orchestrator.yaml; checks read each of them and src/app.py
 # @pt.expected the credential reads fail with Operation not permitted; the src/app.py read passes
 # @pt.target bridge.review.run_verification, bridge.review.verification_read_denies, bridge.sandbox.wrap
@@ -188,7 +188,7 @@ def test_seatbelt_denies_credential_reads(make_orch, repo, tmp_path):
     account_home.mkdir()
     (account_home / "auth.json").write_text("{}")
     (repo / ".ai").mkdir(exist_ok=True)
-    (repo / ".ai" / "orchestrator.yaml").write_text("token: x\n")
+    (repo / ".ai" / "orchestrator.yaml").write_text("workflow: {stages: [execute]}\n")
     secrets = [account_home / "auth.json", repo / ".ai" / "orchestrator.yaml"]
     cmds = [f"python3 -c \"open('{p}').read()\"" for p in secrets]
     cmds.append("python3 -c \"open('src/app.py').read()\"")
