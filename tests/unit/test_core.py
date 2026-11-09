@@ -193,8 +193,8 @@ def test_clean_env() -> None:
 # @pt.target bridge.executor.CodexAdapter.argv
 # @pt.method unit
 # @pt.legacy codex-cli 0.163.0 `exec --help` / `exec resume --help`
-def test_codex_argv(tmp_path: Path) -> None:
-    ad = CodexAdapter(BridgeConfig(model="gpt-x"), tmp_path)
+def test_codex_argv(tmp_path: Path, repo: Path) -> None:
+    ad = CodexAdapter(BridgeConfig(model="gpt-x"), repo)
     default = Account("default", None)
     named = Account("work", tmp_path / "account")
     fresh = ad.argv(account=default, sandbox="workspace-write", last_msg=tmp_path / "m")
