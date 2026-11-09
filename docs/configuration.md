@@ -1,6 +1,9 @@
 # Configuration reference
 
-[README](../README.md) · Configuration · [CLI and MCP reference](cli-reference.md)
+[README](../README.md) · [Configuration guide](configuration-guide.md) · Configuration reference · [CLI and MCP reference](cli-reference.md)
+
+New to the settings? Start with the [configuration guide](configuration-guide.md); this page
+lists every key and default.
 
 agent-bridge reads three optional files from the project's `.ai/` directory. Each setting has
 one owner:

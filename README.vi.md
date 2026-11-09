@@ -279,6 +279,8 @@ Ba file tùy chọn trong thư mục `.ai/` của project, mỗi cài đặt ch�
 
 Layout cũ (account trong `orchestrator.yaml`) vẫn load được; `config-check` liệt kê những gì cần
 chuyển và `agent-bridge config-migrate` (chỉ người chạy) sẽ chuyển chúng.
+[Hướng dẫn cấu hình](docs/configuration-guide.md) (tiếng Anh) đi qua từng bước cho các thiết lập
+thường gặp.
 
 ```yaml
 # .ai/accounts.yaml

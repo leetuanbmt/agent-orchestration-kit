@@ -277,7 +277,8 @@ Three optional files in the project's `.ai/` directory, each the only owner of i
 | `.ai/config.json` | Bridge settings: sandbox, verification sandbox, timeouts, path rules, verification allowlist. Tracked, so review every change to it as a security change. |
 
 Older layouts (accounts in `orchestrator.yaml`) still load; `config-check` lists what to move
-and `agent-bridge config-migrate` (human only) moves it.
+and `agent-bridge config-migrate` (human only) moves it. The
+[configuration guide](docs/configuration-guide.md) walks through each common setup step by step.
 
 ```yaml
 # .ai/accounts.yaml
