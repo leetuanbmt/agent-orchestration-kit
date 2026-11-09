@@ -247,3 +247,18 @@ cộng phát hiện mới ở trên.
    `docs/audits/README.md`, sửa phiên bản Claude trong README (sau khi probe 2.1.319).
 3. Ngừng track `GOAL.md` (cần duyệt), xoá `agent-bridge-check-8lkp2lfb/` (cần duyệt).
 4. Các finding chức năng còn mở (mục 7, hạng mục 2–4) đi qua bridge theo `delegation.md`, từng task một.
+
+## Đã xử lý trên nhánh `chore/repo-audit-hygiene`
+
+| Finding | Xử lý | Commit / task |
+|---|---|---|
+| F1 | `init` lấy deny list từ `templates/claude-settings.json` (giữ `Edit(/.ai/**)` và deny `approve` cho mọi project). Adapter Claude đọc credential deny từ cùng template, nên bản wheel vẫn chạy. `.claude/settings.json` của repo này bỏ `Edit(/.ai/**)` | `9341deb` (T0164 bị block vì spec thiếu `executor.py`, T0166 hoàn tất) |
+| F2 | Rule 3 của `CLAUDE.md` khớp TTY gate: `approve`/`reassign` là việc của người dùng; sửa `.ai/` hẹp và chỉ khi được yêu cầu. Deny `approve` được khôi phục | `13e9464`, `9341deb` |
+| F4 | `.gitignore` thêm `.DS_Store`, `temp/`, `.claude/settings.local.json`, `GOAL.md`, `prompts.md`; `GOAL.md` ngừng track (file vẫn còn trên máy) | `13e9464` |
+| F5 (một phần) | README/README.vi ghi Claude 2.1.308 cho khớp `PROBED_VERSIONS`. Chưa probe 2.1.319; plan cũ giữ nguyên (bản ghi theo ngày) | `13e9464` |
+| F6 | Xoá thư mục rỗng `agent-bridge-check-8lkp2lfb/` | không có trong git |
+| F9 | `test_codex_argv` dùng fixture `repo` | `597eaee` (T0167) |
+
+Kiểm chứng: toàn bộ test với `--basetemp` ngoài repo: 820 passed, 114 skipped, 0 failed (448 s).
+
+Chưa xử lý: F3 (giới hạn đã ghi trong docs), F7 (lint/secret scan/dependency audit trong CI cần dependency mới), F8 (file cục bộ), probe Claude 2.1.319, các finding mở ở mục 7.
