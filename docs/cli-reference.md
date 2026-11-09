@@ -1,6 +1,6 @@
 # CLI and MCP reference
 
-[README](../README.md) · [Configuration](configuration.md) · CLI and MCP reference
+[README](../README.md) · [Configuration guide](configuration-guide.md) · [Configuration reference](configuration.md) · CLI and MCP reference
 
 ## MCP tools
 

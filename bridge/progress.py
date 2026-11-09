@@ -21,7 +21,7 @@ WORKFLOW_ID = re.compile(r"^W\d{4,}$")
 _STAGES = {"BACKLOG": "queue", "READY": "queue", "RUNNING": "build", "REWORK": "build",
            "VERIFYING": "check", "REVIEW": "review", "APPROVED": "review", "DONE": "done",
            "CANCELLED": None}
-_ORDER = ["needs", "runner_dead", "blocked", "failed", "paused", "review_wait"]
+_ORDER = ["needs", "runner_dead", "blocked", "failed", "paused", "review_wait", "rework_wait"]
 _CACHE = {}
 _CACHE_LOCK = threading.Lock()
 # ponytail: Codex rollout reads have a 30 s cache ceiling per home.
@@ -101,7 +101,7 @@ def exception_of(state: str, needs_human: bool, failure: str | None) -> str | No
     if state == "APPROVED" and needs_human:
         return "needs"
     return {"BLOCKED": "blocked", "FAILED": "failed", "PAUSED": "paused",
-            "REVIEW": "review_wait"}.get(state)
+            "REVIEW": "review_wait", "REWORK": "rework_wait"}.get(state)
 
 
 def pause_reason(failure: str | None) -> str:
@@ -240,13 +240,15 @@ def _requests(data, tasks, pid):
                for t in tasks if not t["workflow_id"]]
     result = []
     for rid, name, members, updated in groups:
-        active = [t["stage"] for t in members if t["stage"] not in {None, "done"}]
+        active = [t["stage"] for t in members if t["state"] in
+                  {"BACKLOG", "READY", "RUNNING", "VERIFYING", "REVIEW", "APPROVED"}
+                  and t["stage"] not in {None, "done"}]
         exceptions = sorted((t for t in members if t["exception"]),
                             key=lambda t: _rank(t["exception"], pause_reason(t["failure"])))
         counts = _counts(members)
         result.append({"pid": pid, "id": rid, "name": name,
                        "stage": min(active, key=["queue", "build", "check", "review"].index)
-                       if active else ("done" if counts.get("done") else None),
+                       if active else ("done" if any(t["state"] == "DONE" for t in members) else None),
                        "exception": exceptions[0]["exception"] if exceptions else None,
                        "done": counts.get("done", 0),
                        "total": sum(counts.values()) - counts.get("cancelled", 0),
@@ -467,7 +469,7 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
     now = time.time() if now is None else now
     result = {"generated_at": now, "projects": [], "attention": [], "running": [],
               "activity": {"done_24h": 0, "per_hour": [0] * 24, "latest": None}, "requests": [], "tasks": [],
-              "accounts": [], "switches": []}
+              "accounts": [], "switches": [], "orphaned": 0}
     request_ranks = {}
     merged_accounts = {}
     for root in dict.fromkeys(discover_roots() if roots is None else roots):
@@ -478,7 +480,7 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
             shown = "~" + shown[len(home):]
         project = {"pid": pid, "name": path.name, "root": shown, "worktree_of": None,
                    "root_missing": not path.is_dir(), "error": None, "counts": {}, "percent": None, "badge": None,
-                   "branch": None, "updated_at": None, "fallback": None}
+                   "branch": None, "updated_at": None, "fallback": None, "orphaned": 0}
         try:
             data = _read(root)
         except FileNotFoundError:
@@ -493,11 +495,14 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
         project["fallback"] = _fallback(loaded[1])
         _merge_accounts(merged_accounts, pid, data, tasks, loaded[1], now, path)
         result["switches"].extend(_switches(data, pid, now))
-        result["tasks"].extend({"pid": pid,
+        result["tasks"].extend({"pid": pid, "orphaned": project["root_missing"],
                                 "reason": pause_reason(t["failure"]) if t["state"] == "PAUSED" else None,
                                 **{k: t[k] for k in (
             "task_id", "objective", "state", "stage", "exception", "needs_human",
             "updated_at", "agent", "account", "workflow_id", "command")}} for t in tasks)
+        if project["root_missing"]:
+            project["orphaned"] = sum(t["state"] not in {"DONE", "CANCELLED", "BLOCKED"} for t in tasks)
+            result["orphaned"] += project["orphaned"]
         project["updated_at"] = max((t["updated_at"] for t in tasks), default=None)
         project["counts"] = _counts(tasks)
         project["percent"] = percent(project["counts"])
@@ -519,9 +524,12 @@ def snapshot(roots: list[str] | None = None, now: float | None = None) -> dict:
                         project["branch"] = "HEAD"
         if root in trees and trees[0] != root:
             project["worktree_of"] = project_id(trees[0])
-        result["requests"].extend(_requests(data, tasks, pid))
+        if not project["root_missing"]:
+            result["requests"].extend(_requests(data, tasks, pid))
         attention = []
         for task in tasks:
+            if project["root_missing"]:
+                continue
             rid = task["workflow_id"] or task["task_id"]
             rank = _rank(task["exception"], pause_reason(task["failure"]))
             request_ranks[pid, rid] = min(request_ranks.get((pid, rid), rank), rank)

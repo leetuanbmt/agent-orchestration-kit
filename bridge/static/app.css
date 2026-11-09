@@ -148,6 +148,7 @@ tbody tr:focus-visible { outline-offset: -2px; background: var(--surface-2); }
 .badge > span:last-child { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .badge .glyph { display: inline-block; min-width: 1em; font-weight: 700; text-align: center; color: var(--st-queue); }
 .status-needs .glyph { color: var(--st-needs); }
+.status-rework_wait .glyph { color: var(--st-review); }
 .status-review_wait .glyph { color: var(--st-review); }
 .status-failed .glyph, .status-blocked .glyph { color: var(--st-blocked); }
 .status-paused .glyph { color: var(--st-paused); }
@@ -166,6 +167,7 @@ tbody tr:focus-visible { outline-offset: -2px; background: var(--surface-2); }
 .counter-value { font-size: var(--fs-xl); font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .counter-label { color: var(--text-muted); font-size: var(--fs-xs); font-weight: 500; }
 .counter-needs .counter-glyph { color: var(--st-needs); }
+.counter-rework_wait .counter-glyph { color: var(--st-review); }
 .counter-review_wait .counter-glyph { color: var(--st-review); }
 .counter-running .counter-glyph { color: var(--st-running); }
 .counter-done .counter-glyph { color: var(--st-done); }
