@@ -259,12 +259,13 @@ Mỗi dòng là một bridge task do executor viết, được bridge kiểm ch�
 | F-03 | T0130 | `85f0f55` | Test Seatbelt thật, chạy trên host. Commit message gọi `.ai/*.yaml` là "token files"; thực tế các file đó không chứa token, chặn đọc chỉ là phòng thủ thêm |
 | F-02 | T0131 | `08713ee` | `tests/integration/test_attempt_evidence.py` |
 | F-04 + attempt bị interrupt | T0132 | `4ed390b` | `tests/integration/test_consult_recovery.py` |
+| F-06 (cảnh báo) | T0134 | `03d31b5` | `tests/integration/test_health_diagnostics.py` (KIT-CFG-LEGACY-001/002): `health` báo `legacy_config` khi một worktree khác có config |
+| Quy tắc và docstring khớp hành vi | T0133 (huỷ) + sửa trực tiếp | `73a9c49` | Executor Claude không được ghi vào `.claude/`, nên phần rule file do client sửa trực tiếp |
 
 Chưa làm:
 
 | Finding | Lý do |
 |---|---|
-| F-06 | Còn mở. Đã có thiết kế ở §3.5; cần chọn giữa cảnh báo hay bắt opt-in |
 | F-08 | Không đổi. `account-clear` được QA e2e và quy trình MCP client gọi không cần TTY (`tests/qa/test_e2e_failures.py:30`); khoá nó thì vỡ luồng đó, mà lợi ích bảo mật thấp |
 | F-09, F-10, F-13, agent `blocked` → không auto-resume | Còn mở, P2 |
 | F-07 | Theo `docs/plans/multi-bridge-accounts.md` |
