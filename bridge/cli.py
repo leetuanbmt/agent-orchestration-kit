@@ -666,9 +666,9 @@ def main(argv: list[str] | None = None) -> None:
     add.add_argument("--home", help="register an existing isolated home (e.g. a codex-switch "
                                     "home) instead of creating one")
     add.add_argument("--device-auth", action="store_true")
-    padd = sub.add_parser("project-account-add", help="HUMAN ONLY: add an account and its agent "
-                                                      "to .ai/accounts.yaml and print the agent to paste into "
-                                                      "orchestrator.yaml")
+    padd = sub.add_parser("project-account-add", help="HUMAN ONLY: declare an account in "
+                                                      ".ai/accounts.yaml and print the agent line to "
+                                                      "paste into .ai/orchestrator.yaml")
     padd.add_argument("name")
     padd.add_argument("--provider", choices=sorted(_PROVIDER_ADAPTER),
                       help="required unless --login names a registry login")
@@ -685,10 +685,11 @@ def main(argv: list[str] | None = None) -> None:
     padd.add_argument("--agent", help="agent name (default: agent-<name>)")
     padd.add_argument("--model")
     padd.add_argument("--executor", action="store_true",
-                      help="put the agent first in roles.executor (after any default)")
-    plim = sub.add_parser("project-account-limits", help="HUMAN ONLY: set the 5-hour and weekly "
-                                                         "limits of an account added with "
-                                                         "project-account-add")
+                      help="also print a hint to put the agent first in roles.executor "
+                           "(writes nothing)")
+    plim = sub.add_parser("project-account-limits", help="HUMAN ONLY: set or clear the 5-hour and "
+                                                         "weekly limits of an account in "
+                                                         ".ai/accounts.yaml")
     plim.add_argument("name")
     plim.add_argument("--clear", action="store_true", help="remove both window limits first")
     for cmd in (padd, plim):
@@ -696,8 +697,9 @@ def main(argv: list[str] | None = None) -> None:
                          help="stop taking work at this percent of the 5-hour window used")
         cmd.add_argument("--weekly-pct", type=float,
                          help="stop taking work at this percent of the weekly window used")
-    sub.add_parser("project-account-remove", help="HUMAN ONLY: remove an account added with "
-                                                  "project-account-add; its home is kept"
+    sub.add_parser("project-account-remove", help="HUMAN ONLY: remove an account from "
+                                                  ".ai/accounts.yaml and its Keychain token; "
+                                                  "its home is kept"
                    ).add_argument("name")
     token = sub.add_parser("account-set-token", help="HUMAN ONLY: store a setup-token or API "
                                                      "key in the macOS Keychain for an "

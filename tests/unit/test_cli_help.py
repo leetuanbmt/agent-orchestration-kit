@@ -130,3 +130,24 @@ def test_init_prints_next_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                      "folder\n"
                      "  3. agent-bridge              terminal dashboard (or: agent-bridge web)\n")
     assert "Open claude in the project once" not in out
+
+
+# @pt.id KIT-HELP-project-account-current
+# @pt.item project-account-* help describes what the commands do now
+# @pt.condition agent-bridge project-account-{add,limits,remove} --help
+# @pt.expected No stale claim of adding an agent, editing roles.executor or being limited to added accounts
+# @pt.target bridge.cli.main
+# @pt.method unit
+# @pt.legacy none
+def test_project_account_help_not_stale(capsys):
+    texts = " ".join(" ".join(_help([c, "--help"], capsys).split())
+                     for c in ("project-account-add", "project-account-limits",
+                               "project-account-remove"))
+    texts += " " + " ".join(_help(["--help"], capsys).split())
+    for stale in ("add an account and its agent", "(after any default)",
+                  "added with project-account-add"):
+        assert stale not in texts
+    assert "print the agent line to paste into .ai/orchestrator.yaml" in texts
+    assert "(writes nothing)" in texts
+    assert "of an account in .ai/accounts.yaml" in texts
+    assert "its Keychain token; its home is kept" in texts
