@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `config-check`, `config-migrate` and `project-account-add` print a readable view in a terminal (moves, proposed files, the line to paste, next commands) instead of raw JSON. `--json`, or output that is not a terminal, still prints the same JSON.
 - Every setting has one owner. `.ai/accounts.yaml` holds the project's accounts and their limits, `.ai/orchestrator.yaml` holds agents, roles, routing and workflow, and `.ai/config.json` holds safety and runtime settings, now including `verify_sandbox` and `verify_writable`. Older layouts load unchanged; `config-check` lists them under `deprecated` and `health` warns `config_deprecated`. A name, or a verify key, declared in two places is an error naming both files instead of a silent override.
 - Machine registry logins no longer enter every project. A project declares one in `.ai/accounts.yaml` with `login: <name>` and its own limits. An agent that names a registry login directly still runs with the registry settings, as deprecated. Machine-wide account commands still find every login.
 - `project-account-add` writes only the account (new `--login` option) and prints the agent line to paste into `orchestrator.yaml`. Errors about an account name the file that owns it.

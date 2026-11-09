@@ -50,7 +50,9 @@ def _server_entry() -> dict[str, Any]:
 
 # Commands a person reads: a table in a terminal, JSON with --json or through a pipe.
 VIEWS = {"account-list": "accounts_view", "health": "health_view", "agents": "agents_view",
-         "list": "tasks_view", "tasks": "projects_view", "usage": "usage_view"}
+         "list": "tasks_view", "tasks": "projects_view", "usage": "usage_view",
+         "config-check": "config_view", "config-migrate": "migrate_view",
+         "project-account-add": "account_added_view"}
 HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove", "account-set-token",
                       "project-account-add", "project-account-remove",
                       "project-account-limits"}
