@@ -31,7 +31,7 @@ from .models import ACTIVE, TERMINAL, Actor, ReviewDecision, State, TaskSpec, Tr
 from .orchestrator import ADAPTER_PROVIDERS, PROVIDERS, AgentConfig, OrchestratorConfig
 from .orchestrator import load as load_orchestrator
 from .quota import codex_home_for, read_quota, remaining_pct
-from .registry import remember_project
+from .registry import remember_project, with_worktrees
 from .review import EvidenceError, content_hashes, current_head, diff, parse_command, protected_dirty, \
     escaping_symlinks, protected_after, protected_git_left, protected_hashes, scope_violations, snapshot, touches_sensitive, untracked
 from .runner import _write_attempt_log_line as _write_attempt_log_line
@@ -515,6 +515,21 @@ class Bridge:
                                  "run the bridge on a Linux kernel with Landlock and set "
                                  "workflow.verify_sandbox: auto in .ai/orchestrator.yaml "
                                  "to confine verification commands"))
+        if self.legacy:
+            try:
+                here = Path(self.root).resolve()
+                configured = next((w for w in with_worktrees([str(self.root)])
+                                   if Path(w).resolve() != here
+                                   and (Path(w) / ".ai" / "orchestrator.yaml").is_file()), None)
+            except Exception:  # a git failure must never break health
+                configured = None
+            if configured:
+                warnings.append(item("legacy_config",
+                                     "this worktree runs the legacy setup (Codex executes) but "
+                                     f"another worktree has .ai/orchestrator.yaml: {configured}",
+                                     f"a human copies .ai/orchestrator.yaml from {configured} into "
+                                     "this worktree (it is git-ignored, so worktrees do not share "
+                                     "it)"))
         for name in self.orch.accounts:
             try:
                 key = account_key(self._account(name))
