@@ -53,9 +53,11 @@ VIEWS = {"account-list": "accounts_view", "health": "health_view", "agents": "ag
          "list": "tasks_view", "tasks": "projects_view", "usage": "usage_view",
          "config-check": "config_view", "config-migrate": "migrate_view",
          "project-account-add": "account_added_view", "config-set": "config_change_view",
-         "config-unset": "config_change_view"}
+         "config-unset": "config_change_view", "project-agent-add": "agent_change_view",
+         "project-agent-remove": "agent_change_view"}
 HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove", "account-set-token",
                       "project-account-add", "project-account-remove",
+                      "project-agent-add", "project-agent-remove",
                       "project-account-limits", "config-set", "config-unset"}
 # Adapter per provider for `project-account-add`; google and opencode only plan and review.
 _PROVIDER_ADAPTER = {"openai": "codex-cli", "anthropic": "claude-cli", "google": "agy-cli",
@@ -482,6 +484,7 @@ def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
     # Only the account goes into accounts.yaml; agents and roles are the human's to paste.
     data = {**data, "accounts": {**(data.get("accounts") or {}), args.name: account}}
     paste = {"agents": f"{agent}: {json.dumps(spec)}"}
+    command = f"agent-bridge project-agent-add {agent} --account {args.name} --role executor --apply"
     if args.executor:
         paste["roles.executor"] = f"put {agent} first in the agents list of roles.executor"
     # The isolation check routing applies, before anything is written.
@@ -499,7 +502,142 @@ def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
     else:
         step = f"agent-bridge account-login {args.name}"
     return {"account": args.name, "agent": agent, "home": resolve_home,
-            "executor": args.executor, "file": str(path), "paste": paste, "next": step}
+            "executor": args.executor, "file": str(path), "paste": paste, "next": step,
+            "agent_command": command}
+
+
+_BASH_WARNING = ("allow_bash lets this agent run shell commands in Claude Code's sandbox (writes "
+                 "only to the worktree and $TMPDIR, no network); the macOS Keychain stays "
+                 "reachable, so give it trusted work only")
+
+
+def _edit_orchestrator(args: argparse.Namespace, edit: Any) -> dict[str, Any]:
+    """Run `edit(data, orch)` on a copy of orchestrator.yaml's data, validate the whole result,
+    and preview it (or back it up and write it with --apply). Nothing is written on any error."""
+    import copy
+
+    import yaml
+    root, path, managed = _managed_paths()
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"{path}: invalid YAML: {e}") from None
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: expected a mapping at the top level")
+    new = copy.deepcopy(data)
+    out = edit(new, orchestrator.load(root, load_config(root)))
+    out |= {"file": f".ai/{orchestrator.ORCHESTRATOR_FILE}", "applied": False}
+    if new == data:
+        return out | {"changed": False, "note": "unchanged; nothing written"}
+    new_text = yaml.safe_dump(new, sort_keys=False)
+    orchestrator.parse(new_text, str(path), load_registry(), orchestrator.load_managed(managed),
+                       str(managed))
+    out |= {"changed": True, "applied": bool(args.apply),
+            "comments_note": f"comments in .ai/{orchestrator.ORCHESTRATOR_FILE} are not kept"}
+    if args.apply:
+        backup = _backup_and_write(root, {orchestrator.ORCHESTRATOR_FILE: new_text})
+        out["backup"] = str(backup) if backup else None
+    else:
+        out["note"] = ("Nothing was written. --apply backs the file up to .ai/backup-<UTC "
+                       "stamp>/ and writes it.")
+    return out
+
+
+def _project_agent_add(args: argparse.Namespace) -> dict[str, Any]:
+    def edit(data: dict, orch: Any) -> dict[str, Any]:
+        name = args.agent
+        if name in orch.agents:
+            raise ValueError(f"agent {name} already exists; pick another name")
+        if args.default and not args.role:
+            raise ValueError("--default needs --role")
+        if args.account:
+            profile = orch.accounts.get(args.account)
+            if profile is None:
+                raise ValueError(f"unknown account {args.account!r}; known: "
+                                 f"{sorted(orch.accounts)} (declare it with `agent-bridge "
+                                 "project-account-add`)")
+            adapter = _PROVIDER_ADAPTER[profile.provider]
+            spec: dict[str, Any] = {"adapter": adapter, "account": args.account}
+            if adapter not in orchestrator.READ_ONLY_ADAPTERS:
+                spec["allow_write"] = True
+        else:
+            adapter, spec = "client", {"adapter": "client"}
+            if args.model:
+                raise ValueError("a client agent takes no model")
+        if args.model:
+            spec["model"] = args.model
+        out: dict[str, Any] = {"action": "add", "agent": name, "spec": spec, "roles": {},
+                               "warnings": []}
+        if args.allow_bash:
+            if adapter != "claude-cli":
+                raise ValueError("--allow-bash only applies to claude-cli agents")
+            spec["allow_bash"] = True
+            out["warnings"].append(_BASH_WARNING)
+        data.setdefault("agents", {})[name] = spec
+        if args.role:
+            roles = data.setdefault("roles", {})
+            cur = roles.get(args.role)
+            if cur is None:
+                roles[args.role] = ({"agents": [name], "default": name} if args.default else name)
+            else:
+                role = {"agents": [cur]} if isinstance(cur, str) else cur
+                if not isinstance(role, dict) or not isinstance(role.get("agents"), list):
+                    raise ValueError(f"roles.{args.role} has an unexpected shape; edit it with "
+                                     "config-set")
+                role["agents"] = ([name, *role["agents"]] if args.default
+                                  else [*role["agents"], name])
+                if args.default:
+                    role["default"] = name
+                roles[args.role] = role
+            now = roles[args.role]
+            out["roles"][args.role] = ([now] if isinstance(now, str) else now["agents"])
+            out["default"] = name if args.default else None
+        return out
+    return _edit_orchestrator(args, edit)
+
+
+def _pinned_tasks(agent: str) -> list[str]:
+    """Unfinished tasks pinned to `agent`; empty when the bridge state cannot be read."""
+    try:
+        from .models import TERMINAL
+        root = find_root()
+        b = Bridge(root, load_config(root), create=False)
+        return [r["id"] for r in b.store.list(None, 200)
+                if r["agent"] == agent and r["state"] not in TERMINAL]
+    except Exception:  # noqa: BLE001 - a warning only; the change does not depend on it
+        return []
+
+
+def _project_agent_remove(args: argparse.Namespace) -> dict[str, Any]:
+    def edit(data: dict, orch: Any) -> dict[str, Any]:
+        name = args.agent
+        agents = data.get("agents") or {}
+        if name not in agents:
+            if name in orch.agents:
+                raise ValueError(f"agent {name} is not declared in .ai/orchestrator.yaml; "
+                                 f"change it in .ai/{orchestrator.MANAGED_FILE}")
+            return {"action": "remove", "agent": name, "roles": {}, "pinned_tasks": []}
+        roles = data.get("roles") or {}
+        out: dict[str, Any] = {"action": "remove", "agent": name, "roles": {}}
+        for role, cur in list(roles.items()):
+            if cur == name:
+                raise ValueError(f"refused: roles.{role} would be left with no agent; give it "
+                                 f"another agent first (config-set roles.{role}.agents ...)")
+            if isinstance(cur, dict) and name in (cur.get("agents") or []):
+                left = [a for a in cur["agents"] if a != name]
+                if not left:
+                    raise ValueError(f"refused: roles.{role} would be left with no agent; give "
+                                     f"it another agent first (config-set roles.{role}.agents "
+                                     "...)")
+                cur["agents"] = left
+                out["roles"][role] = left
+            if isinstance(cur, dict) and cur.get("default") == name:
+                del cur["default"]
+                out["roles"].setdefault(role, cur["agents"])
+        del agents[name]
+        out["pinned_tasks"] = _pinned_tasks(name)
+        return out
+    return _edit_orchestrator(args, edit)
 
 
 def _own_account(name: str, accounts: dict, path: Path, root: Path) -> None:
@@ -549,6 +687,14 @@ def _project_account_remove(args: argparse.Namespace) -> dict[str, Any]:
     data = orchestrator.load_managed(path)
     accounts = dict(data.get("accounts") or {})
     _own_account(args.name, accounts, path, root)
+    legacy_agents = data.get("agents") or {}
+    users = sorted(n for n, a in orchestrator.load(root, load_config(root)).agents.items()
+                   if a.account == args.name and n not in legacy_agents)
+    if users:
+        raise ValueError(f"account {args.name} is still used by agent(s) {', '.join(users)}; "
+                         "remove them first: "
+                         + "; ".join(f"agent-bridge project-agent-remove {u} --apply"
+                                     for u in users))
     typed = input(f"Type the account name to remove {args.name}: ").strip()
     if typed != args.name:
         raise SystemExit(2)
@@ -710,6 +856,10 @@ async def _run(args: argparse.Namespace) -> Any:
         return _project_account_add(args)
     if args.cmd == "project-account-remove":
         return _project_account_remove(args)
+    if args.cmd == "project-agent-add":
+        return _project_agent_add(args)
+    if args.cmd == "project-agent-remove":
+        return _project_agent_remove(args)
     if args.cmd == "project-account-limits":
         return _project_account_limits(args)
     if args.cmd == "account-add":
@@ -929,6 +1079,25 @@ def main(argv: list[str] | None = None) -> None:
                                                   ".ai/accounts.yaml and its Keychain token; "
                                                   "its home is kept"
                    ).add_argument("name")
+    pag = sub.add_parser("project-agent-add", help="HUMAN ONLY: add an agent to .ai/orchestrator.yaml "
+                                                   "(and to a role); previews unless --apply")
+    pag.add_argument("agent")
+    target = pag.add_mutually_exclusive_group(required=True)
+    target.add_argument("--account", help="the project account the agent runs on (its provider "
+                                          "picks the adapter)")
+    target.add_argument("--adapter", choices=["client"],
+                        help="client: the MCP caller itself, no account")
+    pag.add_argument("--model")
+    pag.add_argument("--allow-bash", action="store_true",
+                     help="claude-cli only; Bash runs in Claude Code's sandbox (see security.md)")
+    pag.add_argument("--role", help="also add the agent to this role")
+    pag.add_argument("--default", action="store_true", help="make it the role's default (first)")
+    prem = sub.add_parser("project-agent-remove", help="HUMAN ONLY: remove an agent and its role "
+                                                       "entries from .ai/orchestrator.yaml; "
+                                                       "previews unless --apply")
+    prem.add_argument("agent")
+    for cmd in (pag, prem):
+        cmd.add_argument("--apply", action="store_true", help="write the file after a backup")
     token = sub.add_parser("account-set-token", help="HUMAN ONLY: store a setup-token or API "
                                                      "key in the macOS Keychain for an "
                                                      "account with `credential: keychain`")
