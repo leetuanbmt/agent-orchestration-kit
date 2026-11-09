@@ -172,7 +172,7 @@ hoạch và review, Codex thực thi.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) cho phiên làm việc interactive.
 - Ít nhất một agent CLI đã đăng nhập bằng subscription riêng; không cần API key:
   - Codex CLI (đã kiểm chứng với 0.163.0; kiểm tra bằng `codex login status`), và/hoặc
-  - Claude Code headless (đã kiểm chứng với 2.1.306; kiểm tra bằng `claude auth status`).
+  - Claude Code headless (đã kiểm chứng với 2.1.308; kiểm tra bằng `claude auth status`).
   - Tùy chọn, dùng làm planner/reviewer chỉ đọc: opencode, agy.
 
 ## Cài đặt
