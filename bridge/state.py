@@ -263,7 +263,8 @@ class Store:
         # Databases from older versions (and every new one: SCHEMA predates these columns).
         self._add_columns(self.db, "tasks", {c: "TEXT" for c in (
             "account", "agent", "workflow_id", "codex_started", "runner_started")})
-        self._add_columns(self.db, "workflows", {"runner_pid": "INTEGER", "runner_started": "TEXT"})
+        self._add_columns(self.db, "workflows", {"runner_pid": "INTEGER", "runner_started": "TEXT",
+                                                     "agent_pid": "INTEGER", "agent_started": "TEXT"})
         self._add_columns(self.db, "attempts", {"review": "TEXT", "baseline": "TEXT"})
         self.shared = None
         if shared is not None:
@@ -571,6 +572,12 @@ class Store:
             if prev and prev["state"] != state:
                 self._event(c, None, Actor.BRIDGE, "workflow_state", prev["state"], state,
                             {"workflow_id": wid, "detail": detail})
+
+    def set_workflow_agent(self, wid: str, pid: int | None, started: str | None) -> None:
+        """The planner agent process a workflow waits on, so recovery can kill an orphan."""
+        with self.tx() as c:
+            c.execute("UPDATE workflows SET agent_pid=?, agent_started=? WHERE id=?",
+                      (pid, started, wid))
 
     def workflows_in(self, *states: str) -> list[dict[str, Any]]:
         rows = self.db.execute(f"SELECT * FROM workflows WHERE state IN "

@@ -376,9 +376,17 @@ class TaskRunner:
                 return  # the MCP client reviews through bridge_review_task
             row = self.store.get(task_id)
             prompt = build_review_prompt(task_id, row["spec"], self.store.attempts(task_id)[-1])
-            res = await b._consult(
-                name, prompt, REVIEW_SCHEMA, task_id,
-                lambda: b._stopping or self.store.get(task_id)["state"] != State.REVIEW)
+            try:
+                res = await b._consult(
+                    name, prompt, REVIEW_SCHEMA, task_id,
+                    lambda: b._stopping or self.store.get(task_id)["state"] != State.REVIEW,
+                    on_start=lambda pid: self.store.update(
+                        task_id, codex_pid=pid, codex_started=process_started(pid),
+                        runner_pid=os.getpid(), runner_started=self.store._started))
+            finally:
+                with contextlib.suppress(Exception):
+                    self.store.update(task_id, codex_pid=None, codex_started=None,
+                                      runner_pid=None, runner_started=None)
             if res is None:
                 return
             try:
