@@ -54,6 +54,18 @@ SLOT_WAIT_FIRST_S = 5.0
 SLOT_WAIT_MAX_S = 60.0
 
 
+class _Gate(AccountGate):
+    """The gate, also refusing an agent whose adapter refuses this project directory."""
+
+    def _unavailable(self, name: str, need: str) -> str | None:
+        agent = self.bridge.orch.agents[name]
+        if agent.enabled and agent.adapter != "client" and agent.can(need):
+            refused = self.bridge._adapter(agent.adapter).refusal()
+            if refused:
+                return refused
+        return super()._unavailable(name, need)
+
+
 def _alive(pid: int | None) -> bool:
     return osutil.alive(pid)
 
@@ -125,7 +137,7 @@ class Bridge:
         self._workflows: dict[str, asyncio.Task[None]] = {}
         self.progress: Callable[[str], None] | None = None
         self._stopping = False
-        self.gate = AccountGate(self)
+        self.gate = _Gate(self)
         self.runner = TaskRunner(self)
 
     # ---- config reload ---------------------------------------------------------------------
@@ -475,7 +487,8 @@ class Bridge:
 
     # The CLI versions whose sandbox and permission behaviour docs/REPORT.md last probed (audit
     # TEST-04): a newer CLI may have changed it, so health asks for a re-probe.
-    PROBED_VERSIONS = {"codex-cli": (0, 163, 0), "claude-cli": (2, 1, 308)}
+    PROBED_VERSIONS = {"codex-cli": (0, 163, 0), "claude-cli": (2, 1, 308),
+                      "cursor-cli": (2026, 11, 11)}
 
     @classmethod
     def unprobed(cls, adapter: str, version: str | None) -> bool:
@@ -620,6 +633,14 @@ class Bridge:
                                      "version its sandbox and permission rules were probed on",
                                      "re-run the probes in docs/REPORT.md with this version, then "
                                      "update PROBED_VERSIONS in bridge/service.py"))
+        for name in used:
+            adapter = self._adapter(name)
+            refused, refused_file = adapter.refusal(), adapter.refusal_file()
+            if refused and refused_file:
+                warnings.append(item("adapter_refused", redact(refused, 400),
+                                     f"a human removes the hooks from {refused_file}, or uses "
+                                     "another reviewer/planner agent instead of "
+                                     f"{name}"))
         for name, info in limits.items():
             if info["status"] == "limited":
                 warnings.append(item("account_limited",

@@ -5,9 +5,9 @@ through the bridge, including two accounts in parallel.
 
 ## 1. Compatibility (verified on this machine)
 
-`agent-bridge health` warns (`cli_unprobed`) when an installed Codex or Claude CLI is newer than
-the version in `PROBED_VERSIONS` (`bridge/service.py`): codex-cli 0.163.0 and Claude Code
-2.1.308. After re-running the probes below on a newer CLI, update both this table and that
+`agent-bridge health` warns (`cli_unprobed`) when an installed Codex, Claude or Cursor CLI is newer than
+the version in `PROBED_VERSIONS` (`bridge/service.py`): codex-cli 0.163.0, Claude Code
+2.1.308 and cursor-agent 2026.11.11. After re-running the probes below on a newer CLI, update both this table and that
 constant.
 
 | Component | Version | What was verified |
@@ -157,6 +157,17 @@ so writing could not be shown to be scoped and both adapters stay read-only. agy
 wrote only its own plan artifact outside the worktree. Isolating opencode by XDG dirs failed
 (its background service clashed on a fixed port), so opencode accounts use the global login.
 
+Cursor probe, 2026-11-11 (cursor-agent 2026.11.11, macOS): `cursor-agent -p --output-format
+stream-json --mode ask --sandbox enabled --trust --workspace <root>`, prompt on stdin. In ask mode
+the model reported writes and shell blocked and wrote nothing. Hooks in `.cursor/hooks.json`,
+`.claude/settings.json` and `.claude/settings.local.json` (a `hooks` object) ran in ask mode,
+outside the sandbox: one touched a file outside the workspace, so the adapter refuses all three
+(and an unparseable `.claude` file). A project `mcp.json` was not started. `--trust` is
+remembered: the directory is recorded in `~/.cursor/projects/<slug>/` and chats are stored under
+`~/.cursor/chats/`; without it print mode exits 1 in an unseen directory. The `result` event's
+`result` is every assistant text concatenated; usage keys are camelCase and no cost is reported.
+The binary is installed as `cursor-agent` and `agent`.
+
 | Check | Result |
 |---|---|
 | Real opencode reviewer, `OPENCODE_SMOKE=1` (ollama-cloud/gpt-oss:120b) | approved as actor `agent`; worktree held only the executor's change; task DONE. 1 of ~10 runs produced no review (reviewer failure, task left in REVIEW for the client as designed; cause not captured) |
@@ -164,8 +175,8 @@ wrote only its own plan artifact outside the worktree. Isolating opencode by XDG
 
 ## 9. Known limitations / unsupported
 
-- opencode and agy cannot execute (write) tasks. agy keeps browser tools in plan mode that the
-  CLI cannot disable; opencode has no per-account login isolation.
+- opencode, agy and cursor-agent cannot execute (write) tasks. agy keeps browser tools in plan
+  mode that the CLI cannot disable; opencode has no per-account login isolation.
 - `account-add --provider google` (agy sign-in inside a fresh `HOME`) and `account-add` for
   Claude were exercised only against the fake CLIs: they are human-only, so no real login was
   run. `account-add` refuses to finish if the global login changed, as `account-login` does.

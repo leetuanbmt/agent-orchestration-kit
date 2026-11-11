@@ -338,7 +338,7 @@ thái có trong [docs/configuration.md](docs/configuration.md) (tiếng Anh).
 | `claude-cli` | `anthropic` | Chỉ khi `allow_write: true` | Permission rule của CLI; OS sandbox cho Bash | `CLAUDE_CONFIG_DIR` |
 | `client` | — | Không | Chính MCP caller; bridge không bao giờ khởi chạy nó | — |
 | `opencode-cli` | `opencode` | Không (config từ chối) | Chặn tool qua config; không có OS sandbox | Chỉ login global |
-| `cursor-cli` | `cursor` | Không (config từ chối) | `--mode ask --sandbox enabled`; từ chối thư mục có `.cursor/hooks.json`; chưa xác minh OS sandbox | Chỉ login global |
+| `cursor-cli` | `cursor` | Không (config từ chối) | `--mode ask --sandbox enabled`; từ chối thư mục có hook trong `.cursor/hooks.json` hoặc `.claude/settings*.json`; chưa xác minh OS sandbox | Chỉ login global |
 | `agy-cli` | `google` | Không (config từ chối) | `--mode plan --sandbox`; không có OS sandbox | Cả một `HOME` |
 
 - `executor` phải ghi được, nên chỉ có thể là `codex-cli` hoặc `claude-cli` với `allow_write`.
@@ -483,10 +483,15 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   duyệt mà CLI không tắt được. Probe không ghi file nào với cả hai; cả hai đều không có OS sandbox.
 - **cursor** cũng chỉ đọc. Nó chạy `cursor-agent` với `--mode ask`, `--sandbox enabled` và
   `--trust`; ở chế độ ask, model báo ghi file và shell bị chặn và không ghi gì
-  (cursor-agent 2026.11.11). CLI vẫn thực thi `.cursor/hooks.json` của project kể cả ở chế độ ask,
-  ngoài sandbox của nó, nên adapter từ chối chạy trong thư mục có file này. Hook và skill
-  Cursor cấp người dùng của bạn vẫn được nạp, và chưa xác minh OS sandbox nào. Cursor chỉ có
-  login global (`cursor-agent login`).
+  (cursor-agent 2026.11.11). CLI thực thi hook trong `.cursor/hooks.json`,
+  `.claude/settings.json` và `.claude/settings.local.json` (đối tượng `hooks`) của project kể cả
+  ở chế độ ask, ngoài sandbox của nó, nên adapter từ chối thư mục có `.cursor/hooks.json`, hoặc
+  có một trong hai file `.claude` đó chứa hook hoặc không phải JSON object; agent khi đó được
+  liệt kê là unavailable và `health` cảnh báo. `--trust` là bắt buộc (print mode thoát với mã 1
+  trong thư mục chưa biết) và để lại worktree ở trạng thái tin cậy trong `~/.cursor/projects/`
+  cùng các chat trong `~/.cursor/chats/`. Binary được cài với tên `cursor-agent` và `agent`. Hook
+  và skill Cursor cấp người dùng của bạn vẫn được nạp, và chưa xác minh OS sandbox nào. Cursor
+  chỉ có login global (`cursor-agent login`).
 - **Tùy chọn `claude_hook_settings`** trong `.ai/config.json` truyền một file settings chỉ chứa
   hook cho mọi lượt chạy Claude. Các hook này là code được tin cậy, chạy không có sandbox; tùy
   chọn này mặc định tắt.

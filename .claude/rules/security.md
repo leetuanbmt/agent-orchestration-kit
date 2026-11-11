@@ -28,9 +28,14 @@
   OS sandbox.
 - **cursor** (`cursor-cli`) is a read-only adapter too: `cursor-agent` runs in `--mode ask` with
   `--sandbox enabled` and `--trust`; in ask mode the model reported writes and shell blocked and
-  wrote nothing (cursor-agent 2026.11.11). The CLI executes a project `.cursor/hooks.json` even in
-  ask mode and outside its sandbox, so the adapter refuses to run in a directory containing one.
-  User-level Cursor hooks and skills still load; no OS sandbox was verified.
+  wrote nothing (cursor-agent 2026.11.11). The CLI executes hooks from a project's
+  `.cursor/hooks.json`, `.claude/settings.json` and `.claude/settings.local.json` (a `hooks`
+  object) even in ask mode and outside its sandbox, so the adapter refuses a directory with
+  `.cursor/hooks.json`, or with either `.claude` file that has hooks or is not a JSON object; the
+  agent is listed unavailable and `health` warns. `--trust` is needed (print mode exits 1 in an
+  unseen directory) and leaves the worktree trusted in `~/.cursor/projects/` and chats under
+  `~/.cursor/chats/`. The binary is installed as `cursor-agent` and as `agent`; both are
+  login-denied. User-level Cursor hooks and skills still load; no OS sandbox was verified.
 - Every agent process gets `AGENT_BRIDGE_AGENT=1`; the CLI, the MCP server and the `Bridge`
   Python API refuse to start under it. Everything still runs as one user: human-only steps rely on
   the agents being confined, not on an OS boundary inside the bridge.

@@ -452,6 +452,149 @@ def test_cursor_refuses_project_hooks(repo, fake_others):
     assert not (fake_others / "cursor" / "calls").exists()
 
 
+# @pt.id KIT-ADAPTER-cursor-claude-hooks-refused
+# @pt.item Cursor is refused when .claude settings define hooks or cannot be read
+# @pt.condition .claude/settings.json or settings.local.json holds hooks, an empty hooks value, no hooks, invalid JSON or a JSON list
+# @pt.expected hooks and unreadable files are refused with a message naming the file and saying Cursor would execute its hooks; the others are not; the fake CLI is never started for a refusal
+# @pt.target bridge.executor.CursorAdapter.refusal, bridge.executor.CursorAdapter.argv
+# @pt.method integration
+# @pt.legacy none
+@pytest.mark.parametrize("name", ["settings.json", "settings.local.json"])
+@pytest.mark.parametrize("content,refused", [
+    ('{"hooks": {"PreToolUse": []}}', True), ('{"hooks": {"Stop": [{"hooks": []}]}}', True),
+    ("{not json", True), ("[]", True),
+    ('{"hooks": {}}', False), ('{"permissions": {"deny": []}}', False)])
+def test_cursor_refuses_claude_settings_hooks(repo, fake_others, name, content, refused):
+    from bridge.executor import CursorAdapter
+    settings = repo / ".claude" / name
+    settings.parent.mkdir(exist_ok=True)
+    settings.write_text(content)
+    adapter = CursorAdapter(BridgeConfig(), repo)
+    if refused:
+        assert name in (adapter.refusal() or "") and adapter.refusal_file() == settings
+        with pytest.raises(ValueError, match=rf"{name}.*Cursor would execute its hooks"):
+            run(adapter.run(_cursor_request()))
+        assert not (fake_others / "cursor" / "calls").exists()
+    else:
+        assert adapter.refusal() is None
+        assert run(adapter.run(_cursor_request())).outcome == "ok"
+
+
+CONFIG_CURSOR_REVIEW = CONFIG_CURSOR.replace(
+    "roles: {planner: cursor, executor: codex, reviewer: cursor}",
+    "roles: {planner: codex, executor: codex, reviewer: cursor}").replace(
+    "[plan, execute, test, review]", "[execute, test, review]")
+
+
+# @pt.id KIT-ADAPTER-cursor-refusal-surfaced
+# @pt.item A refused Cursor reviewer is unavailable, skipped, and reported by health
+# @pt.condition Cursor reviews, Codex executes, and .claude/settings.json holds hooks
+# @pt.expected the agent is listed unavailable with the refusal reason, the task stays in REVIEW with an agent_review_skipped event, the fake CLI never runs, and health carries an adapter_refused warning whose fix names the file
+# @pt.target bridge.service.Bridge._unavailable, bridge.service.Bridge.list_agents, bridge.service.Bridge.health, bridge.runner.TaskRunner._review_stage
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_refusal_is_surfaced(make_orch, fake_codex, fake_others, monkeypatch):
+    from tests.conftest import spec
+    monkeypatch.setenv("FAKE_CODEX_WRITE", WRITE)
+    b = make_orch(CONFIG_CURSOR_REVIEW)
+    settings = b.root / ".claude" / "settings.json"
+    settings.parent.mkdir(exist_ok=True)
+    settings.write_text('{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "x"}]}]}}')
+    listed = {a["agent"]: a for a in b.list_agents(logins={"cx": True, "cu": True})["agents"]}
+    assert listed["cursor"]["available"] is False
+    assert "settings.json" in listed["cursor"]["unavailable_reason"]
+    assert "Cursor would execute its hooks" in listed["cursor"]["unavailable_reason"]
+    t = run(b.create_task(spec(objective="Set x to 2")))["task_id"]
+    run(b.execute_task(t, wait=True))
+    assert b.store.get(t)["state"] == "REVIEW"
+    skipped, = events(b, t, "agent_review_skipped")
+    assert "settings.json" in skipped["detail"]["reason"] or "reviewer" in skipped["detail"]["reason"]
+    assert not (fake_others / "cursor" / "calls").exists()
+    health = run(b.health())
+    warning, = [w for w in health["warnings"] if w["code"] == "adapter_refused"]
+    assert str(settings) in warning["fix"] and "another reviewer/planner agent" in warning["fix"]
+    assert "adapter_refused" not in [x["code"] for x in health["problems"]]
+
+
+# @pt.id KIT-ADAPTER-cursor-result-text
+# @pt.item The result text answers when the last assistant message holds no JSON
+# @pt.condition the fake answers with the JSON first and a prose message last; the result text joins both
+# @pt.expected the run is ok and final is the JSON object from the result text
+# @pt.target bridge.executor.CursorAdapter.finish
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_result_text_fallback(repo, fake_others, monkeypatch):
+    from bridge.executor import CursorAdapter
+    monkeypatch.setenv("FAKE_CURSOR_SCENARIO", "early")
+    res = run(CursorAdapter(BridgeConfig(), repo).run(_cursor_request()))
+    assert res.final_text == "Done."
+    assert res.outcome == "ok" and res.final == {"decision": "approve", "notes": "looks good"}
+
+
+# @pt.id KIT-HEALTH-cursor-unprobed
+# @pt.item A Cursor CLI newer than the probed version is a health warning
+# @pt.condition the cursor adapter reports 2026.11.11 (probed), then 2026.12.1
+# @pt.expected only 2026.12.1 adds cli_unprobed
+# @pt.target bridge.service.Bridge.health, bridge.service.Bridge.PROBED_VERSIONS
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_unprobed_version(make_orch, monkeypatch):
+    from bridge.executor import CursorAdapter
+    b = make_orch(CONFIG_CURSOR)
+    for version, warned in (("2026.11.11", False), ("2026.12.1", True)):
+        monkeypatch.setattr(CursorAdapter, "version", lambda self, v=version: v)
+        warnings = run(b.health())["warnings"]
+        assert any(w["code"] == "cli_unprobed" and "cursor-cli" in w["message"]
+                   for w in warnings) is warned, version
+
+
+# @pt.id KIT-ACCT-cursor-status-env
+# @pt.item The Cursor login check does not see CURSOR_API_KEY
+# @pt.condition CURSOR_API_KEY is set in the environment while the status command runs against the fake
+# @pt.expected the fake logs a status call with no CURSOR_API_KEY
+# @pt.target bridge.accounts.login_status
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_status_env_is_scrubbed(fake_others, monkeypatch):
+    monkeypatch.setenv("CURSOR_API_KEY", "key-for-test")
+    assert accounts.login_status(BridgeConfig(), accounts.Account("cu", None, "cursor")) is True
+    calls = [json.loads(line) for line in
+             (fake_others / "cursor" / "status.jsonl").read_text().splitlines()]
+    assert calls == [{"cursor_api_key": None}]
+
+
+# @pt.id KIT-CFG-cursor-no-budget
+# @pt.item A cursor account cannot carry a budget or pricing
+# @pt.condition limits with budget_usd, with pricing, and with percentage and cooldown only; also through a registry login
+# @pt.expected budget and pricing are rejected with a message saying Cursor reports no cost; percentage and cooldown limits load
+# @pt.target bridge.orchestrator.AccountProfile
+# @pt.method unit
+# @pt.legacy none
+@pytest.mark.parametrize("limits,ok", [
+    ("{budget_usd: {day: 5}}", False),
+    ("{pricing: {input_per_mtok: 1, output_per_mtok: 1}}", False),
+    ("{five_hour_pct: 80, cooldown_s: 600}", True)])
+@pytest.mark.parametrize("via_login", [False, True])
+def test_cursor_cost_limits(limits, ok, via_login):
+    account = "{login: cu, limits: %s}" % limits if via_login else (
+        "{provider: cursor, limits: %s}" % limits)
+    text = f"""
+accounts:
+  cx: {{provider: openai}}
+  cu: {account}
+agents:
+  cursor: {{adapter: cursor-cli, account: cu}}
+  codex: {{adapter: codex-cli, account: cx}}
+roles: {{planner: cursor, executor: codex, reviewer: cursor}}
+"""
+    registry = {"cu": {"provider": "cursor", "home": None}} if via_login else None
+    if ok:
+        parse(text, registry=registry)
+    else:
+        with pytest.raises(ValueError, match="Cursor reports no cost"):
+            parse(text, registry=registry)
+
+
 # @pt.id KIT-ACCT-cursor-registry
 # @pt.item Cursor accounts: add, second refused, login status
 # @pt.condition account-add --provider cursor, a second cursor account, a home, fake status with and without a login, shell switch

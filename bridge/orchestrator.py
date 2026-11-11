@@ -37,9 +37,13 @@ ADAPTER_PROVIDERS: dict[str, str | None] = {
     "client": None,
 }
 PROVIDERS = frozenset(p for p in ADAPTER_PROVIDERS.values() if p)
+# Adapter per provider, in the order the CLI and the TUI list providers.
+PROVIDER_ADAPTER = {"openai": "codex-cli", "anthropic": "claude-cli", "google": "agy-cli",
+                    "opencode": "opencode-cli", "cursor": "cursor-cli"}
 # Adapters with no verified way to confine writes to a task's paths: planner/reviewer only.
-# Probed on opencode 2.1.2, agy 1.4.5 and cursor-agent 2026.11.11: their read-only modes refused
-# every write.
+# Observed per CLI: opencode 2.1.2 (its permission config denies edit and shell) reported having
+# no tool to write and wrote nothing; agy 1.4.5 (plan mode) refused every file write; cursor-agent
+# 2026.11.11 (ask mode) reported writes and shell blocked and wrote nothing.
 READ_ONLY_ADAPTERS = frozenset({"opencode-cli", "agy-cli", "cursor-cli"})
 # GLOBAL_ONLY_PROVIDERS (opencode, cursor: no isolated home, only the global login) lives in
 # accounts.py, which this module imports.
@@ -144,6 +148,11 @@ class AccountProfile(BaseModel):
         if self.home and self.provider in GLOBAL_ONLY_PROVIDERS:
             raise ValueError(f"{self.provider} accounts use the global login (no home); "
                              f"log in with: {GLOBAL_LOGIN_COMMANDS[self.provider]}")
+        if (self.provider == "cursor" and self.limits is not None
+                and (self.limits.budget_usd is not None or self.limits.pricing is not None)):
+            raise ValueError("cursor accounts cannot set limits.budget_usd or limits.pricing: "
+                             "Cursor reports no cost, so budgets cannot be enforced "
+                             "(percentage and cooldown limits are allowed)")
         return self
 
 

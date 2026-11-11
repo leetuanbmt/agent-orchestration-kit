@@ -21,6 +21,7 @@ from .config import BridgeConfig
 from .registry import known_projects as known_projects
 from .registry import registry_dir
 from .registry import remember_project as remember_project
+from .security import clean_env
 from .state import ConflictError
 
 # Providers with no isolated auth home: opencode keeps credentials behind one background service
@@ -227,8 +228,12 @@ def login_status(cfg: BridgeConfig, acc: Account) -> bool | None:
             "anthropic": [exe, "auth", "status"],
             "opencode": [exe, "auth", "list"],
             "cursor": [exe, "status", "--format", "json"]}[acc.provider]
+    env: Mapping[str, str] = os.environ
+    if acc.provider == "cursor":
+        # The environment a run gets: a login that exists only as CURSOR_API_KEY is no login.
+        env = clean_env(os.environ, cfg.env_deny, cfg.env_allow)
     try:
-        result = subprocess.run(argv, env=account_env(acc, os.environ), timeout=20,
+        result = subprocess.run(argv, env=account_env(acc, env), timeout=20,
                                 capture_output=True, text=True, check=False,
                                 stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):

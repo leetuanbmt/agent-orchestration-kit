@@ -60,8 +60,7 @@ HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove", "account
                       "project-agent-add", "project-agent-remove",
                       "project-account-limits", "config-set", "config-unset"}
 # Adapter per provider for `project-account-add`; google, opencode and cursor only plan and review.
-_PROVIDER_ADAPTER = {"openai": "codex-cli", "anthropic": "claude-cli", "google": "agy-cli",
-                     "opencode": "opencode-cli", "cursor": "cursor-cli"}
+_PROVIDER_ADAPTER = orchestrator.PROVIDER_ADAPTER
 EXAMPLES = install.KIT / "examples"
 
 
@@ -1040,7 +1039,7 @@ def main(argv: list[str] | None = None) -> None:
                                              "log in (fresh login in its own home)")
     add.add_argument("name")
     add.add_argument("--provider", required=True,
-                     choices=["openai", "anthropic", "google", "opencode", "cursor"])
+                     choices=list(_PROVIDER_ADAPTER))
     add.add_argument("--home", help="register an existing isolated home (e.g. a codex-switch "
                                     "home) instead of creating one")
     add.add_argument("--device-auth", action="store_true")

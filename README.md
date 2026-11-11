@@ -335,7 +335,7 @@ Full reference: every key and default, accounts, quota, quota fallback and state
 | `claude-cli` | `anthropic` | Only with `allow_write: true` | CLI permission rules; OS sandbox for Bash | `CLAUDE_CONFIG_DIR` |
 | `client` | — | No | The MCP caller itself; never started by the bridge | — |
 | `opencode-cli` | `opencode` | No (refused by config) | Tool permissions denied via config; no OS sandbox | Global login only |
-| `cursor-cli` | `cursor` | No (refused by config) | `--mode ask --sandbox enabled`; refuses a directory with `.cursor/hooks.json`; no OS sandbox verified | Global login only |
+| `cursor-cli` | `cursor` | No (refused by config) | `--mode ask --sandbox enabled`; refuses a directory whose `.cursor/hooks.json` or `.claude/settings*.json` has hooks; no OS sandbox verified | Global login only |
 | `agy-cli` | `google` | No (refused by config) | `--mode plan --sandbox`; no OS sandbox | A whole `HOME` |
 
 - `executor` must be able to write, so it is `codex-cli` or `claude-cli` with `allow_write`.
@@ -481,8 +481,13 @@ untrusted code.
   OS sandbox.
 - **cursor** is read-only too. It runs `cursor-agent` in `--mode ask` with `--sandbox enabled`
   and `--trust`; in ask mode the model reported writes and shell blocked and wrote nothing
-  (cursor-agent 2026.11.11). The CLI executes a project `.cursor/hooks.json` even in ask mode,
-  outside its sandbox, so the adapter refuses to run in a directory that contains one. Your own
+  (cursor-agent 2026.11.11). The CLI executes hooks from a project's `.cursor/hooks.json`,
+  `.claude/settings.json` and `.claude/settings.local.json` (a `hooks` object) even in ask mode,
+  outside its sandbox, so the adapter refuses a directory with `.cursor/hooks.json`, or with
+  either `.claude` file that has hooks or is not a JSON object; the agent is then listed
+  unavailable and `health` warns. `--trust` is needed (print mode exits 1 in an unseen
+  directory) and leaves the worktree trusted in `~/.cursor/projects/` and chats under
+  `~/.cursor/chats/`. The binary is installed as `cursor-agent` and as `agent`. Your own
   user-level Cursor hooks and skills still load, and no OS sandbox was verified. Cursor has only
   its global login (`cursor-agent login`).
 - **Optional `claude_hook_settings`** in `.ai/config.json` passes a hooks-only settings file to

@@ -237,6 +237,14 @@ class Adapter:
     def available(self) -> str | None:
         return shutil.which(self.binary)
 
+    def refusal(self) -> str | None:
+        """Why this adapter refuses the project directory; None when it does not."""
+        return None
+
+    def refusal_file(self) -> Path | None:
+        """The project file behind `refusal()`; None when there is none."""
+        return None
+
     def build(self, req: RunRequest, tmp: Path) -> list[str]:
         raise NotImplementedError
 
@@ -660,11 +668,41 @@ class CursorAdapter(ReadOnlyAdapter):
     def binary(self) -> str:
         return self.cfg.cursor_bin
 
-    def argv(self, req: RunRequest) -> list[str]:
+    def _refused(self) -> tuple[Path, str] | None:
+        """The project file Cursor would run code from, and why it counts."""
         hooks = self.root / ".cursor" / "hooks.json"
         if os.path.lexists(hooks):
-            raise ValueError(f"{self.name} is refused here: {hooks} exists and Cursor would "
-                             "execute it, outside its sandbox")
+            return hooks, "exists and"
+        for fname in ("settings.json", "settings.local.json"):
+            path = self.root / ".claude" / fname
+            if not os.path.lexists(path):
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                data = None
+            if not isinstance(data, dict):
+                return path, "cannot be parsed as a JSON object, so its hooks are unknown, and"
+            if data.get("hooks"):
+                return path, "defines hooks and"
+        return None
+
+    def refusal(self) -> str | None:
+        found = self._refused()
+        if found is None:
+            return None
+        path, why = found
+        return (f"{self.name} is refused here: {path} {why} Cursor would execute its hooks "
+                "outside its sandbox")
+
+    def refusal_file(self) -> Path | None:
+        found = self._refused()
+        return found[0] if found else None
+
+    def argv(self, req: RunRequest) -> list[str]:
+        reason = self.refusal()
+        if reason:
+            raise ValueError(reason)
         a = [self.binary, "-p", "--output-format", "stream-json", "--mode", "ask",
              "--sandbox", "enabled", "--trust", "--workspace", str(self.root)]
         if req.model:
@@ -692,11 +730,15 @@ class CursorAdapter(ReadOnlyAdapter):
         elif t == "result":
             res.session_id = ev.get("session_id") or res.session_id
             res.usage = ev.get("usage")
+            ctx["result_text"] = str(ev.get("result") or "")
             if ev.get("is_error") or ev.get("subtype") != "success":
                 ctx["errors"].append(f"{ev.get('subtype')}: {ev.get('result') or ''}".strip())
 
     def finish(self, res: RunResult, tmp: Path, ctx: dict[str, Any]) -> bool:
         res.final = _json_object(res.final_text)
+        if res.final is None:
+            # The result text is every assistant text joined; the answer may not be the last.
+            res.final = _json_object(ctx.get("result_text") or "")
         if res.final is None and not ctx["errors"]:
             ctx["errors"].append("no JSON object in the final message")
         return res.final is not None and not ctx["errors"]

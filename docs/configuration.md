@@ -364,7 +364,15 @@ For agy, `account-use` defines an `agy` shell function instead of changing `HOME
 `account-login <name>` runs `opencode auth login`. Cursor works the same way:
 `account-add <name> --provider cursor` registers one home-less account and `account-login <name>`
 runs `cursor-agent login`. `cursor-cli` runs `cursor-agent` in `--mode ask` with `--sandbox
-enabled` and `--trust`, and refuses to run in a directory that contains `.cursor/hooks.json`.
+enabled` and `--trust`. Cursor executes hooks from `.cursor/hooks.json`, `.claude/settings.json`
+and `.claude/settings.local.json` outside its sandbox, so the adapter refuses a directory where
+`.cursor/hooks.json` exists or either `.claude` file has a non-empty `hooks` value or is not a
+JSON object. A refused agent is listed `available: false` with that reason, is skipped when a
+planner or reviewer is picked (the task stays in REVIEW with an `agent_review_skipped` event), and
+`health` warns (`adapter_refused`). `--trust` leaves the worktree trusted in `~/.cursor/projects/`
+and chats under `~/.cursor/chats/`. Cursor reports no cost, so a cursor account with
+`limits.budget_usd` or `limits.pricing` is a configuration error; percentage and cooldown limits
+are allowed.
 
 ### Quota, availability and concurrency
 

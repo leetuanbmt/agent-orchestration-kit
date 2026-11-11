@@ -33,6 +33,7 @@ from textual.widgets.option_list import Option
 from . import install
 from .accounts import display_name
 from .config import AI_DIR, find_root
+from .orchestrator import PROVIDER_ADAPTER
 from .render import ATTENTION, STYLE, account_rows, quota_text, remaining_pct
 from .service import Bridge
 from .state import NotFound
@@ -648,7 +649,7 @@ class BridgeApp(App[None]):
                                                    f"machine-wide account?\n\n{home}")):
                 self._human_cmd("account-add", name, "--provider", "openai", "--home", home)
             return
-        providers = ["openai", "anthropic", "google", "opencode", "cursor"]
+        providers = list(PROVIDER_ADAPTER)
         if kind == "installed" and name in providers:
             providers.insert(0, providers.pop(providers.index(name)))
         answer = await self.push_screen_wait(Ask(
