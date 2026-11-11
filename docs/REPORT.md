@@ -7,7 +7,7 @@ through the bridge, including two accounts in parallel.
 
 `agent-bridge health` warns (`cli_unprobed`) when an installed Codex, Claude, Cursor, opencode or agy CLI is newer than
 the version in `PROBED_VERSIONS` (`bridge/service.py`): codex-cli 0.163.0, Claude Code
-2.1.308, cursor-agent 2026.11.11, opencode 2.2.6 and agy 1.5.3. After re-running the probes below on a newer CLI, update both this table and that
+2.1.308, cursor-agent 2026.11.11, opencode 2.2.6 and agy 1.5.5 (the CLI self-updated from 1.5.3 on 2026-11-11 during the probes). After re-running the probes below on a newer CLI, update both this table and that
 constant.
 
 | Component | Version | What was verified |
@@ -147,7 +147,7 @@ the process that started it. Its flows are tested headless with Textual's Pilot.
 | Piece | Implementation |
 |---|---|
 | `opencode-cli` | `opencode run --format json --standalone [-m] [--session]`, prompt on stdin; schema in the prompt, JSON parsed from the reply text (fenced or bare); `OPENCODE_CONFIG_CONTENT` is a V2 deny-all config allowing only read, glob, grep, with an empty per-run `XDG_CONFIG_HOME`; `OPENCODE_DISABLE_PROJECT_CONFIG=1`; `provider.quota` errors pause as QUOTA |
-| `agy-cli` | `agy --input-format stream-json --output-format stream-json -p= --sandbox --disable-slash-commands --settings <deny rules> --json-schema …`, one `{"event":"user"}` line on stdin; `result.structured_output`; account home = `HOME` |
+| `agy-cli` | `agy --input-format stream-json --output-format stream-json -p= --sandbox --disable-slash-commands --settings <deny rules, or write_file allows for an allow_write executor> --json-schema …`, one `{"event":"user"}` line on stdin; `result.structured_output`; account home = `HOME` |
 | Registry | `~/.agent-bridge/accounts.json` + `homes/<name>` (0700); merged into every project's accounts, project declarations win; legacy setups gain a Codex agent per registry openai account |
 | Switching | `account-use` prints `export CODEX_HOME=…` / `CLAUDE_CONFIG_DIR=…` or an `agy` shell function, or opens a subshell; global homes are never rewritten |
 
@@ -204,6 +204,25 @@ Probe, 2026-11-11 (opencode 2.2.6, agy 1.5.3, cursor-agent 2026.11.11), real CLI
   records, user hooks and skills stay global. The CLI rewrites that file and adds keys such as
   `authInfo`, so the bridge keeps the existing object and replaces only `permissions`. Whether a
   project `.cursor/cli.json` can loosen the denies was not established, so it is refused.
+- agy executor probe, 2026-11-11 (agy 1.5.5 on macOS; the CLI updated itself from 1.5.3 that
+  day), real CLI. Settings `{"toolPermission":"request-review","permissions":{"allow":
+  ["write_file(src/)","write_file(README.md)"],"deny":["command(*)","mcp(*)"]}}` via
+  `--settings`, no `--mode`: writes and edits (both governed by `write_file`) succeed only under
+  an allowed directory or at an allowed exact file. Rules are relative to the workspace root;
+  `write_file(src/)` matches at every depth by path component (not `src-evil/`), case-sensitive;
+  `write_file(README.md)` matches only the root file; glob forms do not work; a catch-all deny
+  `write_file(*)` beats every allow. A write outside the allows needs approval, which headless is
+  auto-denied and the turn ends at once (exit 0, SUCCESS, empty response, no structured output,
+  `denied_actions`; the step event even shows DONE). `..` is normalised and symlinks resolved
+  before the check; a pre-existing hardlink inside an allowed directory is written in place,
+  changing its other name (e.g. `.env`). Deny rules are case-sensitive on a case-insensitive
+  filesystem (`.ENV` overwrote a denied `.env`). With `command(*)` denied the agent cannot run
+  shell, delete or rename; `mcp(*)` deny still refuses MCP. Not gated: define/invoke_subagent
+  (subagents seemed to inherit the write rules), schedule, image generation, `search_web`; reads
+  in the workspace are not blocked; agy writes its own state under `~/.gemini`. `denied_actions`
+  is not sticky across a `--conversation` resume, but `structured_output` can be stale there
+  (previous turn's JSON while `response` holds new prose), so the bridge takes a resumed turn's
+  answer only from the response text. Not changed: the agy login check is unreliable on 1.5.x.
 - Still open for all three: no OS sandbox for the CLI's own process; agy keeps `search_web`,
   subagents and browser tools and runs user-level hooks/MCP; Cursor user-level hooks and skills
   load; Cursor sessions started before this change cannot be resumed; opencode user config is no
@@ -240,8 +259,8 @@ Probe, 2026-11-11 (opencode 2.2.6, macOS, free models only): opencode as executo
 
 ## 9. Known limitations / unsupported
 
-- agy and cursor-agent cannot execute (write) tasks; opencode can only with `allow_write: true`
-  (edit allowlist, no shell; see the 2026-11-11 executor probe in section 8). agy keeps `search_web`, subagents
+- cursor-agent cannot execute (write) tasks; opencode and agy can only with `allow_write: true`
+  (edit/write_file allowlist, no shell; see the 2026-11-11 executor probes in section 8). agy keeps `search_web`, subagents
   and browser tools that no rule blocks; opencode has no per-account login isolation.
 - `account-add --provider google` (agy sign-in inside a fresh `HOME`) and `account-add` for
   Claude were exercised only against the fake CLIs: they are human-only, so no real login was

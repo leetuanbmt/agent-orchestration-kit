@@ -96,7 +96,7 @@ def test_opencode_quota(make_orch, fake_codex, fake_others, monkeypatch):
 
 
 # @pt.id KIT-CFG-READONLY-adapters
-# @pt.item opencode and agy cannot be configured to write
+# @pt.item opencode and agy cannot be configured to write without allow_write
 # @pt.condition allow_write, a write capability, the executor role, or an opencode account with a home
 # @pt.expected each is rejected with a reason; reading roles stay valid
 # @pt.target bridge.orchestrator.AgentConfig, bridge.orchestrator.AccountProfile
@@ -116,10 +116,6 @@ roles: {ROLES}
 
 
 @pytest.mark.parametrize("oc,agy,roles,message", [
-    ("{provider: opencode}", "{adapter: agy-cli, account: gm, allow_write: true}",
-     "{executor: codex}", "read-only"),
-    ("{provider: opencode}", "{adapter: agy-cli, account: gm, capabilities: [write]}",
-     "{executor: codex}", "read-only"),
     ("{provider: opencode}", "{adapter: agy-cli, account: gm}",
      "{executor: opencode}", "write"),
     ("{provider: opencode, home: /tmp/oc}", "{adapter: agy-cli, account: gm}",
@@ -770,16 +766,16 @@ def test_opencode_records_shell_commands(repo):
 # @pt.id KIT-HEALTH-probed-versions-others
 # @pt.item opencode and agy have probed versions
 # @pt.condition Bridge.PROBED_VERSIONS
-# @pt.expected opencode-cli 2.2.6 and agy-cli 1.5.3 are listed; a newer version is unprobed, the same is not
+# @pt.expected opencode-cli 2.2.6 and agy-cli 1.5.5 are listed; a newer version is unprobed, the same is not
 # @pt.target bridge.service.Bridge.PROBED_VERSIONS, bridge.service.Bridge.unprobed
 # @pt.method unit
 # @pt.legacy none
 def test_probed_versions_for_opencode_and_agy():
     from bridge.service import Bridge
     assert Bridge.PROBED_VERSIONS["opencode-cli"] == (2, 2, 6)
-    assert Bridge.PROBED_VERSIONS["agy-cli"] == (1, 5, 3)
+    assert Bridge.PROBED_VERSIONS["agy-cli"] == (1, 5, 5)
     assert not Bridge.unprobed("opencode-cli", "2.2.6") and Bridge.unprobed("opencode-cli", "2.2.7")
-    assert not Bridge.unprobed("agy-cli", "1.5.3") and Bridge.unprobed("agy-cli", "1.6.0")
+    assert not Bridge.unprobed("agy-cli", "1.5.5") and Bridge.unprobed("agy-cli", "1.6.0")
 
 
 OC_WRITER = """
@@ -812,9 +808,9 @@ def _oc_build(repo, tmp_path, **over):
 
 
 # @pt.id KIT-CFG-opencode-executor
-# @pt.item An opencode agent with allow_write is an executor; agy and cursor still are not
-# @pt.condition opencode-cli allow_write true as executor; agy-cli and cursor-cli with allow_write
-# @pt.expected opencode validates and can write; agy and cursor are refused as read-only
+# @pt.item An opencode agent with allow_write is an executor; cursor still is not
+# @pt.condition opencode-cli allow_write true as executor; cursor-cli with allow_write
+# @pt.expected opencode validates and can write; cursor is refused as read-only
 # @pt.target bridge.orchestrator.AgentConfig, bridge.orchestrator.READ_ONLY_ADAPTERS
 # @pt.method unit
 # @pt.legacy none
@@ -825,7 +821,7 @@ def test_opencode_executor_config():
     assert not AgentConfig(adapter="opencode-cli", account="oc").can("write")
     with pytest.raises(ValueError, match="needs 'write'"):
         parse(OC_WRITER.replace(", allow_write: true", ""))
-    for adapter, provider in (("agy-cli", "google"), ("cursor-cli", "cursor")):
+    for adapter, provider in (("cursor-cli", "cursor"),):
         text = OC_WRITER.replace("opencode-cli, account: oc", f"{adapter}, account: oc") \
             .replace("{provider: opencode}", f"{{provider: {provider}}}")
         with pytest.raises(ValueError, match="read-only"):
@@ -940,3 +936,177 @@ def test_opencode_executor_flow(make_orch, fake_others, monkeypatch):
     assert {"action": "edit", "resource": "src/*", "effect": "allow"} in config["permissions"]
     assert "no shell" in call["prompt"]
     assert (b.root / "src" / "app.py").read_text() == "x = 2\n"
+
+
+# @pt.id KIT-ADAPTER-opencode-agy-hardlink
+# @pt.item A writing run is refused for a hardlinked file under an allowed directory or at an allowed exact path
+# @pt.condition src/linked is a second name of an inode (os.link), once under src/** and once as an exact allowed path; opencode and agy
+# @pt.expected ValueError naming the file for both adapters; the fake CLI is never started
+# @pt.target bridge.executor._write_preflight
+# @pt.method integration
+# @pt.legacy none
+@pytest.mark.parametrize("which", ["opencode", "agy"])
+def test_write_refuses_hardlinks(repo, fake_others, which):
+    import os
+
+    from bridge.executor import AgyAdapter, OpenCodeAdapter
+    adapter = (OpenCodeAdapter if which == "opencode" else AgyAdapter)(BridgeConfig(), repo)
+    make = _oc_request if which == "opencode" else _agy_write_request
+    (repo / "src").mkdir(exist_ok=True)
+    (repo / "secret.txt").write_text("x")
+    os.link(repo / "secret.txt", repo / "src" / "linked")
+    with pytest.raises(ValueError, match=r"hardlinked file src/linked"):
+        run(adapter.run(make()))
+    with pytest.raises(ValueError, match=r"src/linked is a hardlink"):
+        run(adapter.run(make(write_paths=["src/linked"])))
+    assert not (fake_others / which / "calls").exists()
+
+
+AGY_WRITER = """
+version: 1
+accounts:
+  gm: {provider: google}
+agents:
+  agy: {adapter: agy-cli, account: gm, allow_write: true}
+roles: {executor: agy}
+workflow: {stages: [execute, test]}
+"""
+
+
+def _agy_write_request(**over):
+    base = {"prompt": "EXECUTOR", "sandbox": "workspace-write", "write_paths": ["src/**"],
+            "deny_paths": [".env", ".git/**"]}
+    return _agy_request(**{**base, **over})
+
+
+def _agy_settings(argv):
+    return json.loads(argv[argv.index("--settings") + 1])
+
+
+# @pt.id KIT-CFG-agy-executor
+# @pt.item An agy agent with allow_write is an executor; without it, and cursor with it, are not
+# @pt.condition agy-cli with allow_write as executor; agy-cli without it; cursor-cli with it
+# @pt.expected agy validates and can write; agy without allow_write cannot; cursor is still refused
+# @pt.target bridge.orchestrator.AgentConfig
+# @pt.method unit
+# @pt.legacy agy was read-only
+def test_agy_executor_config():
+    from bridge.orchestrator import AgentConfig
+    orch = parse(AGY_WRITER)
+    assert orch.agents["agy"].can("write") and orch.agents["agy"].writes
+    assert not AgentConfig(adapter="agy-cli", account="gm").can("write")
+    with pytest.raises(ValueError, match="needs 'write'"):
+        parse(AGY_WRITER.replace(", allow_write: true", ""))
+    text = AGY_WRITER.replace("agy-cli", "cursor-cli").replace("google", "cursor")
+    with pytest.raises(ValueError, match="read-only"):
+        parse(text)
+
+
+# @pt.id KIT-ADAPTER-agy-write-settings
+# @pt.item A writing agy run gets write_file allows and no write_file deny; a read-only run keeps the deny settings
+# @pt.condition build() for a workspace-write request (src/**, README.md, docs dir) and a read-only one
+# @pt.expected writing: request-review, allow write_file(src/), write_file(README.md), write_file(docs/); deny exactly command(*) and mcp(*); no --mode; read-only: exactly _AGY_SETTINGS
+# @pt.target bridge.executor.AgyAdapter.build, bridge.executor.agy_write_rules
+# @pt.method integration
+# @pt.legacy none
+def test_agy_write_settings(repo, tmp_path):
+    from bridge.executor import _AGY_SETTINGS, AgyAdapter
+    (repo / "docs").mkdir()
+    adapter = AgyAdapter(BridgeConfig(), repo)
+    argv = adapter.build(_agy_write_request(write_paths=["src/**", "README.md", "docs"]), tmp_path)
+    assert _agy_settings(argv) == {"toolPermission": "request-review", "permissions": {
+        "allow": ["write_file(src/)", "write_file(README.md)", "write_file(docs/)"],
+        "deny": ["command(*)", "mcp(*)"]}}
+    assert "--mode" not in argv
+    argv = adapter.build(_agy_request(), tmp_path)
+    assert _agy_settings(argv) == _AGY_SETTINGS and "write_file(*)" in _AGY_SETTINGS["permissions"]["deny"]
+    for bad in ("*.md", "**"):
+        with pytest.raises(ValueError, match="directory-anchored"):
+            adapter.build(_agy_write_request(write_paths=[bad]), tmp_path)
+
+
+# @pt.id KIT-ADAPTER-agy-write-refusals
+# @pt.item A writing agy run is refused for symlinks, protected files and .agents hooks
+# @pt.condition a symlink and an ignored .env under src/, then .agents/hooks.json
+# @pt.expected ValueError naming the file; the fake CLI is never started; a read-only run ignores the preflight
+# @pt.target bridge.executor.AgyAdapter.build
+# @pt.method integration
+# @pt.legacy none
+def test_agy_write_refusals(repo, fake_others):
+    from bridge.executor import AgyAdapter
+    adapter = AgyAdapter(BridgeConfig(), repo)
+    (repo / "src").mkdir(exist_ok=True)
+    (repo / "src" / "link").symlink_to("../README.md")
+    with pytest.raises(ValueError, match=r"symlink src/link"):
+        run(adapter.run(_agy_write_request()))
+    assert run(adapter.run(_agy_request())).outcome == "ok"
+    (repo / "src" / "link").unlink()
+    (repo / "src" / ".env").write_text("SECRET=1\n")
+    with pytest.raises(ValueError, match=r"file src/\.env"):
+        run(adapter.run(_agy_write_request(deny_paths=["**/.env"])))
+    (repo / "src" / ".env").unlink()
+    (repo / ".agents").mkdir()
+    (repo / ".agents" / "hooks.json").write_text("{}")
+    with pytest.raises(ValueError, match="hooks.json"):
+        run(adapter.run(_agy_write_request()))
+
+
+# @pt.id KIT-ADAPTER-agy-write-prompt
+# @pt.item The writing agy prompt states the limits
+# @pt.condition a writing request for src/** and docs/a.md; a read-only one
+# @pt.expected the prompt says no shell, delete or rename, lists the paths, says an outside write ends the turn and asks to report untested checks; the read-only prompt is unchanged
+# @pt.target bridge.executor.AgyAdapter.stdin
+# @pt.method unit
+# @pt.legacy none
+def test_agy_write_prompt(repo):
+    from bridge.executor import AgyAdapter
+    adapter = AgyAdapter(BridgeConfig(), repo)
+    text = json.loads(adapter.stdin(_agy_write_request(write_paths=["src/**", "docs/a.md"])))
+    content = text["message"]["content"]
+    assert content.startswith("EXECUTOR") and "no shell" in content and "delete or rename" in content
+    assert "src/ (any depth), docs/a.md" in content and "ends your turn" in content
+    assert "could not check" in content
+    assert json.loads(adapter.stdin(_agy_request()))["message"]["content"] == "PLANNER"
+
+
+# @pt.id KIT-ADAPTER-agy-resumed-stale-output
+# @pt.item A resumed agy turn takes its answer only from the response text
+# @pt.condition the fake answers in prose while keeping a structured_output, with and without a session_id; and answers JSON on a resumed turn
+# @pt.expected without session_id the structured output is used; resumed with prose the turn fails naming the missing fresh JSON answer; resumed with JSON it succeeds and the prompt asks for one JSON object
+# @pt.target bridge.executor.AgyAdapter.handle, bridge.executor.AgyAdapter.stdin
+# @pt.method integration
+# @pt.legacy a resumed turn returned the previous turn's structured_output
+def test_agy_resumed_turn_needs_fresh_json(repo, fake_others, monkeypatch):
+    from bridge.executor import AgyAdapter
+    adapter = AgyAdapter(BridgeConfig(), repo)
+    monkeypatch.setenv("FAKE_AGY_PROSE", "1")
+    assert run(adapter.run(_agy_request())).outcome == "ok"
+    res = run(adapter.run(_agy_request(session_id="conv-1")))
+    assert res.outcome != "ok" and res.final is None
+    assert "no fresh JSON answer" in (res.error or "")
+    monkeypatch.delenv("FAKE_AGY_PROSE")
+    res = run(adapter.run(_agy_request(session_id="conv-1")))
+    assert res.outcome == "ok" and res.final is not None
+    assert "exactly one JSON object" in log(fake_others / "agy")[-1]["stdin"]
+    assert "exactly one JSON object" not in log(fake_others / "agy")[0]["stdin"]
+
+
+# @pt.id KIT-FLOW-agy-executor
+# @pt.item An agy executor task reaches verification with its change in scope
+# @pt.condition fake agy writes src/app.py when a write_file allow covers it (and src-evil/x.py, which none does); the task allows src/**
+# @pt.expected the task is DONE after verification; the run's settings carried write_file(src/) and no write_file deny; the file outside the allow is not written
+# @pt.target bridge.executor.AgyAdapter, Bridge.execute_task
+# @pt.method integration
+# @pt.legacy none
+def test_agy_executor_flow(make_orch, fake_others, monkeypatch):
+    monkeypatch.setenv("FAKE_AGY_WRITE", "src/app.py=x = 2\n;src-evil/x.py=bad\n")
+    b = make_orch(AGY_WRITER)
+    tid = run(b.create_task(spec()))["task_id"]
+    assert run(b.execute_task(tid, wait=True))["state"] == "DONE"
+    call, = log(fake_others / "agy")
+    settings = _agy_settings(call["argv"])
+    assert settings["permissions"]["allow"] == ["write_file(src/)"]
+    assert "write_file(*)" not in settings["permissions"]["deny"]
+    assert "no shell" in call["stdin"]
+    assert (b.root / "src" / "app.py").read_text() == "x = 2\n"
+    assert not (b.root / "src-evil").exists()

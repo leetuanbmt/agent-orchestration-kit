@@ -129,7 +129,7 @@ cậy. Nó là CLI và MCP server cục bộ cho từng repository; task ghi son
 - Chia việc cho nhiều subscription Codex hoặc Claude, mỗi account có giới hạn và thứ tự failover
   riêng.
 - Pipeline chỉ dùng gate, nơi test và kiểm tra phạm vi quyết định, không cần reviewer LLM.
-- Một model thứ hai (opencode, cursor hoặc agy) làm planner hoặc reviewer (chỉ đọc), hoặc opencode làm executor tự chọn bật.
+- Một model thứ hai (opencode, cursor hoặc agy) làm planner hoặc reviewer (chỉ đọc), hoặc opencode hay agy làm executor tự chọn bật.
 
 ## Kiến trúc
 
@@ -173,7 +173,7 @@ hoạch và review, Codex thực thi.
 - Ít nhất một agent CLI đã đăng nhập bằng subscription riêng; không cần API key:
   - Codex CLI (đã kiểm chứng với 0.163.0; kiểm tra bằng `codex login status`), và/hoặc
   - Claude Code headless (đã kiểm chứng với 2.1.308; kiểm tra bằng `claude auth status`).
-  - Tùy chọn, dùng làm planner/reviewer chỉ đọc: opencode, cursor (`cursor-agent`), agy.
+  - Tùy chọn, planner/reviewer: opencode, cursor (`cursor-agent`), agy (chỉ đọc; opencode và agy có thể tự chọn bật thực thi bằng `allow_write: true`).
 
 ## Cài đặt
 
@@ -339,7 +339,7 @@ thái có trong [docs/configuration.md](docs/configuration.md) (tiếng Anh).
 | `client` | — | Không | Chính MCP caller; bridge không bao giờ khởi chạy nó | — |
 | `opencode-cli` | `opencode` | Chỉ khi `allow_write: true` (allowlist edit, không shell) | Quyền V2 từ chối tất cả (chỉ read, glob, grep), thư mục config người dùng rỗng; không có OS sandbox | Chỉ login global |
 | `cursor-cli` | `cursor` | Không (config từ chối) | `--mode ask --sandbox enabled` cùng lệnh chặn `Write(**)`/`Shell(*)` trong thư mục config riêng; từ chối thư mục có `.cursor/hooks.json`, `.cursor/cli.json` hoặc hook trong `.claude/settings*.json`; chưa xác minh OS sandbox | Chỉ login global |
-| `agy-cli` | `google` | Không (config từ chối) | `--sandbox` cùng settings `request-review` chặn ghi, shell và MCP; từ chối `.agents/hooks.json` và `.agents/mcp_config.json`; không có OS sandbox | Cả một `HOME` |
+| `agy-cli` | `google` | Chỉ khi `allow_write: true` (quy tắc cho phép `write_file`, không shell) | `--sandbox` cùng settings `request-review` chặn ghi (lượt chỉ đọc), shell và MCP; từ chối `.agents/hooks.json` và `.agents/mcp_config.json`; không có OS sandbox | Cả một `HOME` |
 
 - `executor` phải ghi được, nên chỉ có thể là `codex-cli` hoặc `claude-cli` với `allow_write`.
 - `planner` và `reviewer` chỉ cần quyền đọc; `client` nghĩa là chính bạn, thông qua
@@ -478,12 +478,12 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   user đọc được vẫn đọc được.
   Nên dùng Codex làm executor cho công việc không đáng tin cậy, vì các tool Read của Claude và
   chính tiến trình claude không bị OS sandbox giới hạn, và Bash trong sandbox vẫn truy cập được Keychain.
-- **opencode và agy** mặc định chỉ đọc (opencode có thể bật chế độ executor bên dưới), được ép bằng quy tắc quyền của CLI chứ không phải cờ mode.
+- **opencode và agy** mặc định chỉ đọc (cả hai có thể bật chế độ executor bên dưới), được ép bằng quy tắc quyền của CLI chứ không phải cờ mode.
   opencode (2.2.6) chạy với config từ chối tất cả trong `OPENCODE_CONFIG_CONTENT`, chỉ cho
   read, glob và grep (file `.env`, MCP, skill, websearch và subagent bị chặn), tắt config của
   project, và một `XDG_CONFIG_HOME` rỗng riêng cho mỗi lượt chạy, nên plugin, MCP server, agent
   và skill opencode cấp người dùng không được nạp khi bridge chạy (login và session giữ nguyên).
-  agy (1.5.3) chạy với `--sandbox --disable-slash-commands` và `--settings` theo phiên đặt
+  agy (1.5.5) chạy với `--sandbox --disable-slash-commands` và `--settings` theo phiên đặt
   `toolPermission: request-review`, chặn `write_file(*)`, `command(*)` và `mcp(*)`; `--mode plan`
   không ép gì cả nên không dùng. Lượt mà agy cần phê duyệt kết thúc với `denied_actions` và bị
   tính là thất bại. agy từ chối thư mục có `.agents/hooks.json` hoặc `.agents/mcp_config.json`,
@@ -502,6 +502,19 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   `opencode_worktree_remove` vẫn còn (do `edit` quản lý, bị từ chối ngoài allowlist). Chỉ thử
   với model miễn phí nên model khác có thể lộ thêm tool; không có OS sandbox, hãy ưu tiên Codex
   cho việc không tin cậy.
+  **Chế độ executor của agy (tự chọn bật):** agy chỉ thực thi khi có `allow_write: true`. Lượt
+  chạy dùng settings `request-review` với quy tắc cho phép `write_file(<thư mục>/)` và
+  `write_file(<file>)` cho các allowed path đã ánh xạ, và chỉ chặn `command(*)` và `mcp(*)`. Các
+  quy tắc cho phép này phủ mọi độ sâu dưới thư mục và kiểm tra phạm vi sau lượt chạy của bridge
+  mới áp dụng phạm vi task; ghi ngoài chúng sẽ kết thúc lượt và làm lượt thất bại. Không có
+  shell nên không chạy test, xóa hay đổi tên được. Hardlink, symlink hoặc file được bảo vệ/loại
+  trừ nằm dưới thư mục được phép sẽ khiến lượt chạy bị từ chối. Không bị chặn: subagent,
+  schedule, tạo ảnh và `search_web`. Việc đọc trong workspace (kể cả `.env`) không bị chặn,
+  settings agy global của bạn được gộp vào, hook và MCP server cấp người dùng vẫn khởi động, và
+  agy giữ trạng thái dưới `~/.gemini`. Không có OS sandbox, hãy ưu tiên Codex cho việc không
+  tin cậy. CLI tự cập nhật (đã probe trên 1.5.5), và việc kiểm tra login của agy được biết là
+  không đáng tin trên 1.5.x. Lượt agy được resume phải trả lời bằng một JSON object trong
+  response text; nếu không thì thất bại thay vì dùng lại kết quả của lượt trước.
 - **cursor** cũng chỉ đọc. Nó chạy `cursor-agent` với `--mode ask`, `--sandbox enabled` và
   `--trust`. Chỉ riêng chế độ ask thì dựa vào việc model từ chối, nên mỗi lượt chạy còn đặt
   `CURSOR_CONFIG_DIR=<state dir>/cursor-config` với `cli-config.json` có quyền chặn `Write(**)`
@@ -554,7 +567,7 @@ quyền bên trong bridge.
 - Quota của Claude chỉ biết được sau lượt chạy đầu tiên của account qua bridge; quota của Codex là
   snapshot từ session gần nhất, không phải truy vấn trực tiếp.
 - Hành vi sandbox của Codex mới chỉ được kiểm chứng trên macOS.
-- Chưa hỗ trợ: agy hoặc cursor làm executor, nhiều reviewer bỏ phiếu, và stage riêng cho role
+- Chưa hỗ trợ: cursor làm executor, nhiều reviewer bỏ phiếu, và stage riêng cho role
   tùy chỉnh. Muốn thêm CLI khác cần viết một lớp con `Adapter` mới.
 
 Chi tiết hơn: [docs/REPORT.md](docs/REPORT.md) (phiên bản CLI đã kiểm chứng, các probe và danh
