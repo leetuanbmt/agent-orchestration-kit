@@ -87,8 +87,8 @@ workflow:
 | Section | Keys |
 |---|---|
 | `version` | Must be `1`. |
-| `accounts.<id>` (in `accounts.yaml`) | `provider`: `openai`, `anthropic`, `google` or `opencode`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode accepts no `home`). `login`: the name of a machine registry login instead; provider and home come from the registry (`home` is then refused, a `provider` must match). `max_concurrency`: 1–8, default 1. `token_env` (anthropic only): the name of a variable holding a `claude setup-token` token, see [Accounts](#accounts). `limits`: optional per-account limits, see [Per-account limits](#per-account-limits-opt-in). |
-| `agents.<id>` | `adapter`: `codex-cli`, `claude-cli`, `client`, `opencode-cli` or `agy-cli`. `account` (required except for `client`), optional `provider` (must match the adapter), `model`, `capabilities` (subset of `[read, write]`), `allow_write` (default true for `codex-cli`, false otherwise), `allow_bash` (`claude-cli` only), `timeout_s` (≥ 30), `enabled` (default true). |
+| `accounts.<id>` (in `accounts.yaml`) | `provider`: `openai`, `anthropic`, `google`, `opencode` or `cursor`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode and cursor accept no `home`). `login`: the name of a machine registry login instead; provider and home come from the registry (`home` is then refused, a `provider` must match). `max_concurrency`: 1–8, default 1. `token_env` (anthropic only): the name of a variable holding a `claude setup-token` token, see [Accounts](#accounts). `limits`: optional per-account limits, see [Per-account limits](#per-account-limits-opt-in). |
+| `agents.<id>` | `adapter`: `codex-cli`, `claude-cli`, `client`, `opencode-cli`, `cursor-cli` or `agy-cli`. `account` (required except for `client`), optional `provider` (must match the adapter), `model`, `capabilities` (subset of `[read, write]`), `allow_write` (default true for `codex-cli`, false otherwise), `allow_bash` (`claude-cli` only), `timeout_s` (≥ 30), `enabled` (default true). |
 | `roles.<name>` | An agent id, or `{agents: [...], default: <agent>, strategy: ordered \| explicit \| quota, requires: read \| write}`. `default` is tried first; the other agents are fallbacks in list order. `quota` picks the eligible agent whose account has the most remaining quota (unknown quota last, ties in list order). `default` cannot be combined with `strategy: explicit` or `quota`. |
 | `routing.slot_wait_s` | 0–86400, default 1800. How long `bridge_run_workflow` keeps retrying, with backoff from 5 s to 60 s, a task whose account slots (or the worktree's writer slot) are held by another bridge process. `0` ends the workflow `WAITING` at once, as before. |
 | `routing.quota_fallback` | `enabled` (default false), `min_remaining_pct` (default 10), `agents` (candidates in order; default: the executor role's agents), `max_switches` (1–20, default 3), `keep_sessions` (default false). See [Per-account limits](#per-account-limits-opt-in). |
@@ -104,7 +104,7 @@ Role rules:
 - `executor` is required and needs `write`; `planner` and `reviewer` need `read`.
 - A `client` agent can only read: it plans and reviews through the MCP tools and is never
   started by the bridge.
-- `opencode-cli` and `agy-cli` are read-only; `allow_write` or a `write` capability on them is
+- `opencode-cli`, `cursor-cli` and `agy-cli` are read-only; `allow_write` or a `write` capability on them is
   rejected.
 - Built-in role names are `planner`, `executor`, `reviewer`, `advisor` and `tester`. Other role
   names are accepted, but only planner, executor and reviewer have a stage; testing is the
@@ -193,7 +193,7 @@ keys are rejected. The full file with every default is `config.example.json`;
 |---|---|---|
 | `sandbox` | `workspace-write` | Codex sandbox for executor runs, or `read-only`. `danger-full-access` is not accepted. |
 | `model` | `null` | Default Codex model when an agent sets none (the CLI's default when `null`). |
-| `codex_bin` / `claude_bin` / `opencode_bin` / `agy_bin` | `codex` / `claude` / `opencode` / `agy` | CLI executables. |
+| `codex_bin` / `claude_bin` / `opencode_bin` / `cursor_bin` / `agy_bin` | `codex` / `claude` / `opencode` / `cursor-agent` / `agy` | CLI executables. |
 | `ignore_user_config` | `true` | Pass `--ignore-user-config` to Codex, so `~/.codex/config.toml` (hooks, MCP servers, profiles) is not loaded. |
 | `claude_hook_settings` | `null` | Absolute path to a JSON file outside the project containing only a `hooks` object; passed to every Claude run as `--settings`. Trusted code, runs unsandboxed. Set it only by hand. |
 | `default_timeout_s` / `max_timeout_s` | `1800` / `7200` | Per-run time limits. |
@@ -221,6 +221,7 @@ project uses one only by declaring it with `login:`.
 | `anthropic` | `claude-cli` | `CLAUDE_CONFIG_DIR` |
 | `google` | `agy-cli` | `HOME` (a whole home directory) |
 | `opencode` | `opencode-cli` | No `home`: opencode has a single global login |
+| `cursor` | `cursor-cli` | No `home`: Cursor has a single global login (`cursor-agent login`) |
 
 - **No `home`.** The CLI's inherited global login (`~/.codex`, `~/.claude`) is used; the bridge
   never writes to it.
@@ -360,7 +361,10 @@ agent-bridge account-use work --shell     # or open a subshell; exit to return
 
 For agy, `account-use` defines an `agy` shell function instead of changing `HOME`. For opencode,
 `account-add <name> --provider opencode` registers one account without a home, and
-`account-login <name>` runs `opencode auth login`.
+`account-login <name>` runs `opencode auth login`. Cursor works the same way:
+`account-add <name> --provider cursor` registers one home-less account and `account-login <name>`
+runs `cursor-agent login`. `cursor-cli` runs `cursor-agent` in `--mode ask` with `--sandbox
+enabled` and `--trust`, and refuses to run in a directory that contains `.cursor/hooks.json`.
 
 ### Quota, availability and concurrency
 

@@ -309,3 +309,172 @@ def test_agy_login_status_reads_token_file(fake_others, tmp_path, monkeypatch):
     assert login_status(cfg, Account("global", None, "google")) is True  # fixture's $HOME token
     assert not (fake_others / "agy" / "models_called").exists()
     assert login_status(BridgeConfig(agy_bin="agy-not-installed"), acc) is None
+
+
+# Cursor (cursor-agent): a read-only planner and reviewer on its global login.
+CONFIG_CURSOR = """
+version: 1
+accounts:
+  cx: {provider: openai, home: {home}/cx}
+  cu: {provider: cursor}
+agents:
+  codex: {adapter: codex-cli, account: cx}
+  cursor: {adapter: cursor-cli, account: cu, model: auto}
+roles: {planner: cursor, executor: codex, reviewer: cursor}
+workflow: {stages: [plan, execute, test, review]}
+"""
+
+
+def _cursor_request(**over):
+    from bridge.executor import RunRequest
+    base = {"prompt": "REVIEWER", "account": accounts.Account("cu", None, "cursor"),
+            "sandbox": "read-only", "timeout_s": 60, "schema": {"properties": {"decision": {}}}}
+    return RunRequest(**{**base, **over})
+
+
+# @pt.id KIT-FLOW-F3-cursor-planner-reviewer
+# @pt.item Config with Cursor as planner and reviewer
+# @pt.condition fake cursor-agent; Codex executes
+# @pt.expected the workflow reaches DONE with the review recorded as an agent review by cursor; every Cursor run is in ask mode with the sandbox enabled and trust, the prompt on stdin with the schema, and none of the write or approve flags
+# @pt.target bridge.executor.CursorAdapter, Bridge.plan, Bridge._review_stage
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_planner_and_reviewer(make_orch, fake_codex, fake_others, monkeypatch):
+    monkeypatch.setenv("FAKE_CODEX_WRITE", WRITE)
+    b = make_orch(CONFIG_CURSOR)
+    wid = run(b.plan("Set x to 2", wait=True))["workflow_id"]
+    wf = run(b.run_workflow(wid, wait=True))
+    assert wf["state"] == "DONE", wf
+    planner, reviewer = log(fake_others / "cursor")
+    for call in (planner, reviewer):
+        argv = call["argv"]
+        assert argv[argv.index("--mode") + 1] == "ask"
+        assert argv[argv.index("--sandbox") + 1] == "enabled" and "--trust" in argv
+        assert argv[argv.index("--model") + 1] == "auto"
+        assert not {"-f", "--yolo", "--force", "--approve-mcps"} & set(argv)
+        assert call["agent_env"] == "1"
+    assert '"tasks"' in planner["prompt"] and '"decision"' in reviewer["prompt"]
+    assert "REVIEWER" in reviewer["prompt"]
+    review, = events(b, wf["tasks"][0]["task_id"], "review")
+    assert review["actor"] == Actor.AGENT and review["detail"]["reviewer"] == "cursor"
+
+
+# @pt.id KIT-CFG-READONLY-cursor
+# @pt.item cursor-cli cannot be configured to write
+# @pt.condition allow_write, a write capability, the executor role, or a cursor account with a home
+# @pt.expected each is rejected with a reason naming read-only, write or `cursor-agent login`; reading roles stay valid
+# @pt.target bridge.orchestrator.AgentConfig, bridge.orchestrator.AccountProfile
+# @pt.method unit
+# @pt.legacy none
+@pytest.mark.parametrize("account,agent,roles,message", [
+    ("{provider: cursor}", "{adapter: cursor-cli, account: cu, allow_write: true}",
+     "{executor: codex}", "read-only"),
+    ("{provider: cursor}", "{adapter: cursor-cli, account: cu, capabilities: [write]}",
+     "{executor: codex}", "read-only"),
+    ("{provider: cursor}", "{adapter: cursor-cli, account: cu}", "{executor: cursor}", "write"),
+    ("{provider: cursor, home: /tmp/cu}", "{adapter: cursor-cli, account: cu}",
+     "{executor: codex}", "cursor-agent login"),
+    ("{provider: opencode, home: /tmp/cu}", "{adapter: opencode-cli, account: cu}",
+     "{executor: codex}", "opencode auth login"),
+])
+def test_cursor_read_only(account, agent, roles, message):
+    def text(account, agent, roles):
+        return f"""
+accounts:
+  cx: {{provider: openai}}
+  cu: {account}
+agents:
+  cursor: {agent}
+  codex: {{adapter: codex-cli, account: cx}}
+roles: {roles}
+"""
+    parse(text("{provider: cursor}", "{adapter: cursor-cli, account: cu}",
+               "{planner: cursor, executor: codex, reviewer: cursor}"))
+    with pytest.raises(ValueError, match=message):
+        parse(text(account, agent, roles))
+
+
+# @pt.id KIT-ADAPTER-cursor-last-assistant
+# @pt.item Cursor's final answer comes from the last assistant event
+# @pt.condition the fake emits two assistant messages and a result that concatenates them; one run resumes a session
+# @pt.expected final is the JSON of the last assistant message, usage is kept as reported with no cost, the session id is reported, and --resume carries the given id
+# @pt.target bridge.executor.CursorAdapter.handle, bridge.executor.CursorAdapter.argv
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_last_assistant_event(repo, fake_others, monkeypatch):
+    from bridge.executor import CursorAdapter
+    monkeypatch.setenv("FAKE_CURSOR_SCENARIO", "multi")
+    seen = []
+    adapter = CursorAdapter(BridgeConfig(), repo)
+    res = run(adapter.run(_cursor_request(session_id="sess-1"), on_session=seen.append))
+    assert res.outcome == "ok" and res.final == {"decision": "approve", "notes": "looks good"}
+    assert res.final_text.startswith("{") and res.cost_usd is None
+    assert res.usage == {"inputTokens": 1, "outputTokens": 1, "cacheReadTokens": 1,
+                         "cacheWriteTokens": 0, "reasoningTokens": 1}
+    assert seen == ["sess-1"] and res.session_id == "sess-1"
+    call, = log(fake_others / "cursor")
+    assert call["argv"][call["argv"].index("--resume") + 1] == "sess-1"
+    assert call["argv"][call["argv"].index("--workspace") + 1] == str(repo)
+    assert "--resume" not in adapter.argv(_cursor_request())
+
+
+# @pt.id KIT-ADAPTER-cursor-error-result
+# @pt.item A Cursor error result fails the turn
+# @pt.condition the fake answers with a result of subtype error and is_error true
+# @pt.expected the run is not ok and the error text carries the subtype and the result text
+# @pt.target bridge.executor.CursorAdapter.handle, bridge.executor.CursorAdapter.finish
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_error_result(repo, fake_others, monkeypatch):
+    from bridge.executor import CursorAdapter
+    monkeypatch.setenv("FAKE_CURSOR_SCENARIO", "error")
+    res = run(CursorAdapter(BridgeConfig(), repo).run(_cursor_request()))
+    assert res.outcome != "ok" and res.final is None
+    assert "error: Usage limit reached" in (res.error or "")
+
+
+# @pt.id KIT-ADAPTER-cursor-hooks-refused
+# @pt.item Cursor is refused in a directory with project hooks
+# @pt.condition the run directory contains .cursor/hooks.json, and a write run is requested elsewhere
+# @pt.expected a ValueError naming the file and saying Cursor would execute it; the fake CLI is never started; a write run is refused as read-only
+# @pt.target bridge.executor.CursorAdapter.argv, bridge.executor.ReadOnlyAdapter.build
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_refuses_project_hooks(repo, fake_others):
+    from bridge.executor import CursorAdapter
+    adapter = CursorAdapter(BridgeConfig(), repo)
+    with pytest.raises(ValueError, match="read-only"):
+        run(adapter.run(_cursor_request(sandbox="workspace-write")))
+    (repo / ".cursor").mkdir()
+    (repo / ".cursor" / "hooks.json").write_text("{}")
+    with pytest.raises(ValueError, match=r"hooks\.json.*execute"):
+        run(adapter.run(_cursor_request()))
+    assert not (fake_others / "cursor" / "calls").exists()
+
+
+# @pt.id KIT-ACCT-cursor-registry
+# @pt.item Cursor accounts: add, second refused, login status
+# @pt.condition account-add --provider cursor, a second cursor account, a home, fake status with and without a login, shell switch
+# @pt.expected one home-less cursor account, second and home refused, logged in only when isAuthenticated is true, login runs `cursor-agent login`, shell switch keeps the global login
+# @pt.target bridge.accounts.register, bridge.accounts.login_status, bridge.accounts.login_argv, bridge.cli._run
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_accounts(fake_others, monkeypatch):
+    _human(monkeypatch)
+    add = cli.argparse.Namespace(cmd="account-add", name="cu", provider="cursor", home=None,
+                                 device_auth=False)
+    monkeypatch.setattr(cli, "_login", lambda *a, **k: True)
+    assert asyncio.run(cli._run(add))["account"] == "cu"
+    assert accounts.load_registry()["cu"] == {"provider": "cursor", "home": None}
+    for args, message in [(("cu2", "cursor"), "already uses the global cursor login"),
+                          (("cu3", "cursor", "/tmp/x"), "no isolated home")]:
+        with pytest.raises(ValueError, match=message):
+            accounts.register(*args)
+    acc = accounts.Account("cu", None, "cursor")
+    cfg = BridgeConfig()
+    assert accounts.login_status(cfg, acc) is True
+    assert accounts.login_argv(cfg, acc) == ["cursor-agent", "login"]
+    assert accounts.shell_use(acc) == "true  # cursor always uses its global login"
+    monkeypatch.setenv("FAKE_CURSOR_LOGGED_OUT", "1")
+    assert accounts.login_status(cfg, acc) is False
+    assert accounts.login_status(BridgeConfig(cursor_bin="cursor-not-installed"), acc) is None

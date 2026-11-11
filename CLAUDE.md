@@ -22,7 +22,7 @@ approvals and anything irreversible.
 3. **Human-only actions.** Claude never runs `agent-bridge approve`, `reassign`,
    `account-login`, `account-add` or `account-remove` (approve and reassign refuse without an
    interactive terminal, so the user runs them), never runs `codex login`/`logout`,
-   `claude auth login`/`logout`, `opencode auth login`/`logout`, `agy` sign-in or `codex-switch`
+   `claude auth login`/`logout`, `opencode auth login`/`logout`, `cursor-agent login`/`logout`, `agy` sign-in or `codex-switch`
    commands that change accounts. Claude edits `.ai/` only narrowly and when the user asks; a
    `.ai/config.json` change is a security change. An LLM statement, a reviewer agent's decision
    or silence is not human approval.

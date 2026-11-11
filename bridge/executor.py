@@ -579,6 +579,12 @@ class ReadOnlyAdapter(Adapter):
         raise NotImplementedError
 
 
+def _schema_prompt(req: RunRequest) -> str:
+    """For CLIs with no structured-output flag: the schema goes into the prompt."""
+    return (f"{req.prompt}\n\nReply with exactly one JSON object and nothing else (no prose, "
+            f"no code fence), matching this JSON schema:\n{json.dumps(req.schema)}")
+
+
 # Inline opencode config for every run: no edits, shell, web fetches or paths outside the
 # project; the project's own opencode config is ignored. Probed on opencode 2.1.2: with it the
 # model reported having no tool to write files, and nothing was written.
@@ -610,8 +616,7 @@ class OpenCodeAdapter(ReadOnlyAdapter):
                 "OPENCODE_DISABLE_PROJECT_CONFIG": "1", "OPENCODE_DISABLE_AUTOUPDATE": "1"}
 
     def stdin(self, req: RunRequest) -> str:
-        return (f"{req.prompt}\n\nReply with exactly one JSON object and nothing else (no prose, "
-                f"no code fence), matching this JSON schema:\n{json.dumps(req.schema)}")
+        return _schema_prompt(req)
 
     def handle(self, ev: dict[str, Any], res: RunResult, ctx: dict[str, Any]) -> None:
         if not res.session_id and ev.get("sessionID"):
@@ -635,6 +640,60 @@ class OpenCodeAdapter(ReadOnlyAdapter):
             # e.g. {"type": "provider.quota", "status": 402}: keep both for classify().
             ctx["errors"].append(f"{err.get('type', '')} {err.get('status', '')}: "
                                  f"{err.get('message', '')}".strip())
+
+    def finish(self, res: RunResult, tmp: Path, ctx: dict[str, Any]) -> bool:
+        res.final = _json_object(res.final_text)
+        if res.final is None and not ctx["errors"]:
+            ctx["errors"].append("no JSON object in the final message")
+        return res.final is not None and not ctx["errors"]
+
+
+class CursorAdapter(ReadOnlyAdapter):
+    """`cursor-agent -p` in ask mode. Probed on cursor-agent 2026.11.11: the model reported that
+    writes and shell were blocked and wrote nothing. A project `.cursor/hooks.json` is executed
+    by the CLI even in ask mode and outside its sandbox, so a run directory with one is refused.
+    It has no structured-output flag: the schema goes into the prompt."""
+
+    name, provider = "cursor-cli", "cursor"
+
+    @property
+    def binary(self) -> str:
+        return self.cfg.cursor_bin
+
+    def argv(self, req: RunRequest) -> list[str]:
+        hooks = self.root / ".cursor" / "hooks.json"
+        if os.path.lexists(hooks):
+            raise ValueError(f"{self.name} is refused here: {hooks} exists and Cursor would "
+                             "execute it, outside its sandbox")
+        a = [self.binary, "-p", "--output-format", "stream-json", "--mode", "ask",
+             "--sandbox", "enabled", "--trust", "--workspace", str(self.root)]
+        if req.model:
+            a += ["--model", req.model]
+        if req.session_id:
+            a += ["--resume", req.session_id]
+        return a  # the prompt goes on stdin
+
+    def stdin(self, req: RunRequest) -> str:
+        return _schema_prompt(req)
+
+    def handle(self, ev: dict[str, Any], res: RunResult, ctx: dict[str, Any]) -> None:
+        t = ev.get("type")
+        if t == "system" and ev.get("subtype") == "init":
+            res.session_id = ev.get("session_id")
+            if ctx["on_session"] and res.session_id:
+                ctx["on_session"](res.session_id)
+        elif t == "assistant":
+            # One event per assistant message; the last one holds the answer.
+            blocks = (ev.get("message") or {}).get("content") or []
+            text = "".join(str(b.get("text") or "") for b in blocks
+                           if isinstance(b, dict) and b.get("type") == "text")
+            if text:
+                res.final_text = text
+        elif t == "result":
+            res.session_id = ev.get("session_id") or res.session_id
+            res.usage = ev.get("usage")
+            if ev.get("is_error") or ev.get("subtype") != "success":
+                ctx["errors"].append(f"{ev.get('subtype')}: {ev.get('result') or ''}".strip())
 
     def finish(self, res: RunResult, tmp: Path, ctx: dict[str, Any]) -> bool:
         res.final = _json_object(res.final_text)
@@ -693,7 +752,8 @@ class AgyAdapter(ReadOnlyAdapter):
 
 
 ADAPTERS: dict[str, type[Adapter]] = {"codex-cli": CodexAdapter, "claude-cli": ClaudeAdapter,
-                                      "opencode-cli": OpenCodeAdapter, "agy-cli": AgyAdapter}
+                                      "opencode-cli": OpenCodeAdapter, "agy-cli": AgyAdapter,
+                                      "cursor-cli": CursorAdapter}
 
 
 async def kill_group(proc: asyncio.subprocess.Process) -> None:

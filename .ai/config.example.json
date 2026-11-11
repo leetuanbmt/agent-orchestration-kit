@@ -5,6 +5,7 @@
   "claude_bin": "claude",
   "claude_hook_settings": null,
   "opencode_bin": "opencode",
+  "cursor_bin": "cursor-agent",
   "agy_bin": "agy",
   "ignore_user_config": true,
   "default_timeout_s": 1800,

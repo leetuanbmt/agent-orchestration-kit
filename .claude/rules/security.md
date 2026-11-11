@@ -26,6 +26,11 @@
   `OPENCODE_CONFIG_CONTENT` and project config disabled; agy runs `--mode plan --sandbox` and
   keeps browser tools the CLI cannot disable. Probes wrote no files with either; neither has an
   OS sandbox.
+- **cursor** (`cursor-cli`) is a read-only adapter too: `cursor-agent` runs in `--mode ask` with
+  `--sandbox enabled` and `--trust`; in ask mode the model reported writes and shell blocked and
+  wrote nothing (cursor-agent 2026.11.11). The CLI executes a project `.cursor/hooks.json` even in
+  ask mode and outside its sandbox, so the adapter refuses to run in a directory containing one.
+  User-level Cursor hooks and skills still load; no OS sandbox was verified.
 - Every agent process gets `AGENT_BRIDGE_AGENT=1`; the CLI, the MCP server and the `Bridge`
   Python API refuse to start under it. Everything still runs as one user: human-only steps rely on
   the agents being confined, not on an OS boundary inside the bridge.
@@ -56,7 +61,7 @@ user the exact command they must run. Ask; never infer consent from silence or f
 
 Accounts:
 - Each account is a named auth home (`CODEX_HOME` for openai, `CLAUDE_CONFIG_DIR` for
-  anthropic, a whole `HOME` for google/agy; opencode has only its global login), created by a
+  anthropic, a whole `HOME` for google/agy; opencode and Cursor have only their global login), created by a
   human with `agent-bridge account-add <name>` (machine-wide, under `~/.agent-bridge/homes/`)
   or `agent-bridge account-login <name>` (or `codex-switch home add <name>` for Codex): a fresh
   login, never a copy of another profile's tokens. An account without `home` uses the inherited

@@ -67,7 +67,7 @@ a repeatable, auditable delegation loop in one repository, without a hosted serv
 
 - **Roles, agents and accounts are separate.** `planner`, `executor` and `reviewer` map to
   agents; each agent uses one adapter (`codex-cli`, `claude-cli`, `client`, or the read-only
-  `opencode-cli` / `agy-cli`) and one isolated account.
+  `opencode-cli` / `cursor-cli` / `agy-cli`) and one isolated account.
 - **Planner workflows.** A planner agent can split an objective into validated tasks that run in
   dependency order.
 - **Reviewer of your choice.** You review in the Claude Code session, a reviewer agent reviews
@@ -128,7 +128,7 @@ worktrees (see [Roadmap](#roadmap)).
 - Spread work over several Codex or Claude subscriptions, each with its own limits and failover
   order.
 - A gates-only pipeline where tests and the scope check decide, with no LLM reviewer.
-- A second model (opencode or agy) as a read-only planner or reviewer.
+- A second model (opencode, cursor or agy) as a read-only planner or reviewer.
 
 ## Architecture
 
@@ -141,7 +141,7 @@ flowchart LR
     cc -- "MCP tools over stdio" --> bridge["agent-bridge serve"]
     human(["Human in a terminal"]) -- "approve · reassign · account-login" --> cli["agent-bridge CLI / TUI"]
     bridge --> router["Router<br/>role → agent → account"]
-    router --> adapters["Adapters<br/>codex-cli · claude-cli · opencode-cli · agy-cli"]
+    router --> adapters["Adapters<br/>codex-cli · claude-cli · opencode-cli · cursor-cli · agy-cli"]
     adapters --> agents["Agent CLIs<br/>one auth home per account"]
     agents -- "edit the worktree" --> repo[("Git worktree")]
     bridge --> gates["Gates<br/>scope check · re-run verification"]
@@ -172,7 +172,7 @@ and reviews, and Codex executes.
 - At least one agent CLI logged in with its own subscription; no API key is needed:
   - Codex CLI (verified with 0.163.0; check with `codex login status`), and/or
   - Claude Code headless (verified with 2.1.308; check with `claude auth status`).
-  - Optional read-only planners/reviewers: opencode, agy.
+  - Optional read-only planners/reviewers: opencode, cursor (`cursor-agent`), agy.
 
 ## Installation
 
@@ -335,6 +335,7 @@ Full reference: every key and default, accounts, quota, quota fallback and state
 | `claude-cli` | `anthropic` | Only with `allow_write: true` | CLI permission rules; OS sandbox for Bash | `CLAUDE_CONFIG_DIR` |
 | `client` | — | No | The MCP caller itself; never started by the bridge | — |
 | `opencode-cli` | `opencode` | No (refused by config) | Tool permissions denied via config; no OS sandbox | Global login only |
+| `cursor-cli` | `cursor` | No (refused by config) | `--mode ask --sandbox enabled`; refuses a directory with `.cursor/hooks.json`; no OS sandbox verified | Global login only |
 | `agy-cli` | `google` | No (refused by config) | `--mode plan --sandbox`; no OS sandbox | A whole `HOME` |
 
 - `executor` must be able to write, so it is `codex-cli` or `claude-cli` with `allow_write`.
@@ -478,6 +479,12 @@ untrusted code.
   directories denied through `OPENCODE_CONFIG_CONTENT`; agy runs with `--mode plan --sandbox` and
   keeps browser tools the CLI cannot disable. Probes wrote no files with either; neither has an
   OS sandbox.
+- **cursor** is read-only too. It runs `cursor-agent` in `--mode ask` with `--sandbox enabled`
+  and `--trust`; in ask mode the model reported writes and shell blocked and wrote nothing
+  (cursor-agent 2026.11.11). The CLI executes a project `.cursor/hooks.json` even in ask mode,
+  outside its sandbox, so the adapter refuses to run in a directory that contains one. Your own
+  user-level Cursor hooks and skills still load, and no OS sandbox was verified. Cursor has only
+  its global login (`cursor-agent login`).
 - **Optional `claude_hook_settings`** in `.ai/config.json` passes a hooks-only settings file to
   every Claude run. These hooks are trusted code running unsandboxed; the option is off by
   default.
@@ -702,7 +709,7 @@ CLAUDE_SMOKE=1 uv run pytest tests/e2e/test_real_claude_smoke.py                
 OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py    # real opencode / agy reviews
 ```
 
-The fake CLIs in `tests/fakes/` (`codex`, `claude`, `opencode`, `agy`) speak the real JSONL and
+The fake CLIs in `tests/fakes/` (`codex`, `claude`, `opencode`, `cursor-agent`, `agy`) speak the real JSONL and
 stream-json protocols. The suite covers the shipped configurations, routing, pinning, affinity,
 quota fallback, bounded rework, reviewer failure, config validation, account isolation,
 concurrency slots, legacy mapping, schema upgrades, storage migration, machine-wide accounts and

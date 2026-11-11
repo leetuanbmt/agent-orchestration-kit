@@ -15,7 +15,7 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from .accounts import load_registry
+from .accounts import GLOBAL_LOGIN_COMMANDS, GLOBAL_ONLY_PROVIDERS, load_registry
 from .registry import registry_dir
 from .config import AI_DIR, BridgeConfig
 
@@ -32,16 +32,17 @@ ADAPTER_PROVIDERS: dict[str, str | None] = {
     "codex-cli": "openai",
     "claude-cli": "anthropic",
     "opencode-cli": "opencode",
+    "cursor-cli": "cursor",
     "agy-cli": "google",
     "client": None,
 }
 PROVIDERS = frozenset(p for p in ADAPTER_PROVIDERS.values() if p)
 # Adapters with no verified way to confine writes to a task's paths: planner/reviewer only.
-# Probed on opencode 2.1.2 and agy 1.4.5: their read-only modes refused every write.
-READ_ONLY_ADAPTERS = frozenset({"opencode-cli", "agy-cli"})
-# opencode keeps credentials behind one background service per user, so it has no isolated
-# home: its only account is the global `opencode auth login`.
-GLOBAL_ONLY_PROVIDERS = frozenset({"opencode"})
+# Probed on opencode 2.1.2, agy 1.4.5 and cursor-agent 2026.11.11: their read-only modes refused
+# every write.
+READ_ONLY_ADAPTERS = frozenset({"opencode-cli", "agy-cli", "cursor-cli"})
+# GLOBAL_ONLY_PROVIDERS (opencode, cursor: no isolated home, only the global login) lives in
+# accounts.py, which this module imports.
 STAGES = ("plan", "execute", "test", "review")
 BUILTIN_ROLES = ("advisor", "planner", "executor", "reviewer", "tester")
 Capability = Literal["read", "write"]
@@ -142,7 +143,7 @@ class AccountProfile(BaseModel):
             raise ValueError("credential_kind needs credential or token_env")
         if self.home and self.provider in GLOBAL_ONLY_PROVIDERS:
             raise ValueError(f"{self.provider} accounts use the global login (no home); "
-                             "log in with: opencode auth login")
+                             f"log in with: {GLOBAL_LOGIN_COMMANDS[self.provider]}")
         return self
 
 

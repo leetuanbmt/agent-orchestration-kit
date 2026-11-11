@@ -67,7 +67,7 @@ một vòng giao việc lặp lại được và kiểm toán được trong t�
 
 - **Role, agent và account tách biệt.** `planner`, `executor` và `reviewer` được gán cho agent;
   mỗi agent dùng một adapter (`codex-cli`, `claude-cli`, `client`, hoặc `opencode-cli` /
-  `agy-cli` chỉ đọc) và một account riêng.
+  `cursor-cli` / `agy-cli` chỉ đọc) và một account riêng.
 - **Workflow do planner lập.** Một planner agent có thể chia mục tiêu thành các task đã được
   validate, chạy theo thứ tự phụ thuộc.
 - **Tùy chọn reviewer.** Bạn review trong phiên Claude Code, một reviewer agent review ở chế độ
@@ -129,7 +129,7 @@ cậy. Nó là CLI và MCP server cục bộ cho từng repository; task ghi son
 - Chia việc cho nhiều subscription Codex hoặc Claude, mỗi account có giới hạn và thứ tự failover
   riêng.
 - Pipeline chỉ dùng gate, nơi test và kiểm tra phạm vi quyết định, không cần reviewer LLM.
-- Một model thứ hai (opencode hoặc agy) làm planner hoặc reviewer chỉ đọc.
+- Một model thứ hai (opencode, cursor hoặc agy) làm planner hoặc reviewer chỉ đọc.
 
 ## Kiến trúc
 
@@ -142,7 +142,7 @@ flowchart LR
     cc -- "MCP tool qua stdio" --> bridge["agent-bridge serve"]
     human(["Con người trong terminal"]) -- "approve · reassign · account-login" --> cli["agent-bridge CLI / TUI"]
     bridge --> router["Router<br/>role → agent → account"]
-    router --> adapters["Adapter<br/>codex-cli · claude-cli · opencode-cli · agy-cli"]
+    router --> adapters["Adapter<br/>codex-cli · claude-cli · opencode-cli · cursor-cli · agy-cli"]
     adapters --> agents["Agent CLI<br/>mỗi account một auth home"]
     agents -- "sửa worktree" --> repo[("Git worktree")]
     bridge --> gates["Gate<br/>kiểm tra phạm vi · chạy lại verification"]
@@ -173,7 +173,7 @@ hoạch và review, Codex thực thi.
 - Ít nhất một agent CLI đã đăng nhập bằng subscription riêng; không cần API key:
   - Codex CLI (đã kiểm chứng với 0.163.0; kiểm tra bằng `codex login status`), và/hoặc
   - Claude Code headless (đã kiểm chứng với 2.1.308; kiểm tra bằng `claude auth status`).
-  - Tùy chọn, dùng làm planner/reviewer chỉ đọc: opencode, agy.
+  - Tùy chọn, dùng làm planner/reviewer chỉ đọc: opencode, cursor (`cursor-agent`), agy.
 
 ## Cài đặt
 
@@ -338,6 +338,7 @@ thái có trong [docs/configuration.md](docs/configuration.md) (tiếng Anh).
 | `claude-cli` | `anthropic` | Chỉ khi `allow_write: true` | Permission rule của CLI; OS sandbox cho Bash | `CLAUDE_CONFIG_DIR` |
 | `client` | — | Không | Chính MCP caller; bridge không bao giờ khởi chạy nó | — |
 | `opencode-cli` | `opencode` | Không (config từ chối) | Chặn tool qua config; không có OS sandbox | Chỉ login global |
+| `cursor-cli` | `cursor` | Không (config từ chối) | `--mode ask --sandbox enabled`; từ chối thư mục có `.cursor/hooks.json`; chưa xác minh OS sandbox | Chỉ login global |
 | `agy-cli` | `google` | Không (config từ chối) | `--mode plan --sandbox`; không có OS sandbox | Cả một `HOME` |
 
 - `executor` phải ghi được, nên chỉ có thể là `codex-cli` hoặc `claude-cli` với `allow_write`.
@@ -480,6 +481,12 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
 - **opencode và agy** chỉ đọc. opencode chạy với edit, bash, webfetch và thư mục bên ngoài bị
   chặn qua `OPENCODE_CONFIG_CONTENT`; agy chạy `--mode plan --sandbox` và vẫn giữ các tool trình
   duyệt mà CLI không tắt được. Probe không ghi file nào với cả hai; cả hai đều không có OS sandbox.
+- **cursor** cũng chỉ đọc. Nó chạy `cursor-agent` với `--mode ask`, `--sandbox enabled` và
+  `--trust`; ở chế độ ask, model báo ghi file và shell bị chặn và không ghi gì
+  (cursor-agent 2026.11.11). CLI vẫn thực thi `.cursor/hooks.json` của project kể cả ở chế độ ask,
+  ngoài sandbox của nó, nên adapter từ chối chạy trong thư mục có file này. Hook và skill
+  Cursor cấp người dùng của bạn vẫn được nạp, và chưa xác minh OS sandbox nào. Cursor chỉ có
+  login global (`cursor-agent login`).
 - **Tùy chọn `claude_hook_settings`** trong `.ai/config.json` truyền một file settings chỉ chứa
   hook cho mọi lượt chạy Claude. Các hook này là code được tin cậy, chạy không có sandbox; tùy
   chọn này mặc định tắt.
@@ -702,7 +709,7 @@ CLAUDE_SMOKE=1 uv run pytest tests/e2e/test_real_claude_smoke.py                
 OPENCODE_SMOKE=1 AGY_SMOKE=1 uv run pytest tests/e2e/test_real_other_smoke.py    # review bằng opencode / agy thật
 ```
 
-Các CLI giả trong `tests/fakes/` (`codex`, `claude`, `opencode`, `agy`) nói đúng giao thức JSONL và
+Các CLI giả trong `tests/fakes/` (`codex`, `claude`, `opencode`, `cursor-agent`, `agy`) nói đúng giao thức JSONL và
 stream-json thật. Bộ test bao phủ các cấu hình đi kèm, định tuyến, ghim agent, affinity, quota
 fallback, giới hạn rework, reviewer lỗi, validate config, cô lập account, slot chạy song song,
 ánh xạ legacy, nâng cấp schema, migrate storage, account toàn máy và các dashboard.
