@@ -21,8 +21,8 @@
   outside the project with only a `hooks` object;
   its hooks are merged into the sandbox settings when Bash is enabled. Hooks remain trusted
   code running unsandboxed, and the option is off by default.
-- **opencode** and **agy** are read-only adapters (planner/reviewer only; the config refuses
-  writing), enforced by CLI permission rules, not by mode flags. opencode (2.2.6) gets a V2 config
+- **agy** is a read-only adapter (planner/reviewer only; the config refuses writing); **opencode**
+  is read-only unless its agent sets `allow_write: true` (see below). Both are enforced by CLI permission rules, not by mode flags. opencode (2.2.6) gets a V2 config
   in `OPENCODE_CONFIG_CONTENT` that denies everything first and allows only read, glob and grep
   (`.env` files denied; `execute`/MCP, skills, websearch, subagents denied), with project config
   disabled and `XDG_CONFIG_HOME` set to an empty per-run directory so the user's plugins, MCP
@@ -34,6 +34,15 @@
   (agy runs them at start-up with no trust prompt). Still open: neither CLI has an OS sandbox for
   its own process; agy still allows `search_web`, subagents and browser tools, runs user-level
   hooks and MCP servers, and merges the user's global settings.
+- **opencode executor mode** (`allow_write: true`): the run keeps the deny-all config and adds one
+  `edit <dir>/*` allow per allowed path (plain files exact; a glob with no directory prefix
+  refuses the run), the edit tool policy, and no shell rule. Allow rules are broader than the task
+  globs (every depth under the directory); the bridge's post-run scope check enforces the task
+  scope. No shell: the agent cannot run tests, delete or rename. Deny rules are not relied on
+  (`.ENV` overwrote a denied `.env` on a case-insensitive filesystem). opencode follows symlinks,
+  so a symlink or a protected/excluded file under an allowed directory refuses the run.
+  `opencode_worktree_remove` stays exposed (governed by `edit`). Probed with free models only
+  (2026-11-11, 2.2.6); no OS sandbox, so prefer Codex for untrusted work.
 - **cursor** (`cursor-cli`) is a read-only adapter too: `cursor-agent` runs in `--mode ask` with
   `--sandbox enabled` and `--trust`. Ask mode alone relies on the model declining, so every run
   also sets `CURSOR_CONFIG_DIR=<state_dir>/cursor-config` with a `cli-config.json` whose

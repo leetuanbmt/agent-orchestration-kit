@@ -476,7 +476,7 @@ def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
         account["limits"] = limits
     adapter = _PROVIDER_ADAPTER[provider]
     spec: dict[str, Any] = {"adapter": adapter, "account": args.name}
-    if adapter not in orchestrator.READ_ONLY_ADAPTERS:
+    if adapter not in orchestrator.READ_ONLY_ADAPTERS and adapter != "opencode-cli":
         spec["allow_write"] = True
     if args.model:
         spec["model"] = args.model
@@ -557,7 +557,7 @@ def _project_agent_add(args: argparse.Namespace) -> dict[str, Any]:
                                  "project-account-add`)")
             adapter = _PROVIDER_ADAPTER[profile.provider]
             spec: dict[str, Any] = {"adapter": adapter, "account": args.account}
-            if adapter not in orchestrator.READ_ONLY_ADAPTERS:
+            if adapter not in orchestrator.READ_ONLY_ADAPTERS and adapter != "opencode-cli":
                 spec["allow_write"] = True
         else:
             adapter, spec = "client", {"adapter": "client"}

@@ -12,7 +12,7 @@ from bridge.config import BridgeConfig
 from bridge.models import Actor
 from bridge.orchestrator import legacy, parse
 from bridge.render import account_rows
-from tests.conftest import run
+from tests.conftest import run, spec
 from tests.integration.test_orchestration import WRITE, events, log
 
 # F: agy plans, Codex executes, opencode reviews.
@@ -780,3 +780,163 @@ def test_probed_versions_for_opencode_and_agy():
     assert Bridge.PROBED_VERSIONS["agy-cli"] == (1, 5, 3)
     assert not Bridge.unprobed("opencode-cli", "2.2.6") and Bridge.unprobed("opencode-cli", "2.2.7")
     assert not Bridge.unprobed("agy-cli", "1.5.3") and Bridge.unprobed("agy-cli", "1.6.0")
+
+
+OC_WRITER = """
+version: 1
+accounts:
+  oc: {provider: opencode}
+agents:
+  opencode: {adapter: opencode-cli, account: oc, allow_write: true}
+roles: {executor: opencode}
+workflow: {stages: [execute, test]}
+"""
+
+
+def _oc_request(**over):
+    from bridge.executor import RunRequest
+    base = {"prompt": "EXECUTOR", "account": accounts.Account("oc", None, "opencode"),
+            "sandbox": "workspace-write", "timeout_s": 60, "write_paths": ["src/**"],
+            "deny_paths": [".env", ".git/**"]}
+    return RunRequest(**{**base, **over})
+
+
+def _oc_build(repo, tmp_path, **over):
+    from bridge.executor import OpenCodeAdapter
+    adapter = OpenCodeAdapter(BridgeConfig(), repo)
+    req = _oc_request(**over)
+    tmp = tmp_path / "oc-run"
+    tmp.mkdir(parents=True, exist_ok=True)
+    argv = adapter.build(req, tmp)
+    return adapter, req, argv
+
+
+# @pt.id KIT-CFG-opencode-executor
+# @pt.item An opencode agent with allow_write is an executor; agy and cursor still are not
+# @pt.condition opencode-cli allow_write true as executor; agy-cli and cursor-cli with allow_write
+# @pt.expected opencode validates and can write; agy and cursor are refused as read-only
+# @pt.target bridge.orchestrator.AgentConfig, bridge.orchestrator.READ_ONLY_ADAPTERS
+# @pt.method unit
+# @pt.legacy none
+def test_opencode_executor_config():
+    orch = parse(OC_WRITER)
+    assert orch.agents["opencode"].can("write") and orch.agents["opencode"].writes
+    from bridge.orchestrator import AgentConfig
+    assert not AgentConfig(adapter="opencode-cli", account="oc").can("write")
+    with pytest.raises(ValueError, match="needs 'write'"):
+        parse(OC_WRITER.replace(", allow_write: true", ""))
+    for adapter, provider in (("agy-cli", "google"), ("cursor-cli", "cursor")):
+        text = OC_WRITER.replace("opencode-cli, account: oc", f"{adapter}, account: oc") \
+            .replace("{provider: opencode}", f"{{provider: {provider}}}")
+        with pytest.raises(ValueError, match="read-only"):
+            parse(text)
+
+
+# @pt.id KIT-ADAPTER-opencode-write-config
+# @pt.item A writing opencode run gets edit allows; a read-only run never does
+# @pt.condition build() and extra_env() for a workspace-write and a read-only request
+# @pt.expected writing: deny-all first, read/glob/grep, edit allow for src/*, edit policy after grep, external_directory deny last, no shell allow; read-only: exactly the deny-all config without edit
+# @pt.target bridge.executor.OpenCodeAdapter.extra_env, bridge.executor._opencode_config
+# @pt.method integration
+# @pt.legacy none
+def test_opencode_write_config(repo, tmp_path):
+    from bridge.executor import _OPENCODE_READ_ONLY
+    adapter, req, argv = _oc_build(repo, tmp_path)
+    env = adapter.extra_env(req)
+    config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
+    perms = config["permissions"]
+    assert perms[0] == {"action": "*", "resource": "*", "effect": "deny"}
+    assert {"action": "edit", "resource": "src/*", "effect": "allow"} in perms
+    assert perms[-1] == {"action": "external_directory", "resource": "*", "effect": "deny"}
+    assert not [r for r in perms if r["effect"] == "allow"
+                and r["action"] not in ("read", "glob", "grep", "edit")]
+    assert config["policies"][4] == {"action": "tool.use", "resource": "edit:*", "effect": "allow"}
+    assert config["policies"][:4] == _OPENCODE_READ_ONLY["policies"][:4]
+    assert env["OPENCODE_DISABLE_PROJECT_CONFIG"] == "1" and env["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
+    assert "--standalone" in argv and Path(env["XDG_CONFIG_HOME"]).is_dir()
+
+    adapter, req, _ = _oc_build(repo, tmp_path / "ro", sandbox="read-only")
+    config = json.loads(adapter.extra_env(req)["OPENCODE_CONFIG_CONTENT"])
+    assert config == _OPENCODE_READ_ONLY
+    assert not [r for r in config["permissions"] if r["action"] == "edit"]
+    assert "no shell" not in adapter.stdin(req)
+
+
+# @pt.id KIT-ADAPTER-opencode-path-mapping
+# @pt.item Allowed paths map to opencode edit patterns
+# @pt.condition directories, directory globs, exact files and prefix-less globs
+# @pt.expected dir and glob-under-dir become <prefix>/*, exact files stay exact, prefix-less globs and unsafe rules are refused
+# @pt.target bridge.executor.opencode_edit_patterns
+# @pt.method unit
+# @pt.legacy none
+def test_opencode_path_mapping(repo):
+    from bridge.executor import opencode_edit_patterns as m
+    (repo / "docs").mkdir()
+    assert m(["src/**", "src/*", "src/**/*.py", "docs/*.md", "docs", "README.md",
+              "src/app.py"], repo) == ["src/*", "docs/*", "README.md", "src/app.py"]
+    for bad in ("*.md", "**", "**/x"):
+        with pytest.raises(ValueError, match=r"directory-anchored.*"):
+            m(["src/**", bad], repo)
+    with pytest.raises(ValueError, match="not expressible"):
+        m(["a b/**"], repo)
+
+
+# @pt.id KIT-ADAPTER-opencode-refusals
+# @pt.item A writing opencode run is refused before start for symlinks and protected files
+# @pt.condition a symlink under an allowed directory, an exact allowed path that is a symlink, an ignored .env under an allowed directory, an unanchored pattern
+# @pt.expected ValueError naming the file; the fake CLI is never started
+# @pt.target bridge.executor.OpenCodeAdapter.build
+# @pt.method integration
+# @pt.legacy none
+def test_opencode_write_refusals(repo, tmp_path, fake_others):
+    from bridge.executor import OpenCodeAdapter
+    adapter = OpenCodeAdapter(BridgeConfig(), repo)
+    (repo / "src").mkdir(exist_ok=True)
+    (repo / "src" / "link").symlink_to("../README.md")
+    with pytest.raises(ValueError, match=r"symlink src/link"):
+        run(adapter.run(_oc_request()))
+    (repo / "src" / "link").unlink()
+    (repo / "top").symlink_to("src")
+    with pytest.raises(ValueError, match=r"symlink top"):
+        run(adapter.run(_oc_request(write_paths=["top/x.py"])))
+    (repo / "top").unlink()
+    (repo / "src" / ".env").write_text("SECRET=1\n")
+    with pytest.raises(ValueError, match=r"file src/\.env"):
+        run(adapter.run(_oc_request(deny_paths=["**/.env"])))
+    (repo / "src" / ".env").unlink()
+    with pytest.raises(ValueError, match="directory-anchored"):
+        run(adapter.run(_oc_request(write_paths=["*.md"])))
+    assert not (fake_others / "opencode" / "calls").exists()
+
+
+# @pt.id KIT-ADAPTER-opencode-write-prompt
+# @pt.item The writing prompt states the limits
+# @pt.condition a writing request for src/** and docs/a.md
+# @pt.expected the prompt says no shell, delete or rename, lists the patterns and tells the agent to report what it could not check; the schema is still appended
+# @pt.target bridge.executor.OpenCodeAdapter.stdin
+# @pt.method unit
+# @pt.legacy none
+def test_opencode_write_prompt(repo, tmp_path):
+    adapter, req, _ = _oc_build(repo, tmp_path, write_paths=["src/**", "docs/a.md"])
+    text = adapter.stdin(req)
+    assert text.startswith("EXECUTOR") and "no shell" in text and "delete or rename" in text
+    assert "src/*, docs/a.md" in text and "could not check" in text and '"status"' in text
+
+
+# @pt.id KIT-FLOW-opencode-executor
+# @pt.item An opencode executor task reaches verification with its change in scope
+# @pt.condition fake opencode writes src/app.py when its edit allowlist matches; the task allows src/**
+# @pt.expected the task is DONE after verification; the run's config carried the edit allow for src/*
+# @pt.target bridge.executor.OpenCodeAdapter, Bridge.execute_task
+# @pt.method integration
+# @pt.legacy none
+def test_opencode_executor_flow(make_orch, fake_others, monkeypatch):
+    monkeypatch.setenv("FAKE_OPENCODE_WRITE", "src/app.py=x = 2\n")
+    b = make_orch(OC_WRITER)
+    tid = run(b.create_task(spec()))["task_id"]
+    assert run(b.execute_task(tid, wait=True))["state"] == "DONE"
+    call, = log(fake_others / "opencode")
+    config = json.loads(call["config"])
+    assert {"action": "edit", "resource": "src/*", "effect": "allow"} in config["permissions"]
+    assert "no shell" in call["prompt"]
+    assert (b.root / "src" / "app.py").read_text() == "x = 2\n"

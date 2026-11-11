@@ -41,10 +41,10 @@ PROVIDERS = frozenset(p for p in ADAPTER_PROVIDERS.values() if p)
 PROVIDER_ADAPTER = {"openai": "codex-cli", "anthropic": "claude-cli", "google": "agy-cli",
                     "opencode": "opencode-cli", "cursor": "cursor-cli"}
 # Adapters with no verified way to confine writes to a task's paths: planner/reviewer only.
-# Observed per CLI: opencode 2.1.2 (its permission config denies edit and shell) reported having
-# no tool to write and wrote nothing; agy 1.4.5 (plan mode) refused every file write; cursor-agent
-# 2026.11.11 (ask mode) reported writes and shell blocked and wrote nothing.
-READ_ONLY_ADAPTERS = frozenset({"opencode-cli", "agy-cli", "cursor-cli"})
+# Observed per CLI: agy 1.4.5 (plan mode) refused every file write; cursor-agent 2026.11.11 (ask
+# mode) reported writes and shell blocked and wrote nothing. opencode is not listed: it writes
+# only with allow_write: true, confined by its edit allowlist (see OpenCodeAdapter).
+READ_ONLY_ADAPTERS = frozenset({"agy-cli", "cursor-cli"})
 # GLOBAL_ONLY_PROVIDERS (opencode, cursor: no isolated home, only the global login) lives in
 # accounts.py, which this module imports.
 STAGES = ("plan", "execute", "test", "review")

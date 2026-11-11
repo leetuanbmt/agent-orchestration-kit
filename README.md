@@ -128,7 +128,7 @@ worktrees (see [Roadmap](#roadmap)).
 - Spread work over several Codex or Claude subscriptions, each with its own limits and failover
   order.
 - A gates-only pipeline where tests and the scope check decide, with no LLM reviewer.
-- A second model (opencode, cursor or agy) as a read-only planner or reviewer.
+- A second model (opencode, cursor or agy) as a planner or reviewer (read-only), or opencode as an opt-in executor.
 
 ## Architecture
 
@@ -334,7 +334,7 @@ Full reference: every key and default, accounts, quota, quota fallback and state
 | `codex-cli` | `openai` | Yes (default) | Codex OS sandbox (`workspace-write` / `read-only`), no network | `CODEX_HOME` |
 | `claude-cli` | `anthropic` | Only with `allow_write: true` | CLI permission rules; OS sandbox for Bash | `CLAUDE_CONFIG_DIR` |
 | `client` | — | No | The MCP caller itself; never started by the bridge | — |
-| `opencode-cli` | `opencode` | No (refused by config) | Deny-all V2 permissions (read, glob, grep only), empty user config dir; no OS sandbox | Global login only |
+| `opencode-cli` | `opencode` | Only with `allow_write: true` (edit allowlist, no shell) | Deny-all V2 permissions (read, glob, grep only), empty user config dir; no OS sandbox | Global login only |
 | `cursor-cli` | `cursor` | No (refused by config) | `--mode ask --sandbox enabled` plus `Write(**)`/`Shell(*)` denies in a private config dir; refuses a directory whose `.cursor/hooks.json`, `.cursor/cli.json` or `.claude/settings*.json` has hooks; no OS sandbox verified | Global login only |
 | `agy-cli` | `google` | No (refused by config) | `--sandbox` plus `request-review` settings denying write, shell and MCP; refuses `.agents/hooks.json` and `.agents/mcp_config.json`; no OS sandbox | A whole `HOME` |
 
@@ -475,7 +475,7 @@ untrusted code.
   than a security boundary. Other readable files remain readable.
   Prefer Codex as the executor for untrusted work, because Claude's Read tools and the claude
   process itself are not OS-confined and the Keychain is reachable from sandboxed Bash.
-- **opencode and agy** are read-only, enforced by CLI permission rules rather than mode flags.
+- **opencode and agy** are read-only by default (opencode can opt in to executor mode below), enforced by CLI permission rules rather than mode flags.
   opencode (2.2.6) runs with a deny-all config in `OPENCODE_CONFIG_CONTENT` that allows only
   read, glob and grep (`.env` files, MCP, skills, websearch and subagents denied), project config
   disabled, and an empty per-run `XDG_CONFIG_HOME`, so your user-level opencode plugins, MCP
@@ -488,6 +488,17 @@ untrusted code.
   none of the two has an OS sandbox for its own process; agy still allows `search_web`,
   subagents and browser tools, runs your user-level hooks and MCP servers and merges your global
   settings.
+  **Executor mode (opt-in):** an opencode agent with `allow_write: true` can be the executor.
+  Its run keeps the deny-all config and adds one `edit <dir>/*` allow per allowed path (a
+  directory or `src/**`-style glob becomes `<dir>/*`, a plain file stays exact; a glob with no
+  directory prefix such as `*.md` refuses the run) and never a shell rule. These allow rules are
+  broader than the task globs (every depth under the directory); the bridge's post-run scope
+  check enforces the task scope. There is no shell, so the agent cannot run tests, delete or
+  rename. Deny rules are not relied on (`.ENV` overwrote a denied `.env` on a case-insensitive
+  filesystem), and opencode follows symlinks, so a symlink or a protected/excluded file under an
+  allowed directory refuses the run before it starts. `opencode_worktree_remove` stays exposed
+  (governed by `edit`, refused outside the allowlist). Probed with free models only, so other
+  models may expose other tools; there is no OS sandbox, so prefer Codex for untrusted work.
 - **cursor** is read-only too. It runs `cursor-agent` in `--mode ask` with `--sandbox enabled`
   and `--trust`. Ask mode alone relies on the model declining, so every run also sets
   `CURSOR_CONFIG_DIR=<state dir>/cursor-config` with a `cli-config.json` whose permissions deny
@@ -539,7 +550,7 @@ verification sandbox), not on a permission check inside the bridge.
 - Claude quota is known only after the account's first run through the bridge; Codex quota is a
   snapshot from the latest session, not a live query.
 - The Codex sandbox behaviour was verified on macOS only.
-- Not supported: opencode or agy as executors, multi-reviewer voting, and stages for custom
+- Not supported: agy or cursor as executors, multi-reviewer voting, and stages for custom
   roles. Another CLI needs a new `Adapter` subclass.
 
 More detail: [docs/REPORT.md](docs/REPORT.md) (verified CLI versions, probes and the full

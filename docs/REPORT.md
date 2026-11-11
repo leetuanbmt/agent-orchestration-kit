@@ -214,9 +214,34 @@ Probe, 2026-11-11 (opencode 2.2.6, agy 1.5.3, cursor-agent 2026.11.11), real CLI
 | Real opencode reviewer, `OPENCODE_SMOKE=1` (ollama-cloud/gpt-oss:120b) | approved as actor `agent`; worktree held only the executor's change; task DONE. 1 of ~10 runs produced no review (reviewer failure, task left in REVIEW for the client as designed; cause not captured) |
 | Real agy reviewer, `AGY_SMOKE=1` (gemini-3.8-flash-low; run before the 1.5.3 probe, with `--mode plan --sandbox`) | approved as actor `agent`; worktree held only the executor's change; task DONE |
 
+Probe, 2026-11-11 (opencode 2.2.6, macOS, free models only): opencode as executor.
+
+- With `* * deny`, read/glob/grep allow and `{"action":"edit","resource":<pattern>,"effect":"allow"}`,
+  the `write` and `edit` tools (both action `edit`) wrote only paths matching an allow pattern.
+  The allowlist is fail-closed: `..`, `./`, `//`, absolute in-worktree paths and paths outside the
+  worktree (`external_directory * deny`) were normalised and refused.
+- Patterns match the normalised worktree-relative path, case-sensitively; `*` also matches `/`
+  (`src/*` allows every depth); an exact name is anchored at the root; `docs/**/*.txt` does not
+  match `docs/a.txt`; `*.md` reaches `.git/hooks/x.md`. The adapter therefore maps allowed paths
+  to `<dir>/*` or exact files and refuses prefix-less globs.
+- Deny rules are not a boundary on a case-insensitive filesystem: with `edit .env deny`, writing
+  `.ENV` overwrote `.env`. A symlink already inside an allowed directory is followed (writes
+  landed in other directories, `.env`, `.git/hooks` and outside the worktree); the tools cannot
+  create symlinks. The adapter refuses a writing run when an allowed directory holds a symlink or
+  a file matching the protected/excluded paths.
+- The policy `tool.use edit:*` allow covers write and edit; a policy allow grants nothing without
+  the permissions allow. The model saw edit, write, read, glob, grep, skill (policy-denied) and
+  `opencode_worktree_remove` (governed by `edit`, refused outside the allowlist); no shell,
+  delete, rename or patch tool. Other models may expose other tools: not established. A refused
+  tool call is a `tool_use` event with `part.state.status` `error`; the run continues, exit 0.
+- Design bar as for the other writing adapters: the CLI rules prevent what the post-run scope
+  check cannot see or undo; an in-worktree out-of-scope write is detected afterwards (REWORK).
+  There is no OS sandbox, so prefer Codex for untrusted work.
+
 ## 9. Known limitations / unsupported
 
-- opencode, agy and cursor-agent cannot execute (write) tasks. agy keeps `search_web`, subagents
+- agy and cursor-agent cannot execute (write) tasks; opencode can only with `allow_write: true`
+  (edit allowlist, no shell; see the 2026-11-11 executor probe in section 8). agy keeps `search_web`, subagents
   and browser tools that no rule blocks; opencode has no per-account login isolation.
 - `account-add --provider google` (agy sign-in inside a fresh `HOME`) and `account-add` for
   Claude were exercised only against the fake CLIs: they are human-only, so no real login was

@@ -129,7 +129,7 @@ cậy. Nó là CLI và MCP server cục bộ cho từng repository; task ghi son
 - Chia việc cho nhiều subscription Codex hoặc Claude, mỗi account có giới hạn và thứ tự failover
   riêng.
 - Pipeline chỉ dùng gate, nơi test và kiểm tra phạm vi quyết định, không cần reviewer LLM.
-- Một model thứ hai (opencode, cursor hoặc agy) làm planner hoặc reviewer chỉ đọc.
+- Một model thứ hai (opencode, cursor hoặc agy) làm planner hoặc reviewer (chỉ đọc), hoặc opencode làm executor tự chọn bật.
 
 ## Kiến trúc
 
@@ -337,7 +337,7 @@ thái có trong [docs/configuration.md](docs/configuration.md) (tiếng Anh).
 | `codex-cli` | `openai` | Có (mặc định) | OS sandbox của Codex (`workspace-write` / `read-only`), không có mạng | `CODEX_HOME` |
 | `claude-cli` | `anthropic` | Chỉ khi `allow_write: true` | Permission rule của CLI; OS sandbox cho Bash | `CLAUDE_CONFIG_DIR` |
 | `client` | — | Không | Chính MCP caller; bridge không bao giờ khởi chạy nó | — |
-| `opencode-cli` | `opencode` | Không (config từ chối) | Quyền V2 từ chối tất cả (chỉ read, glob, grep), thư mục config người dùng rỗng; không có OS sandbox | Chỉ login global |
+| `opencode-cli` | `opencode` | Chỉ khi `allow_write: true` (allowlist edit, không shell) | Quyền V2 từ chối tất cả (chỉ read, glob, grep), thư mục config người dùng rỗng; không có OS sandbox | Chỉ login global |
 | `cursor-cli` | `cursor` | Không (config từ chối) | `--mode ask --sandbox enabled` cùng lệnh chặn `Write(**)`/`Shell(*)` trong thư mục config riêng; từ chối thư mục có `.cursor/hooks.json`, `.cursor/cli.json` hoặc hook trong `.claude/settings*.json`; chưa xác minh OS sandbox | Chỉ login global |
 | `agy-cli` | `google` | Không (config từ chối) | `--sandbox` cùng settings `request-review` chặn ghi, shell và MCP; từ chối `.agents/hooks.json` và `.agents/mcp_config.json`; không có OS sandbox | Cả một `HOME` |
 
@@ -478,7 +478,7 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   user đọc được vẫn đọc được.
   Nên dùng Codex làm executor cho công việc không đáng tin cậy, vì các tool Read của Claude và
   chính tiến trình claude không bị OS sandbox giới hạn, và Bash trong sandbox vẫn truy cập được Keychain.
-- **opencode và agy** chỉ đọc, được ép bằng quy tắc quyền của CLI chứ không phải cờ mode.
+- **opencode và agy** mặc định chỉ đọc (opencode có thể bật chế độ executor bên dưới), được ép bằng quy tắc quyền của CLI chứ không phải cờ mode.
   opencode (2.2.6) chạy với config từ chối tất cả trong `OPENCODE_CONFIG_CONTENT`, chỉ cho
   read, glob và grep (file `.env`, MCP, skill, websearch và subagent bị chặn), tắt config của
   project, và một `XDG_CONFIG_HOME` rỗng riêng cho mỗi lượt chạy, nên plugin, MCP server, agent
@@ -490,6 +490,18 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   vì nó chạy chúng khi khởi động mà không hỏi tin cậy. Vẫn còn hở: cả hai không có OS sandbox
   cho tiến trình của chính chúng; agy vẫn cho `search_web`, subagent và tool trình duyệt, chạy
   hook và MCP server cấp người dùng của bạn và gộp settings global của bạn.
+  **Chế độ executor (tự chọn bật):** agent opencode có `allow_write: true` có thể làm executor.
+  Lượt chạy giữ config từ chối tất cả và thêm một quy tắc `edit <thư mục>/*` cho mỗi allowed
+  path (thư mục hoặc glob kiểu `src/**` thành `<thư mục>/*`, file cụ thể giữ nguyên; glob không
+  có tiền tố thư mục như `*.md` bị từ chối chạy) và không bao giờ có quy tắc shell. Các quy tắc
+  cho phép này rộng hơn glob của task (mọi độ sâu dưới thư mục); kiểm tra phạm vi sau lượt chạy
+  của bridge mới áp dụng phạm vi task. Không có shell nên agent không chạy test, xóa hay đổi
+  tên được. Không dựa vào quy tắc deny (`.ENV` đã ghi đè `.env` bị deny trên filesystem không
+  phân biệt hoa thường), và opencode đi theo symlink, nên symlink hoặc file được bảo vệ/loại trừ
+  nằm dưới thư mục được phép sẽ khiến lượt chạy bị từ chối trước khi bắt đầu.
+  `opencode_worktree_remove` vẫn còn (do `edit` quản lý, bị từ chối ngoài allowlist). Chỉ thử
+  với model miễn phí nên model khác có thể lộ thêm tool; không có OS sandbox, hãy ưu tiên Codex
+  cho việc không tin cậy.
 - **cursor** cũng chỉ đọc. Nó chạy `cursor-agent` với `--mode ask`, `--sandbox enabled` và
   `--trust`. Chỉ riêng chế độ ask thì dựa vào việc model từ chối, nên mỗi lượt chạy còn đặt
   `CURSOR_CONFIG_DIR=<state dir>/cursor-config` với `cli-config.json` có quyền chặn `Write(**)`
@@ -542,7 +554,7 @@ quyền bên trong bridge.
 - Quota của Claude chỉ biết được sau lượt chạy đầu tiên của account qua bridge; quota của Codex là
   snapshot từ session gần nhất, không phải truy vấn trực tiếp.
 - Hành vi sandbox của Codex mới chỉ được kiểm chứng trên macOS.
-- Chưa hỗ trợ: opencode hoặc agy làm executor, nhiều reviewer bỏ phiếu, và stage riêng cho role
+- Chưa hỗ trợ: agy hoặc cursor làm executor, nhiều reviewer bỏ phiếu, và stage riêng cho role
   tùy chỉnh. Muốn thêm CLI khác cần viết một lớp con `Adapter` mới.
 
 Chi tiết hơn: [docs/REPORT.md](docs/REPORT.md) (phiên bản CLI đã kiểm chứng, các probe và danh

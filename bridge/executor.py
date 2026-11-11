@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
+import dataclasses
 import functools
 import json
 import math
@@ -29,7 +31,8 @@ from typing import Any
 from . import osutil
 from .accounts import Account, account_env, claude_token, codex_overrides
 from .config import BridgeConfig, state_dir
-from .security import PathError, clean_env, hook_settings_error, process_started, redact, rule_unsafe
+from .security import (GLOB_CHARS, PathError, clean_env, hook_settings_error, literal_prefix, matches,
+                       process_started, redact, rule_unsafe)
 
 # Set in every agent process; the bridge entry points refuse to start under it, so an agent
 # cannot orchestrate other agents.
@@ -620,9 +623,74 @@ _OPENCODE_READ_ONLY = {
 }
 
 
-class OpenCodeAdapter(ReadOnlyAdapter):
+def _opencode_config(patterns: list[str] | None) -> dict[str, Any]:
+    """The inline config: the read-only one, plus (patterns is not None) one `edit` allow per
+    pattern and the edit tool policy. Shell stays denied by the deny-all rule."""
+    cfg = copy.deepcopy(_OPENCODE_READ_ONLY)
+    if patterns is None:
+        return cfg
+    perms, pols = cfg["permissions"], cfg["policies"]
+    perms[-1:-1] = [{"action": "edit", "resource": p, "effect": "allow"} for p in patterns]
+    pols.insert(4, {"action": "tool.use", "resource": "edit:*", "effect": "allow"})
+    return cfg
+
+
+def opencode_edit_patterns(write_paths: list[str], root: Path) -> list[str]:
+    """opencode edit allow patterns for a task's allowed paths. `*` crosses `/` there, so a
+    directory (or a glob under a directory prefix) becomes `<prefix>/*`; a glob-free file stays
+    exact. A glob with no directory prefix cannot be anchored and refuses the run."""
+    if bad := rule_unsafe(write_paths):
+        raise PathError(f"not expressible as opencode edit rules: {bad}")
+    out: list[str] = []
+    for path in write_paths:
+        if GLOB_CHARS & set(path):
+            prefix = literal_prefix(path)
+            if not prefix:
+                raise PathError(f"allowed path {path!r} has no directory prefix before its first "
+                                "glob character: opencode needs directory-anchored allowed_paths")
+            pattern = f"{prefix}/*"
+        else:
+            bare = path.rstrip("/")
+            pattern = f"{bare}/*" if (root / bare).is_dir() else bare
+        if pattern not in out:
+            out.append(pattern)
+    return out
+
+
+def _opencode_preflight(root: Path, patterns: list[str], deny_paths: list[str]) -> None:
+    """Refuse a writing run when an allowed directory holds something the edit allowlist cannot
+    keep the agent from reaching: a symlink (followed by the tools), or a file matching a deny
+    path (a case-variant write would overwrite it on a case-insensitive filesystem)."""
+    from .review import worktree_files
+
+    exact = [p for p in patterns if not p.endswith("/*")]
+    dirs = [p[:-2] for p in patterns if p.endswith("/*")]
+    for target in (*exact, *dirs):
+        walked = ""
+        for part in target.split("/"):
+            walked = f"{walked}/{part}" if walked else part
+            if (root / walked).is_symlink():
+                raise ValueError(f"opencode write run refused: symlink {walked} is at or above "
+                                 f"allowed path {target}")
+    if not dirs:
+        return
+    for f in worktree_files(root):
+        if not any(f.startswith(d + "/") for d in dirs):
+            continue
+        if (root / f).is_symlink():
+            raise ValueError(f"opencode write run refused: symlink {f} lies under an allowed "
+                             "directory (opencode follows it)")
+        if matches(f, deny_paths):
+            raise ValueError(f"opencode write run refused: protected or excluded file {f} lies "
+                             "under an allowed directory (a case-variant write could overwrite it)")
+
+
+class OpenCodeAdapter(Adapter):
     """`opencode run`. It has no structured-output flag: the schema goes into the prompt and the
-    final text is parsed as JSON."""
+    final text is parsed as JSON. A read-only run gets the deny-all config; a writing run (only
+    for an agent with allow_write) also gets `edit` allows for its mapped allowed paths and no
+    shell, probed on opencode 2.2.6. Allow rules are broader than the task globs (every depth under
+    a directory); the bridge's post-run scope check enforces the task scope."""
 
     name, provider = "opencode-cli", "opencode"
     _config_home: Path | None = None
@@ -631,12 +699,20 @@ class OpenCodeAdapter(ReadOnlyAdapter):
     def binary(self) -> str:
         return self.cfg.opencode_bin
 
+    def _patterns(self, req: RunRequest) -> list[str] | None:
+        if req.sandbox == "read-only":
+            return None
+        return opencode_edit_patterns(req.write_paths, self.root)
+
     def build(self, req: RunRequest, tmp: Path) -> list[str]:
+        patterns = self._patterns(req)
+        if patterns is not None:
+            _opencode_preflight(self.root, patterns, req.deny_paths)
         # An empty XDG_CONFIG_HOME removes the user's opencode config directory (plugins, MCP
         # servers, agents, skills) as a source; data, login and sessions stay where they are.
         self._config_home = tmp / "opencode-config"
         self._config_home.mkdir(mode=0o700)
-        return super().build(req, tmp)
+        return self.argv(req)
 
     def argv(self, req: RunRequest) -> list[str]:
         # --standalone: a private server per run instead of the user's background service.
@@ -648,14 +724,21 @@ class OpenCodeAdapter(ReadOnlyAdapter):
         return a  # the prompt goes on stdin
 
     def extra_env(self, req: RunRequest) -> dict[str, str]:
-        env = {"OPENCODE_CONFIG_CONTENT": json.dumps(_OPENCODE_READ_ONLY),
+        env = {"OPENCODE_CONFIG_CONTENT": json.dumps(_opencode_config(self._patterns(req))),
                "OPENCODE_DISABLE_PROJECT_CONFIG": "1", "OPENCODE_DISABLE_AUTOUPDATE": "1"}
         if self._config_home is not None:
             env["XDG_CONFIG_HOME"] = str(self._config_home)
         return env
 
     def stdin(self, req: RunRequest) -> str:
-        return _schema_prompt(req)
+        prompt = req
+        if (patterns := self._patterns(req)) is not None:
+            prompt = dataclasses.replace(req, prompt=(
+                f"{req.prompt}\n\nYou can only read and edit files: you have no shell, and no "
+                "way to delete or rename files. You may write only to these patterns: "
+                f"{', '.join(patterns) or '(none)'}. If you cannot run tests, report completed "
+                "and list what you could not check."))
+        return _schema_prompt(prompt)
 
     def handle(self, ev: dict[str, Any], res: RunResult, ctx: dict[str, Any]) -> None:
         if not res.session_id and ev.get("sessionID"):

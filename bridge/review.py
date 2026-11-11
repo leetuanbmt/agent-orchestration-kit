@@ -327,6 +327,11 @@ IGNORED_NOISE = [*VERIFICATION_NOISE, ".mypy_cache/**", "**/.mypy_cache/**", ".r
                  "**/.ruff_cache/**", "node_modules/.cache/**", ".coverage", "**/.coverage"]
 
 
+def worktree_files(root: Path) -> list[str]:
+    """Every file git knows or sees in the worktree, ignored ones included (no directory walk)."""
+    return [f for f in _git(root, "ls-files", "-z", "-c", "-o").split("\0") if f]
+
+
 def escaping_symlinks(root: Path, patterns: list[str]) -> list[str]:
     """Links covered by patterns that escape root; ignored links need explicit coverage."""
     tracked = _git(root, "ls-files", "-s", "-z")

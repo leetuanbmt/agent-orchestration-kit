@@ -104,8 +104,16 @@ Role rules:
 - `executor` is required and needs `write`; `planner` and `reviewer` need `read`.
 - A `client` agent can only read: it plans and reviews through the MCP tools and is never
   started by the bridge.
-- `opencode-cli`, `cursor-cli` and `agy-cli` are read-only; `allow_write` or a `write` capability on them is
-  rejected.
+- `cursor-cli` and `agy-cli` are read-only; `allow_write` or a `write` capability on them is
+  rejected. `opencode-cli` is read-only unless `allow_write: true` (the `writes` default stays
+  Codex-only). Its writing run gets one opencode `edit` allow per allowed path (`src/**` or a
+  directory becomes `src/*`; a glob with no directory prefix such as `*.md` refuses the run), no
+  shell, and no deny rules. The allow rules are broader than the task globs (every depth under the
+  directory) and the bridge's post-run scope check enforces the task scope. The agent cannot run
+  tests, delete or rename. A symlink or a protected/excluded file under an allowed directory
+  refuses the run. Probed with free models only; no OS sandbox, so prefer Codex for untrusted
+  work; `opencode_worktree_remove` stays exposed. Reviewer and planner runs of the same agent stay
+  deny-all read-only.
 - Built-in role names are `planner`, `executor`, `reviewer`, `advisor` and `tester`. Other role
   names are accepted, but only planner, executor and reviewer have a stage; testing is the
   bridge's own `test` stage.
