@@ -22,20 +22,34 @@
   its hooks are merged into the sandbox settings when Bash is enabled. Hooks remain trusted
   code running unsandboxed, and the option is off by default.
 - **opencode** and **agy** are read-only adapters (planner/reviewer only; the config refuses
-  writing). opencode runs with edit, bash, webfetch and external directories denied through
-  `OPENCODE_CONFIG_CONTENT` and project config disabled; agy runs `--mode plan --sandbox` and
-  keeps browser tools the CLI cannot disable. Probes wrote no files with either; neither has an
-  OS sandbox.
+  writing), enforced by CLI permission rules, not by mode flags. opencode (2.2.6) gets a V2 config
+  in `OPENCODE_CONFIG_CONTENT` that denies everything first and allows only read, glob and grep
+  (`.env` files denied; `execute`/MCP, skills, websearch, subagents denied), with project config
+  disabled and `XDG_CONFIG_HOME` set to an empty per-run directory so the user's plugins, MCP
+  servers, agents and skills are not loaded (login and sessions stay). agy (1.5.3) runs
+  `--sandbox --disable-slash-commands --settings` with `toolPermission: request-review` and deny
+  rules for `write_file(*)`, `command(*)` and `mcp(*)`; `--mode plan` enforces nothing and is not
+  used. A tool needing approval ends an agy turn with `denied_actions`, which the bridge treats as
+  a failed turn. agy refuses a directory with `.agents/hooks.json` or `.agents/mcp_config.json`
+  (agy runs them at start-up with no trust prompt). Still open: neither CLI has an OS sandbox for
+  its own process; agy still allows `search_web`, subagents and browser tools, runs user-level
+  hooks and MCP servers, and merges the user's global settings.
 - **cursor** (`cursor-cli`) is a read-only adapter too: `cursor-agent` runs in `--mode ask` with
-  `--sandbox enabled` and `--trust`; in ask mode the model reported writes and shell blocked and
-  wrote nothing (cursor-agent 2026.11.11). The CLI executes hooks from a project's
+  `--sandbox enabled` and `--trust`. Ask mode alone relies on the model declining, so every run
+  also sets `CURSOR_CONFIG_DIR=<state_dir>/cursor-config` with a `cli-config.json` whose
+  `permissions` are exactly allow `[]` / deny `Write(**)`, `Shell(*)` (other keys the CLI keeps
+  there are preserved; file 0600, directory 0700; never logged); probed on cursor-agent
+  2026.11.11, the CLI then refuses edits and shell itself, even with `--force`. Chats now live in
+  that directory, so Cursor sessions started before this change cannot be resumed. The CLI
+  executes hooks from a project's
   `.cursor/hooks.json`, `.claude/settings.json` and `.claude/settings.local.json` (a `hooks`
   object) even in ask mode and outside its sandbox, so the adapter refuses a directory with
-  `.cursor/hooks.json`, or with either `.claude` file that has hooks or is not a JSON object; the
-  agent is listed unavailable and `health` warns. `--trust` is needed (print mode exits 1 in an
-  unseen directory) and leaves the worktree trusted in `~/.cursor/projects/` and chats under
-  `~/.cursor/chats/`. The binary is installed as `cursor-agent` and as `agent`; both are
-  login-denied. User-level Cursor hooks and skills still load; no OS sandbox was verified.
+  `.cursor/hooks.json`, or with either `.claude` file that has hooks or is not a JSON object; it
+  also refuses `.cursor/cli.json`, because whether it can loosen the denies is not established.
+  The agent is listed unavailable and `health` warns. `--trust` is needed (print mode exits 1 in an
+  unseen directory) and leaves the worktree trusted in `~/.cursor/projects/`. The binary is
+  installed as `cursor-agent` and as `agent`; both are login-denied. User-level Cursor hooks and
+  skills still load; no OS sandbox was verified.
 - Every agent process gets `AGENT_BRIDGE_AGENT=1`; the CLI, the MCP server and the `Bridge`
   Python API refuse to start under it. Everything still runs as one user: human-only steps rely on
   the agents being confined, not on an OS boundary inside the bridge.

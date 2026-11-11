@@ -364,10 +364,19 @@ For agy, `account-use` defines an `agy` shell function instead of changing `HOME
 `account-login <name>` runs `opencode auth login`. Cursor works the same way:
 `account-add <name> --provider cursor` registers one home-less account and `account-login <name>`
 runs `cursor-agent login`. `cursor-cli` runs `cursor-agent` in `--mode ask` with `--sandbox
-enabled` and `--trust`. Cursor executes hooks from `.cursor/hooks.json`, `.claude/settings.json`
+enabled` and `--trust`, and sets `CURSOR_CONFIG_DIR=<state dir>/cursor-config` whose
+`cli-config.json` permissions deny `Write(**)` and `Shell(*)` (other keys kept; the file is
+private and never logged). Chats live in that directory, so Cursor sessions started before this
+change cannot be resumed. Cursor executes hooks from `.cursor/hooks.json`, `.claude/settings.json`
 and `.claude/settings.local.json` outside its sandbox, so the adapter refuses a directory where
-`.cursor/hooks.json` exists or either `.claude` file has a non-empty `hooks` value or is not a
-JSON object. A refused agent is listed `available: false` with that reason, is skipped when a
+`.cursor/hooks.json` or `.cursor/cli.json` exists or either `.claude` file has a non-empty
+`hooks` value or is not a JSON object. `opencode-cli` runs with a deny-all V2 permission config
+(read, glob and grep only) and an empty per-run `XDG_CONFIG_HOME`, so your opencode user config
+(plugins, MCP servers, agents, skills) is not loaded for bridge runs; `agy-cli` runs with session
+`--settings` (`request-review`; `write_file(*)`, `command(*)`, `mcp(*)` denied), no `--mode`, and
+refuses a directory with `.agents/hooks.json` or `.agents/mcp_config.json`. A turn where agy
+reports `denied_actions` fails. Neither has an OS sandbox; agy still allows `search_web`,
+subagents and browser tools and runs user-level hooks and MCP servers. A refused agent is listed `available: false` with that reason, is skipped when a
 planner or reviewer is picked (the task stays in REVIEW with an `agent_review_skipped` event), and
 `health` warns (`adapter_refused`). `--trust` leaves the worktree trusted in `~/.cursor/projects/`
 and chats under `~/.cursor/chats/`. Cursor reports no cost, so a cursor account with

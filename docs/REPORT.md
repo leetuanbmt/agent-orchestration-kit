@@ -5,9 +5,9 @@ through the bridge, including two accounts in parallel.
 
 ## 1. Compatibility (verified on this machine)
 
-`agent-bridge health` warns (`cli_unprobed`) when an installed Codex, Claude or Cursor CLI is newer than
+`agent-bridge health` warns (`cli_unprobed`) when an installed Codex, Claude, Cursor, opencode or agy CLI is newer than
 the version in `PROBED_VERSIONS` (`bridge/service.py`): codex-cli 0.163.0, Claude Code
-2.1.308 and cursor-agent 2026.11.11. After re-running the probes below on a newer CLI, update both this table and that
+2.1.308, cursor-agent 2026.11.11, opencode 2.2.6 and agy 1.5.3. After re-running the probes below on a newer CLI, update both this table and that
 constant.
 
 | Component | Version | What was verified |
@@ -146,12 +146,12 @@ the process that started it. Its flows are tested headless with Textual's Pilot.
 
 | Piece | Implementation |
 |---|---|
-| `opencode-cli` | `opencode run --format json --standalone [-m] [--session]`, prompt on stdin; schema in the prompt, JSON parsed from the reply text (fenced or bare); `OPENCODE_CONFIG_CONTENT` denies edit, bash, webfetch, external_directory; `OPENCODE_DISABLE_PROJECT_CONFIG=1`; `provider.quota` errors pause as QUOTA |
-| `agy-cli` | `agy --input-format stream-json --output-format stream-json -p= --mode plan --sandbox --json-schema …`, one `{"event":"user"}` line on stdin; `result.structured_output`; account home = `HOME` |
+| `opencode-cli` | `opencode run --format json --standalone [-m] [--session]`, prompt on stdin; schema in the prompt, JSON parsed from the reply text (fenced or bare); `OPENCODE_CONFIG_CONTENT` is a V2 deny-all config allowing only read, glob, grep, with an empty per-run `XDG_CONFIG_HOME`; `OPENCODE_DISABLE_PROJECT_CONFIG=1`; `provider.quota` errors pause as QUOTA |
+| `agy-cli` | `agy --input-format stream-json --output-format stream-json -p= --sandbox --disable-slash-commands --settings <deny rules> --json-schema …`, one `{"event":"user"}` line on stdin; `result.structured_output`; account home = `HOME` |
 | Registry | `~/.agent-bridge/accounts.json` + `homes/<name>` (0700); merged into every project's accounts, project declarations win; legacy setups gain a Codex agent per registry openai account |
 | Switching | `account-use` prints `export CODEX_HOME=…` / `CLAUDE_CONFIG_DIR=…` or an `agy` shell function, or opens a subshell; global homes are never rewritten |
 
-Probes on this machine (opencode 2.1.2, agy 1.4.5): with the deny config opencode wrote no file
+Earlier probes (opencode 2.1.2, agy 1.4.5; superseded by the 2026-11-11 probe below): with the deny config opencode wrote no file
 when asked to; a path-scoped `edit` rule (`{"*":"deny","src/**":"allow"}`) also wrote nothing,
 so writing could not be shown to be scoped and both adapters stay read-only. agy in plan mode
 wrote only its own plan artifact outside the worktree. Isolating opencode by XDG dirs failed
@@ -168,15 +168,56 @@ remembered: the directory is recorded in `~/.cursor/projects/<slug>/` and chats 
 `result` is every assistant text concatenated; usage keys are camelCase and no cost is reported.
 The binary is installed as `cursor-agent` and `agent`.
 
+Probe, 2026-11-11 (opencode 2.2.6, agy 1.5.3, cursor-agent 2026.11.11), real CLIs:
+
+- opencode 2.2.6: the old V1 `permission` block (edit, bash, webfetch, external_directory deny)
+  left `execute` (the user's MCP servers), `subagent`, `skill`, `websearch` and
+  `experimental_image_generate` open, and user plugins, MCP servers, agents and skills from
+  `~/.config/opencode` still loaded. A V2 config in `OPENCODE_CONFIG_CONTENT` (`permissions` deny
+  `*` first, then allow read/glob/grep, deny `.env` reads; `policies` deny `tool.use`, `mcp.use`,
+  `skill.use`, `websearch.use` except read/glob/grep) lands after the built-in defaults for every
+  agent (`opencode debug agents --standalone`, last match wins); the model then had only
+  read, glob and grep. `skill` was still listed but not callable per policy (not separately
+  tested). With `--standalone`, `XDG_CONFIG_HOME` alone pointing at an empty directory removes
+  the user config as a source; data, login and sessions stay. Without `--standalone` the CLI
+  talks to the user's background service and ignores it. `OPENCODE_DISABLE_PROJECT_CONFIG=1` is
+  required: a project plugin runs code and a project `agents.build.permissions` rule removes every
+  deny. The shell tool is named `shell` in V2 (`bash` before); its command is in
+  `part.state.input.command`.
+- agy 1.5.3: `--mode plan` enforces nothing (with `--disable-slash-commands` it prints that it
+  has no effect, and the agent wrote files and ran shell); `--sandbox` alone did not stop writes
+  when the user's global settings say always-proceed. `--settings` merges with the global
+  settings; with `toolPermission: request-review` and deny `write_file(*)`, `command(*)`,
+  `mcp(*)`, file creation and edits, every shell command (even ones the global allow list
+  permits) and MCP calls failed with "Matches user-configured deny rule", the turn continued and
+  `structured_output` was produced. Not blocked: `search_web`, `invoke_subagent`, and the
+  start-up of hooks and MCP servers. A project `.agents/hooks.json` ran its hooks and a project
+  `.agents/mcp_config.json` spawned its stdio servers in a never-seen directory with no trust
+  prompt and no setting stopped them, so the adapter refuses both files. Headless, a tool needing
+  approval is auto-denied and the turn ends at once with status SUCCESS, an empty response, no
+  structured output and `denied_actions`; the bridge treats that as a failed turn.
+- cursor-agent 2026.11.11: ask mode relies on the model declining. `cli-config.json` in the
+  directory named by `CURSOR_CONFIG_DIR` with permissions allow `[]` / deny `Write(**)`,
+  `Shell(*)` makes the CLI itself refuse edits and shell ("Blocked by permissions
+  configuration"), even with `--force`. `CURSOR_CONFIG_DIR` relocates only `cli-config.json` and
+  chats (so `--resume` needs the same directory every run); login, `~/.cursor/projects` trust
+  records, user hooks and skills stay global. The CLI rewrites that file and adds keys such as
+  `authInfo`, so the bridge keeps the existing object and replaces only `permissions`. Whether a
+  project `.cursor/cli.json` can loosen the denies was not established, so it is refused.
+- Still open for all three: no OS sandbox for the CLI's own process; agy keeps `search_web`,
+  subagents and browser tools and runs user-level hooks/MCP; Cursor user-level hooks and skills
+  load; Cursor sessions started before this change cannot be resumed; opencode user config is no
+  longer loaded for bridge runs.
+
 | Check | Result |
 |---|---|
 | Real opencode reviewer, `OPENCODE_SMOKE=1` (ollama-cloud/gpt-oss:120b) | approved as actor `agent`; worktree held only the executor's change; task DONE. 1 of ~10 runs produced no review (reviewer failure, task left in REVIEW for the client as designed; cause not captured) |
-| Real agy reviewer, `AGY_SMOKE=1` (gemini-3.8-flash-low, `--mode plan --sandbox`) | approved as actor `agent`; worktree held only the executor's change; task DONE |
+| Real agy reviewer, `AGY_SMOKE=1` (gemini-3.8-flash-low; run before the 1.5.3 probe, with `--mode plan --sandbox`) | approved as actor `agent`; worktree held only the executor's change; task DONE |
 
 ## 9. Known limitations / unsupported
 
-- opencode, agy and cursor-agent cannot execute (write) tasks. agy keeps browser tools in plan
-  mode that the CLI cannot disable; opencode has no per-account login isolation.
+- opencode, agy and cursor-agent cannot execute (write) tasks. agy keeps `search_web`, subagents
+  and browser tools that no rule blocks; opencode has no per-account login isolation.
 - `account-add --provider google` (agy sign-in inside a fresh `HOME`) and `account-add` for
   Claude were exercised only against the fake CLIs: they are human-only, so no real login was
   run. `account-add` refuses to finish if the global login changed, as `account-login` does.

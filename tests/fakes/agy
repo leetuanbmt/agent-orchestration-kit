@@ -10,6 +10,8 @@ login under HOME, so an isolated account is a whole HOME).
 
 FAKE_AGY_SCENARIO: comma-separated per invocation (last repeats): ok | quota | auth | crash
 FAKE_AGY_DECISION: "decision:notes" for reviewer runs (default "approve:looks good").
+FAKE_AGY_DENIED:   when set, the result reports denied_actions (the named action) like agy 1.5.3
+                   does for a tool that needs approval: SUCCESS, empty response, no structured output.
 FAKE_AGY_DIR:      scratch dir for the call counter and argv/stdin log.
 """
 
@@ -85,6 +87,12 @@ if scenario == "auth":
 if scenario == "crash":
     print("fatal: fake crash", file=sys.stderr)
     sys.exit(2)
+
+if os.environ.get("FAKE_AGY_DENIED"):
+    emit("result", result={"conversation_id": conversation, "status": "SUCCESS", "response": "",
+                           "usage": {"input_tokens": 1, "output_tokens": 1},
+                           "denied_actions": [{"action": os.environ["FAKE_AGY_DENIED"]}]})
+    sys.exit(0)
 
 schema = json.loads(argv[argv.index("--json-schema") + 1]) if "--json-schema" in argv else {}
 keys = set(schema.get("properties", {}))

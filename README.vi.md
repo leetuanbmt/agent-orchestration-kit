@@ -337,9 +337,9 @@ thái có trong [docs/configuration.md](docs/configuration.md) (tiếng Anh).
 | `codex-cli` | `openai` | Có (mặc định) | OS sandbox của Codex (`workspace-write` / `read-only`), không có mạng | `CODEX_HOME` |
 | `claude-cli` | `anthropic` | Chỉ khi `allow_write: true` | Permission rule của CLI; OS sandbox cho Bash | `CLAUDE_CONFIG_DIR` |
 | `client` | — | Không | Chính MCP caller; bridge không bao giờ khởi chạy nó | — |
-| `opencode-cli` | `opencode` | Không (config từ chối) | Chặn tool qua config; không có OS sandbox | Chỉ login global |
-| `cursor-cli` | `cursor` | Không (config từ chối) | `--mode ask --sandbox enabled`; từ chối thư mục có hook trong `.cursor/hooks.json` hoặc `.claude/settings*.json`; chưa xác minh OS sandbox | Chỉ login global |
-| `agy-cli` | `google` | Không (config từ chối) | `--mode plan --sandbox`; không có OS sandbox | Cả một `HOME` |
+| `opencode-cli` | `opencode` | Không (config từ chối) | Quyền V2 từ chối tất cả (chỉ read, glob, grep), thư mục config người dùng rỗng; không có OS sandbox | Chỉ login global |
+| `cursor-cli` | `cursor` | Không (config từ chối) | `--mode ask --sandbox enabled` cùng lệnh chặn `Write(**)`/`Shell(*)` trong thư mục config riêng; từ chối thư mục có `.cursor/hooks.json`, `.cursor/cli.json` hoặc hook trong `.claude/settings*.json`; chưa xác minh OS sandbox | Chỉ login global |
+| `agy-cli` | `google` | Không (config từ chối) | `--sandbox` cùng settings `request-review` chặn ghi, shell và MCP; từ chối `.agents/hooks.json` và `.agents/mcp_config.json`; không có OS sandbox | Cả một `HOME` |
 
 - `executor` phải ghi được, nên chỉ có thể là `codex-cli` hoặc `claude-cli` với `allow_write`.
 - `planner` và `reviewer` chỉ cần quyền đọc; `client` nghĩa là chính bạn, thông qua
@@ -478,20 +478,33 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   user đọc được vẫn đọc được.
   Nên dùng Codex làm executor cho công việc không đáng tin cậy, vì các tool Read của Claude và
   chính tiến trình claude không bị OS sandbox giới hạn, và Bash trong sandbox vẫn truy cập được Keychain.
-- **opencode và agy** chỉ đọc. opencode chạy với edit, bash, webfetch và thư mục bên ngoài bị
-  chặn qua `OPENCODE_CONFIG_CONTENT`; agy chạy `--mode plan --sandbox` và vẫn giữ các tool trình
-  duyệt mà CLI không tắt được. Probe không ghi file nào với cả hai; cả hai đều không có OS sandbox.
+- **opencode và agy** chỉ đọc, được ép bằng quy tắc quyền của CLI chứ không phải cờ mode.
+  opencode (2.2.6) chạy với config từ chối tất cả trong `OPENCODE_CONFIG_CONTENT`, chỉ cho
+  read, glob và grep (file `.env`, MCP, skill, websearch và subagent bị chặn), tắt config của
+  project, và một `XDG_CONFIG_HOME` rỗng riêng cho mỗi lượt chạy, nên plugin, MCP server, agent
+  và skill opencode cấp người dùng không được nạp khi bridge chạy (login và session giữ nguyên).
+  agy (1.5.3) chạy với `--sandbox --disable-slash-commands` và `--settings` theo phiên đặt
+  `toolPermission: request-review`, chặn `write_file(*)`, `command(*)` và `mcp(*)`; `--mode plan`
+  không ép gì cả nên không dùng. Lượt mà agy cần phê duyệt kết thúc với `denied_actions` và bị
+  tính là thất bại. agy từ chối thư mục có `.agents/hooks.json` hoặc `.agents/mcp_config.json`,
+  vì nó chạy chúng khi khởi động mà không hỏi tin cậy. Vẫn còn hở: cả hai không có OS sandbox
+  cho tiến trình của chính chúng; agy vẫn cho `search_web`, subagent và tool trình duyệt, chạy
+  hook và MCP server cấp người dùng của bạn và gộp settings global của bạn.
 - **cursor** cũng chỉ đọc. Nó chạy `cursor-agent` với `--mode ask`, `--sandbox enabled` và
-  `--trust`; ở chế độ ask, model báo ghi file và shell bị chặn và không ghi gì
-  (cursor-agent 2026.11.11). CLI thực thi hook trong `.cursor/hooks.json`,
-  `.claude/settings.json` và `.claude/settings.local.json` (đối tượng `hooks`) của project kể cả
-  ở chế độ ask, ngoài sandbox của nó, nên adapter từ chối thư mục có `.cursor/hooks.json`, hoặc
-  có một trong hai file `.claude` đó chứa hook hoặc không phải JSON object; agent khi đó được
-  liệt kê là unavailable và `health` cảnh báo. `--trust` là bắt buộc (print mode thoát với mã 1
-  trong thư mục chưa biết) và để lại worktree ở trạng thái tin cậy trong `~/.cursor/projects/`
-  cùng các chat trong `~/.cursor/chats/`. Binary được cài với tên `cursor-agent` và `agent`. Hook
-  và skill Cursor cấp người dùng của bạn vẫn được nạp, và chưa xác minh OS sandbox nào. Cursor
-  chỉ có login global (`cursor-agent login`).
+  `--trust`. Chỉ riêng chế độ ask thì dựa vào việc model từ chối, nên mỗi lượt chạy còn đặt
+  `CURSOR_CONFIG_DIR=<state dir>/cursor-config` với `cli-config.json` có quyền chặn `Write(**)`
+  và `Shell(*)` (các key khác được giữ; file 0600, thư mục 0700). Đã probe trên cursor-agent
+  2026.11.11: khi đó chính CLI từ chối sửa file và shell, kể cả với `--force`. Các chat giờ nằm
+  trong thư mục đó, nên session Cursor bắt đầu trước thay đổi này không thể resume. CLI thực thi
+  hook trong `.cursor/hooks.json`, `.claude/settings.json` và `.claude/settings.local.json`
+  (đối tượng `hooks`) của project kể cả ở chế độ ask, ngoài sandbox của nó, nên adapter từ chối
+  thư mục có `.cursor/hooks.json`, hoặc có một trong hai file `.claude` đó chứa hook hoặc không
+  phải JSON object; nó cũng từ chối `.cursor/cli.json`, vì chưa xác định được file này có nới
+  lỏng các lệnh chặn hay không. Agent khi đó được liệt kê là unavailable và `health` cảnh báo.
+  `--trust` là bắt buộc (print mode thoát với mã 1 trong thư mục chưa biết) và để lại worktree ở
+  trạng thái tin cậy trong `~/.cursor/projects/`. Binary được cài với tên `cursor-agent` và
+  `agent`. Hook và skill Cursor cấp người dùng của bạn vẫn được nạp, và chưa xác minh OS sandbox
+  nào. Cursor chỉ có login global (`cursor-agent login`).
 - **Tùy chọn `claude_hook_settings`** trong `.ai/config.json` truyền một file settings chỉ chứa
   hook cho mọi lượt chạy Claude. Các hook này là code được tin cậy, chạy không có sandbox; tùy
   chọn này mặc định tắt.
