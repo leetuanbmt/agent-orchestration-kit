@@ -43,7 +43,8 @@ scenario = scenarios[min(n, len(scenarios) - 1)]
 prompt = sys.stdin.read()
 with (state / "log.jsonl").open("a") as f:
     f.write(json.dumps({"argv": argv, "prompt": prompt, "cwd": os.getcwd(),
-                        "agent_env": os.environ.get("AGENT_BRIDGE_AGENT")}) + "\n")
+                        "agent_env": os.environ.get("AGENT_BRIDGE_AGENT"),
+                        "config_dir": os.environ.get("CURSOR_CONFIG_DIR")}) + "\n")
 
 session = argv[argv.index("--resume") + 1] if "--resume" in argv else str(uuid.uuid4())
 

@@ -59,7 +59,7 @@ HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove", "account
                       "project-account-add", "project-account-remove",
                       "project-agent-add", "project-agent-remove",
                       "project-account-limits", "config-set", "config-unset"}
-# Adapter per provider for `project-account-add`; google, opencode and cursor only plan and review.
+# Adapter per provider for `project-account-add`; google, opencode and cursor only plan and review unless the agent opts in (opencode, google).
 _PROVIDER_ADAPTER = orchestrator.PROVIDER_ADAPTER
 EXAMPLES = install.KIT / "examples"
 
@@ -476,7 +476,7 @@ def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
         account["limits"] = limits
     adapter = _PROVIDER_ADAPTER[provider]
     spec: dict[str, Any] = {"adapter": adapter, "account": args.name}
-    if adapter not in orchestrator.READ_ONLY_ADAPTERS:
+    if adapter not in (orchestrator.READ_ONLY_ADAPTERS | orchestrator.OPT_IN_WRITE_ADAPTERS):
         spec["allow_write"] = True
     if args.model:
         spec["model"] = args.model
@@ -557,7 +557,7 @@ def _project_agent_add(args: argparse.Namespace) -> dict[str, Any]:
                                  "project-account-add`)")
             adapter = _PROVIDER_ADAPTER[profile.provider]
             spec: dict[str, Any] = {"adapter": adapter, "account": args.account}
-            if adapter not in orchestrator.READ_ONLY_ADAPTERS:
+            if adapter not in (orchestrator.READ_ONLY_ADAPTERS | orchestrator.OPT_IN_WRITE_ADAPTERS):
                 spec["allow_write"] = True
         else:
             adapter, spec = "client", {"adapter": "client"}

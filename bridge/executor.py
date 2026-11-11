@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
+import dataclasses
 import functools
 import json
 import math
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -29,7 +32,8 @@ from typing import Any
 from . import osutil
 from .accounts import Account, account_env, claude_token, codex_overrides
 from .config import BridgeConfig, state_dir
-from .security import PathError, clean_env, hook_settings_error, process_started, redact, rule_unsafe
+from .security import (GLOB_CHARS, PathError, clean_env, hook_settings_error, literal_prefix, matches,
+                       process_started, redact, rule_unsafe)
 
 # Set in every agent process; the bridge entry points refuse to start under it, so an agent
 # cannot orchestrate other agents.
@@ -593,22 +597,151 @@ def _schema_prompt(req: RunRequest) -> str:
             f"no code fence), matching this JSON schema:\n{json.dumps(req.schema)}")
 
 
-# Inline opencode config for every run: no edits, shell, web fetches or paths outside the
-# project; the project's own opencode config is ignored. Probed on opencode 2.1.2: with it the
-# model reported having no tool to write files, and nothing was written.
-_OPENCODE_READ_ONLY = {"permission": {"edit": "deny", "bash": "deny", "webfetch": "deny",
-                                      "external_directory": "deny"}}
+# Inline opencode V2 config for every run. Probed on opencode 2.2.6 (`opencode debug agents
+# --standalone`): it lands after the built-in defaults of every agent and the last match wins, so
+# everything is denied first and only read, glob and grep (not .env files) are allowed. The V1
+# `permission` block left `execute` (the user's MCP servers), subagents, skills and websearch open.
+_OPENCODE_READ_ONLY = {
+    "permissions": [
+        {"action": "*", "resource": "*", "effect": "deny"},
+        {"action": "read", "resource": "*", "effect": "allow"},
+        {"action": "glob", "resource": "*", "effect": "allow"},
+        {"action": "grep", "resource": "*", "effect": "allow"},
+        {"action": "read", "resource": "*.env", "effect": "deny"},
+        {"action": "read", "resource": "*.env.*", "effect": "deny"},
+        {"action": "external_directory", "resource": "*", "effect": "deny"},
+    ],
+    "policies": [
+        {"action": "tool.use", "resource": "*", "effect": "deny"},
+        {"action": "tool.use", "resource": "read:*", "effect": "allow"},
+        {"action": "tool.use", "resource": "glob:*", "effect": "allow"},
+        {"action": "tool.use", "resource": "grep:*", "effect": "allow"},
+        {"action": "tool.use", "resource": "external_directory:*", "effect": "deny"},
+        {"action": "mcp.use", "resource": "*", "effect": "deny"},
+        {"action": "skill.use", "resource": "*", "effect": "deny"},
+        {"action": "websearch.use", "resource": "*", "effect": "deny"},
+    ],
+}
 
 
-class OpenCodeAdapter(ReadOnlyAdapter):
+def _opencode_config(patterns: list[str] | None) -> dict[str, Any]:
+    """The inline config: the read-only one, plus (patterns is not None) one `edit` allow per
+    pattern and the edit tool policy. Shell stays denied by the deny-all rule."""
+    cfg = copy.deepcopy(_OPENCODE_READ_ONLY)
+    if patterns is None:
+        return cfg
+    perms, pols = cfg["permissions"], cfg["policies"]
+    perms[-1:-1] = [{"action": "edit", "resource": p, "effect": "allow"} for p in patterns]
+    pols.insert(4, {"action": "tool.use", "resource": "edit:*", "effect": "allow"})
+    return cfg
+
+
+def write_targets(write_paths: list[str], root: Path, who: str) -> list[tuple[str, bool]]:
+    """Map a task's allowed paths to (path, is_dir) targets for a CLI that takes literal
+    directory/file allow rules: a directory (or a glob under a directory prefix) becomes a
+    directory prefix covering every depth; a glob-free file stays exact. A glob with no
+    directory prefix cannot be anchored and refuses the run."""
+    if bad := rule_unsafe(write_paths):
+        raise PathError(f"not expressible as {who} write rules: {bad}")
+    out: list[tuple[str, bool]] = []
+    for path in write_paths:
+        if GLOB_CHARS & set(path):
+            prefix = literal_prefix(path)
+            if not prefix:
+                raise PathError(f"allowed path {path!r} has no directory prefix before its first "
+                                f"glob character: {who} needs directory-anchored allowed_paths")
+            target = (prefix, True)
+        else:
+            bare = path.rstrip("/")
+            target = (bare, (root / bare).is_dir())
+        if target not in out:
+            out.append(target)
+    return out
+
+
+def opencode_edit_patterns(write_paths: list[str], root: Path) -> list[str]:
+    """opencode edit allow patterns: `*` crosses `/` there, so a directory is `<dir>/*`."""
+    return [f"{p}/*" if is_dir else p for p, is_dir in write_targets(write_paths, root, "opencode")]
+
+
+def agy_write_rules(write_paths: list[str], root: Path) -> list[str]:
+    """agy write_file allow rules: `write_file(<dir>/)` (every depth) or `write_file(<file>)`."""
+    return [f"write_file({p}/)" if is_dir else f"write_file({p})"
+            for p, is_dir in write_targets(write_paths, root, "agy")]
+
+
+def _write_preflight(who: str, root: Path, targets: list[tuple[str, bool]],
+                     deny_paths: list[str]) -> None:
+    """Refuse a writing run when an allowed path holds something the CLI's allow rules cannot
+    keep the agent from reaching: a symlink (followed by the tools), a hardlink (written in place,
+    changing its other name), or under an allowed directory a file matching a deny path (a
+    case-variant write would overwrite it on a case-insensitive filesystem)."""
+    from .review import worktree_files
+
+    def hardlinked(path: Path) -> bool:
+        try:
+            st = path.lstat()
+        except OSError:
+            return False
+        return stat.S_ISREG(st.st_mode) and st.st_nlink > 1
+
+    for target, is_dir in targets:
+        walked = ""
+        for part in target.split("/"):
+            walked = f"{walked}/{part}" if walked else part
+            if (root / walked).is_symlink():
+                raise ValueError(f"{who} write run refused: symlink {walked} is at or above "
+                                 f"allowed path {target}")
+        if not is_dir and hardlinked(root / target):
+            raise ValueError(f"{who} write run refused: {target} is a hardlink (a write would "
+                             "change its other name too)")
+    dirs = [t for t, is_dir in targets if is_dir]
+    if not dirs:
+        return
+    for f in worktree_files(root):
+        if not any(f.startswith(d + "/") for d in dirs):
+            continue
+        if (root / f).is_symlink():
+            raise ValueError(f"{who} write run refused: symlink {f} lies under an allowed "
+                             f"directory ({who} follows it)")
+        if hardlinked(root / f):
+            raise ValueError(f"{who} write run refused: hardlinked file {f} lies under an "
+                             "allowed directory (a write would change its other name too)")
+        if matches(f, deny_paths):
+            raise ValueError(f"{who} write run refused: protected or excluded file {f} lies "
+                             "under an allowed directory (a case-variant write could overwrite it)")
+
+
+class OpenCodeAdapter(Adapter):
     """`opencode run`. It has no structured-output flag: the schema goes into the prompt and the
-    final text is parsed as JSON."""
+    final text is parsed as JSON. A read-only run gets the deny-all config; a writing run (only
+    for an agent with allow_write) also gets `edit` allows for its mapped allowed paths and no
+    shell, probed on opencode 2.2.6. Allow rules are broader than the task globs (every depth under
+    a directory); the bridge's post-run scope check enforces the task scope."""
 
     name, provider = "opencode-cli", "opencode"
+    _config_home: Path | None = None
 
     @property
     def binary(self) -> str:
         return self.cfg.opencode_bin
+
+    def _patterns(self, req: RunRequest) -> list[str] | None:
+        if req.sandbox == "read-only":
+            return None
+        return opencode_edit_patterns(req.write_paths, self.root)
+
+    def build(self, req: RunRequest, tmp: Path) -> list[str]:
+        patterns = self._patterns(req)
+        if patterns is not None:
+            _write_preflight("opencode", self.root,
+                             write_targets(req.write_paths, self.root, "opencode"),
+                             req.deny_paths)
+        # An empty XDG_CONFIG_HOME removes the user's opencode config directory (plugins, MCP
+        # servers, agents, skills) as a source; data, login and sessions stay where they are.
+        self._config_home = tmp / "opencode-config"
+        self._config_home.mkdir(mode=0o700)
+        return self.argv(req)
 
     def argv(self, req: RunRequest) -> list[str]:
         # --standalone: a private server per run instead of the user's background service.
@@ -620,11 +753,21 @@ class OpenCodeAdapter(ReadOnlyAdapter):
         return a  # the prompt goes on stdin
 
     def extra_env(self, req: RunRequest) -> dict[str, str]:
-        return {"OPENCODE_CONFIG_CONTENT": json.dumps(_OPENCODE_READ_ONLY),
-                "OPENCODE_DISABLE_PROJECT_CONFIG": "1", "OPENCODE_DISABLE_AUTOUPDATE": "1"}
+        env = {"OPENCODE_CONFIG_CONTENT": json.dumps(_opencode_config(self._patterns(req))),
+               "OPENCODE_DISABLE_PROJECT_CONFIG": "1", "OPENCODE_DISABLE_AUTOUPDATE": "1"}
+        if self._config_home is not None:
+            env["XDG_CONFIG_HOME"] = str(self._config_home)
+        return env
 
     def stdin(self, req: RunRequest) -> str:
-        return _schema_prompt(req)
+        prompt = req
+        if (patterns := self._patterns(req)) is not None:
+            prompt = dataclasses.replace(req, prompt=(
+                f"{req.prompt}\n\nYou can only read and edit files: you have no shell, and no "
+                "way to delete or rename files. You may write only to these patterns: "
+                f"{', '.join(patterns) or '(none)'}. If you cannot run tests, report completed "
+                "and list what you could not check."))
+        return _schema_prompt(prompt)
 
     def handle(self, ev: dict[str, Any], res: RunResult, ctx: dict[str, Any]) -> None:
         if not res.session_id and ev.get("sessionID"):
@@ -641,8 +784,11 @@ class OpenCodeAdapter(ReadOnlyAdapter):
             if (isinstance(cost, (int, float)) and not isinstance(cost, bool)
                     and math.isfinite(cost) and cost >= 0):
                 res.cost_usd = (res.cost_usd or 0.0) + float(cost)  # cost is per step
-        elif t == "tool_use" and part.get("tool") == "bash":
-            res.commands.append(str((part.get("state") or {}).get("input", ""))[:300])
+        elif t == "tool_use" and part.get("tool") in ("shell", "bash"):
+            given = (part.get("state") or {}).get("input", "")
+            if isinstance(given, dict):
+                given = given.get("command", "")
+            res.commands.append(str(given)[:300])
         elif t == "error":
             err = ev.get("error") or {}
             # e.g. {"type": "provider.quota", "status": 402}: keep both for classify().
@@ -656,11 +802,18 @@ class OpenCodeAdapter(ReadOnlyAdapter):
         return res.final is not None and not ctx["errors"]
 
 
+_CURSOR_PERMISSIONS = {"allow": [], "deny": ["Write(**)", "Shell(*)"]}
+
+
 class CursorAdapter(ReadOnlyAdapter):
-    """`cursor-agent -p` in ask mode. Probed on cursor-agent 2026.11.11: the model reported that
-    writes and shell were blocked and wrote nothing. A project `.cursor/hooks.json` is executed
-    by the CLI even in ask mode and outside its sandbox, so a run directory with one is refused.
-    It has no structured-output flag: the schema goes into the prompt."""
+    """`cursor-agent -p` in ask mode, which alone relies on the model declining. Every run also
+    gets a `cli-config.json` in a private CURSOR_CONFIG_DIR (<state_dir>/cursor-config) whose
+    permissions deny Write(**) and Shell(*): probed on cursor-agent 2026.11.11, the CLI itself then
+    refuses edits and shell even with --force. The directory is stable because it also holds the
+    chats (--resume needs it); login, trust records, user hooks and skills stay global. A project
+    `.cursor/hooks.json` is executed by the CLI even in ask mode and outside its sandbox, and
+    whether a project `.cursor/cli.json` can loosen the denies is unknown, so a run directory
+    with either is refused. It has no structured-output flag: the schema goes into the prompt."""
 
     name, provider = "cursor-cli", "cursor"
 
@@ -673,6 +826,9 @@ class CursorAdapter(ReadOnlyAdapter):
         hooks = self.root / ".cursor" / "hooks.json"
         if os.path.lexists(hooks):
             return hooks, "exists and"
+        cli_json = self.root / ".cursor" / "cli.json"
+        if os.path.lexists(cli_json):
+            return cli_json, "exists and"
         for fname in ("settings.json", "settings.local.json"):
             path = self.root / ".claude" / fname
             if not os.path.lexists(path):
@@ -692,12 +848,43 @@ class CursorAdapter(ReadOnlyAdapter):
         if found is None:
             return None
         path, why = found
+        if path.name == "cli.json":
+            return (f"{self.name} is refused here: {path} {why} could loosen the permission "
+                    "denies the bridge sets")
         return (f"{self.name} is refused here: {path} {why} Cursor would execute its hooks "
                 "outside its sandbox")
 
     def refusal_file(self) -> Path | None:
         found = self._refused()
         return found[0] if found else None
+
+    def extra_env(self, req: RunRequest) -> dict[str, str]:
+        return {"CURSOR_CONFIG_DIR": str(self._write_config())}
+
+    def _write_config(self) -> Path:
+        """Set permissions in cli-config.json, keeping the other keys the CLI keeps there."""
+        directory = self.state_dir / "cursor-config"
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with contextlib.suppress(OSError):
+            directory.chmod(0o700)
+        path = directory / "cli-config.json"
+        data: dict[str, Any] = {}
+        with contextlib.suppress(OSError, ValueError):
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        data["permissions"] = {"allow": [], "deny": list(_CURSOR_PERMISSIONS["deny"])}
+        fd, tmpname = tempfile.mkstemp(dir=directory, prefix=".cli-config-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(data))
+            os.chmod(tmpname, 0o600)
+            os.replace(tmpname, path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmpname)
+            raise
+        return directory
 
     def argv(self, req: RunRequest) -> list[str]:
         reason = self.refusal()
@@ -744,20 +931,74 @@ class CursorAdapter(ReadOnlyAdapter):
         return res.final is not None and not ctx["errors"]
 
 
-class AgyAdapter(ReadOnlyAdapter):
-    """Antigravity CLI print mode in plan mode, which refused every file write when probed on
-    agy 1.4.5. Its browser tools cannot be switched off from the command line."""
+_AGY_SETTINGS = {"toolPermission": "request-review",
+                 "permissions": {"deny": ["write_file(*)", "command(*)", "mcp(*)"]}}
+
+
+class AgyAdapter(Adapter):
+    """Antigravity CLI print mode with session-only `--settings` (merged with the user's global
+    settings) that set toolPermission request-review and deny write_file(*), command(*) and
+    mcp(*). Probed on agy 1.5.5: file writes, edits, every shell command and MCP calls then fail
+    with "Matches user-configured deny rule" and the turn continues. A writing run (only for an
+    agent with allow_write) instead allows write_file(<dir>/) / write_file(<file>) for its mapped
+    allowed paths (every depth under a directory; the bridge's post-run scope check enforces the
+    task scope) and denies only command(*) and mcp(*): no shell. A write outside the allow rules
+    ends the turn at once and fails it. subagents, schedule, image generation and search_web are
+    not gated. On a resumed conversation structured_output can be the previous turn's: the
+    answer is then taken only from the response text. `--mode plan` enforces
+    nothing there and is not used. Open: search_web, subagents and browser tools stay allowed,
+    user-level hooks and MCP servers still start, and the CLI has no OS sandbox for its own
+    process. A project `.agents/hooks.json` or `.agents/mcp_config.json` runs code at start-up
+    with no trust prompt and no rule stops it, so a run directory with either is refused. A tool
+    that needs approval ends the turn at once with denied_actions: that is a failed turn."""
 
     name, provider = "agy-cli", "google"
+    _resumed = False
 
     @property
     def binary(self) -> str:
         return self.cfg.agy_bin
 
+    def _settings(self, req: RunRequest) -> dict[str, Any]:
+        if req.sandbox == "read-only":
+            return _AGY_SETTINGS
+        return {"toolPermission": "request-review",
+                "permissions": {"allow": agy_write_rules(req.write_paths, self.root),
+                                "deny": ["command(*)", "mcp(*)"]}}
+
+    def build(self, req: RunRequest, tmp: Path) -> list[str]:
+        a = self.argv(req)  # raises on a refused run directory
+        if req.sandbox != "read-only":
+            _write_preflight("agy", self.root, write_targets(req.write_paths, self.root, "agy"),
+                             req.deny_paths)
+        self._resumed = bool(req.session_id)
+        return a
+
+    def _refused(self) -> Path | None:
+        for fname in ("hooks.json", "mcp_config.json"):
+            path = self.root / ".agents" / fname
+            if os.path.lexists(path):
+                return path
+        return None
+
+    def refusal(self) -> str | None:
+        path = self._refused()
+        if path is None:
+            return None
+        return (f"{self.name} is refused here: {path} exists and agy would run its hooks or "
+                "start its MCP servers at start-up with no trust prompt")
+
+    def refusal_file(self) -> Path | None:
+        return self._refused()
+
     def argv(self, req: RunRequest) -> list[str]:
+        reason = self.refusal()
+        if reason:
+            raise ValueError(reason)
         # `-p=` with --input-format stream-json: the prompt comes from stdin, not argv.
         a = [self.binary, "--input-format", "stream-json", "--output-format", "stream-json",
-             "-p=", "--mode", "plan", "--sandbox", "--disable-slash-commands",
+             "-p=", "--sandbox", "--disable-slash-commands",
+             "--settings", json.dumps(self._settings(req)),
              "--json-schema", json.dumps(req.schema)]
         if req.model:
             a += ["--model", req.model]
@@ -766,8 +1007,19 @@ class AgyAdapter(ReadOnlyAdapter):
         return a
 
     def stdin(self, req: RunRequest) -> str:
+        prompt = req.prompt
+        if req.sandbox != "read-only":
+            targets = write_targets(req.write_paths, self.root, "agy")
+            where = ", ".join(f"{p}/ (any depth)" if d else p for p, d in targets) or "(none)"
+            prompt += ("\n\nYou have no shell, and no way to delete or rename files. You may "
+                       f"write only to these paths: {where}. A write anywhere else ends your turn "
+                       "immediately and fails it. If you cannot run tests, report completed and "
+                       "list what you could not check.")
+        if req.session_id:
+            prompt += ("\n\nGive the final answer as exactly one JSON object matching the "
+                       "schema, and nothing else.")
         return json.dumps({"event": "user",
-                           "message": {"role": "user", "content": req.prompt}}) + "\n"
+                           "message": {"role": "user", "content": prompt}}) + "\n"
 
     def handle(self, ev: dict[str, Any], res: RunResult, ctx: dict[str, Any]) -> None:
         t = ev.get("event")
@@ -780,14 +1032,24 @@ class AgyAdapter(ReadOnlyAdapter):
             res.session_id = r.get("conversation_id") or res.session_id
             res.usage = r.get("usage")
             res.final_text = str(r.get("response") or "")
-            if isinstance(r.get("structured_output"), dict):
+            if self._resumed:
+                # structured_output can be the previous turn's JSON when the model answered in prose.
+                res.final = _json_object(res.final_text)
+            elif isinstance(r.get("structured_output"), dict):
                 res.final = r["structured_output"]
-            ok = r.get("status") == "SUCCESS"
+            denied = r.get("denied_actions")
+            ok = r.get("status") == "SUCCESS" and not denied
             ctx["completed"] = ok and res.final is not None
-            if not ok:
+            if denied:
+                names = []
+                for d in denied if isinstance(denied, list) else [denied]:
+                    names.append(str(d.get("action") if isinstance(d, dict) else d))
+                ctx["errors"].append("denied actions: " + ", ".join(names)[:300])
+            elif not ok:
                 ctx["errors"].append(f"{r.get('status')}: {r.get('error') or ''}".strip())
             elif res.final is None:
-                ctx["errors"].append("no structured output")
+                ctx["errors"].append("the resumed turn returned no fresh JSON answer"
+                                     if self._resumed else "no structured output")
 
     def finish(self, res: RunResult, tmp: Path, ctx: dict[str, Any]) -> bool:
         return bool(ctx.get("completed"))

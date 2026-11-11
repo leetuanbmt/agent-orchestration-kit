@@ -8,9 +8,12 @@ decides which object (review, plan, or the executor report).
 FAKE_OPENCODE_SCENARIO: comma-separated per invocation (last repeats): ok | fenced | quota | auth | crash
 FAKE_OPENCODE_DECISION: "decision:notes" for reviewer runs (default "approve:looks good").
 FAKE_OPENCODE_LOGGED_OUT: when set, `auth list` reports no credentials.
+FAKE_OPENCODE_WRITE:    "path=content;..." written on ok runs when an `edit` allow pattern in the config
+                        matches the path (fnmatch: `*` crosses `/`, like opencode's edit allowlist).
 FAKE_OPENCODE_DIR:      scratch dir for the call counter and argv/prompt/env log.
 """
 
+import fnmatch
 import json
 import os
 import sys
@@ -37,6 +40,10 @@ prompt = sys.stdin.read()
 with (state / "log.jsonl").open("a") as f:
     f.write(json.dumps({"argv": argv, "prompt": prompt, "cwd": os.getcwd(),
                         "config": os.environ.get("OPENCODE_CONFIG_CONTENT"),
+                        "xdg_config_home": os.environ.get("XDG_CONFIG_HOME"),
+                        "xdg_listing": (sorted(os.listdir(os.environ["XDG_CONFIG_HOME"]))
+                                        if os.environ.get("XDG_CONFIG_HOME")
+                                        and os.path.isdir(os.environ["XDG_CONFIG_HOME"]) else None),
                         "project_config_disabled": os.environ.get("OPENCODE_DISABLE_PROJECT_CONFIG"),
                         "agent_env": os.environ.get("AGENT_BRIDGE_AGENT")}) + "\n")
 
@@ -57,6 +64,14 @@ if scenario in ("quota", "auth"):
 if scenario == "crash":
     print("fatal: fake crash", file=sys.stderr)
     sys.exit(2)
+
+edit_allows = [r["resource"] for r in json.loads(os.environ.get("OPENCODE_CONFIG_CONTENT") or "{}")
+               .get("permissions", []) if r.get("action") == "edit" and r.get("effect") == "allow"]
+for pair in filter(None, os.environ.get("FAKE_OPENCODE_WRITE", "").split(";")):
+    path, _, content = pair.partition("=")
+    if any(fnmatch.fnmatchcase(path, pattern) for pattern in edit_allows):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(content)
 
 if '"decision"' in prompt:
     decision, _, notes = os.environ.get("FAKE_OPENCODE_DECISION", "approve:looks good").partition(":")

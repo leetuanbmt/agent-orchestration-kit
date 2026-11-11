@@ -104,8 +104,26 @@ Role rules:
 - `executor` is required and needs `write`; `planner` and `reviewer` need `read`.
 - A `client` agent can only read: it plans and reviews through the MCP tools and is never
   started by the bridge.
-- `opencode-cli`, `cursor-cli` and `agy-cli` are read-only; `allow_write` or a `write` capability on them is
-  rejected.
+- `cursor-cli` is read-only; `allow_write` or a `write` capability on it is
+  rejected. `agy-cli` and `opencode-cli` are read-only unless `allow_write: true` (the `writes` default stays
+  Codex-only). agy executes only with `allow_write: true`; its writing run gets `request-review`
+  settings with `write_file(<dir>/)` / `write_file(<file>)` allows for the mapped allowed paths
+  (every depth under a directory; the bridge's post-run scope check enforces the task scope) and
+  denies only `command(*)` and `mcp(*)`. A write outside the allows ends the turn and fails it;
+  there is no shell (no tests, delete or rename); a hardlink, symlink or protected/excluded file
+  under an allowed directory refuses the run; subagents, schedule, image generation and
+  `search_web` are not gated; workspace reads (including `.env`) are not blocked; your global
+  agy settings are merged, user-level hooks/MCP servers still start and agy keeps state under
+  `~/.gemini`; there is no OS sandbox, so prefer Codex for untrusted work. The CLI self-updates
+  (probed 1.5.5) and its login check is unreliable on 1.5.x. A resumed agy turn must answer with
+  a JSON object in its response text or it fails. For opencode: Its writing run gets one opencode `edit` allow per allowed path (`src/**` or a
+  directory becomes `src/*`; a glob with no directory prefix such as `*.md` refuses the run), no
+  shell, and no deny rules. The allow rules are broader than the task globs (every depth under the
+  directory) and the bridge's post-run scope check enforces the task scope. The agent cannot run
+  tests, delete or rename. A symlink or a protected/excluded file under an allowed directory
+  refuses the run. Probed with free models only; no OS sandbox, so prefer Codex for untrusted
+  work; `opencode_worktree_remove` stays exposed. Reviewer and planner runs of the same agent stay
+  deny-all read-only.
 - Built-in role names are `planner`, `executor`, `reviewer`, `advisor` and `tester`. Other role
   names are accepted, but only planner, executor and reviewer have a stage; testing is the
   bridge's own `test` stage.
@@ -364,10 +382,19 @@ For agy, `account-use` defines an `agy` shell function instead of changing `HOME
 `account-login <name>` runs `opencode auth login`. Cursor works the same way:
 `account-add <name> --provider cursor` registers one home-less account and `account-login <name>`
 runs `cursor-agent login`. `cursor-cli` runs `cursor-agent` in `--mode ask` with `--sandbox
-enabled` and `--trust`. Cursor executes hooks from `.cursor/hooks.json`, `.claude/settings.json`
+enabled` and `--trust`, and sets `CURSOR_CONFIG_DIR=<state dir>/cursor-config` whose
+`cli-config.json` permissions deny `Write(**)` and `Shell(*)` (other keys kept; the file is
+private and never logged). Chats live in that directory, so Cursor sessions started before this
+change cannot be resumed. Cursor executes hooks from `.cursor/hooks.json`, `.claude/settings.json`
 and `.claude/settings.local.json` outside its sandbox, so the adapter refuses a directory where
-`.cursor/hooks.json` exists or either `.claude` file has a non-empty `hooks` value or is not a
-JSON object. A refused agent is listed `available: false` with that reason, is skipped when a
+`.cursor/hooks.json` or `.cursor/cli.json` exists or either `.claude` file has a non-empty
+`hooks` value or is not a JSON object. `opencode-cli` runs with a deny-all V2 permission config
+(read, glob and grep only) and an empty per-run `XDG_CONFIG_HOME`, so your opencode user config
+(plugins, MCP servers, agents, skills) is not loaded for bridge runs; `agy-cli` runs with session
+`--settings` (`request-review`; read-only runs deny `write_file(*)`, `command(*)`, `mcp(*)`; a writing run allows its `write_file` paths and denies `command(*)`, `mcp(*)`), no `--mode`, and
+refuses a directory with `.agents/hooks.json` or `.agents/mcp_config.json`. A turn where agy
+reports `denied_actions` fails. Neither has an OS sandbox; agy still allows `search_web`,
+subagents and browser tools and runs user-level hooks and MCP servers. A refused agent is listed `available: false` with that reason, is skipped when a
 planner or reviewer is picked (the task stays in REVIEW with an `agent_review_skipped` event), and
 `health` warns (`adapter_refused`). `--trust` leaves the worktree trusted in `~/.cursor/projects/`
 and chats under `~/.cursor/chats/`. Cursor reports no cost, so a cursor account with

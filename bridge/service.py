@@ -488,7 +488,8 @@ class Bridge:
     # The CLI versions whose sandbox and permission behaviour docs/REPORT.md last probed (audit
     # TEST-04): a newer CLI may have changed it, so health asks for a re-probe.
     PROBED_VERSIONS = {"codex-cli": (0, 163, 0), "claude-cli": (2, 1, 308),
-                      "cursor-cli": (2026, 11, 11)}
+                      "cursor-cli": (2026, 11, 11), "opencode-cli": (2, 2, 6),
+                      "agy-cli": (1, 5, 5)}
 
     @classmethod
     def unprobed(cls, adapter: str, version: str | None) -> bool:
@@ -638,7 +639,8 @@ class Bridge:
             refused, refused_file = adapter.refusal(), adapter.refusal_file()
             if refused and refused_file:
                 warnings.append(item("adapter_refused", redact(refused, 400),
-                                     f"a human removes the hooks from {refused_file}, or uses "
+                                     f"a human removes {refused_file} (a hooks, MCP or config file the CLI "
+                                     "would act on), or uses "
                                      "another reviewer/planner agent instead of "
                                      f"{name}"))
         for name, info in limits.items():
