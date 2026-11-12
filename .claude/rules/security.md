@@ -10,7 +10,7 @@
   while scoped rules refused those writes. Every rule names the absolute project root
   (`//<root>/src/**`): Claude resolves `./` rules against the Bash cwd, which a `cd` moves, so
   `./` rules refused in-scope writes and let deny rules miss after a `cd` (probed on 2.1.322).
-  A project path with a space, comma, parenthesis or quote cannot be written as a rule, so
+  A project path with a space, comma, parenthesis, quote or glob character (`*?[]{}!`) cannot be written as a rule, so
   Claude runs are refused there. With `allow_bash: true`, Bash and its child processes run in Claude
   Code’s OS sandbox: no reads of any account home, registry homes, global CLI credential
   directories or private project account/orchestrator files; writes only to the working directory

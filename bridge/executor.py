@@ -29,7 +29,8 @@ from typing import Any
 from . import osutil
 from .accounts import Account, account_env, claude_token, codex_overrides
 from .config import BridgeConfig, state_dir
-from .security import PathError, clean_env, hook_settings_error, process_started, redact, rule_unsafe
+from .security import (PathError, clean_env, hook_settings_error, process_started, redact,
+                       root_rule_unsafe, rule_unsafe)
 
 # Set in every agent process; the bridge entry points refuse to start under it, so an agent
 # cannot orchestrate other agents.
@@ -462,7 +463,7 @@ class ClaudeAdapter(Adapter):
     def build(self, req: RunRequest, tmp: Path) -> list[str]:
         tools = list(_CLAUDE_READ_TOOLS)
         root = f"/{self.root.resolve()}"  # //abs: rules must not follow the agent's Bash cwd
-        if rule_unsafe([root]):
+        if root_rule_unsafe(self.root):
             raise PathError(f"project path not expressible as a Claude permission rule: {self.root}")
         denied = [*_claude_credential_denies(), "Read(~/.claude/.credentials.json)",
                   *(f"Read({root}/{p})" for p in _CLAUDE_SECRET_READS),

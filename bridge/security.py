@@ -51,6 +51,13 @@ def rule_unsafe(patterns: Iterable[str]) -> list[str]:
     return [p for p in patterns if RULE_CHARS & set(p) or any(c.isspace() for c in p)]
 
 
+def root_rule_unsafe(root: Path) -> bool:
+    """A project root Claude rules cannot name literally: rule_unsafe characters, or glob
+    characters that would make every //root/... rule (denies included) match other paths."""
+    text = str(root.resolve())
+    return bool(rule_unsafe([text]) or set(text) & set("*?[]{}!"))
+
+
 @functools.lru_cache(maxsize=512)
 def _pattern_regex(pattern: str) -> re.Pattern[str]:
     """`**` crosses directories, `*`/`?` do not. A glob-free pattern also covers its subtree."""

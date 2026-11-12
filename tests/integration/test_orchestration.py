@@ -214,16 +214,17 @@ def test_claude_rules_survive_cd(make_orch, fake_codex, fake_claude, monkeypatch
 
 # @pt.id KIT-SEC-CLAUDE-004-unscopable-root
 # @pt.item A project path Claude rules cannot hold blocks Claude runs instead of loosening them
-# @pt.condition The project lives under "my proj" (a space ends a rule in --allowedTools); a task is pinned to the Claude writer
+# @pt.condition The project lives under "my proj" (a space ends a rule in --allowedTools) or "proj[1]" (glob characters would make //root rules match other paths); a task is pinned to the Claude writer
 # @pt.expected The task is refused before RUNNING with a reassign hint and stays READY; building a read-only Claude run raises PathError naming the project path
 # @pt.target Gate._unscopable, ClaudeAdapter.build
 # @pt.method integration
 # @pt.legacy ./ rules worked in any path but followed the agent's Bash cwd
-def test_claude_unscopable_root(make_orch, fake_codex, fake_claude, repo, tmp_path):
+@pytest.mark.parametrize("name", ["my proj", "proj[1]"])
+def test_claude_unscopable_root(make_orch, fake_codex, fake_claude, repo, tmp_path, name):
     from bridge.security import PathError
     from bridge.service import Bridge
 
-    spaced = tmp_path / "my proj"
+    spaced = tmp_path / name
     shutil.copytree(repo, spaced)
     base = make_orch(CONFIG_B)
     b = Bridge(spaced, base.cfg, base.orch)
