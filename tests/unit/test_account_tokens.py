@@ -76,9 +76,9 @@ def test_token_env_validation():
 # @pt.id KIT-AUTH-02-yaml-read-deny
 # @pt.item Claude agents cannot read the orchestrator config
 # @pt.condition the fixed read denies passed to every Claude agent run
-# @pt.expected they include ./.ai/orchestrator.yaml
+# @pt.expected they include .ai/orchestrator.yaml (anchored at the project root when the rule is built)
 # @pt.target bridge.executor._CLAUDE_SECRET_READS
 # @pt.method unit
 # @pt.legacy none
 def test_orchestrator_yaml_read_denied():
-    assert "Read(./.ai/orchestrator.yaml)" in _CLAUDE_SECRET_READS
+    assert ".ai/orchestrator.yaml" in _CLAUDE_SECRET_READS
