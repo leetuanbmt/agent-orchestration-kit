@@ -96,8 +96,8 @@ def test_process_arguments(monkeypatch, tmp_path):
 
 # @pt.id T0082-cancel
 # @pt.item Cancel with a reason
-# @pt.condition Cancel a READY task; non-JSON stdout
-# @pt.expected 200 with null result
+# @pt.condition Cancel a READY task, then a BLOCKED one; non-JSON stdout
+# @pt.expected 200 with null result for both
 # @pt.target bridge.webactions.run_action
 # @pt.method integration
 # @pt.legacy none
@@ -107,6 +107,9 @@ def test_cancel(env):
     assert status == 200 and body["result"] is None
     assert fakes.runs[0][0] == [sys.executable, "-P", "-m", "bridge", "cancel", "T0001",
                                 "--reason", "no longer needed"]
+    set_state(env, "BLOCKED")
+    assert act(env, {"action": "cancel", "reason": "committed by hand"}, fakes)[0] == 200
+    assert fakes.runs[1][0][-3:] == ["T0001", "--reason", "committed by hand"]
 
 
 # @pt.id T0099-worktree-package
@@ -223,7 +226,7 @@ def test_wrong_state(env):
     assert act(env, {"action": "resume"}, fakes)[0] == 409
     set_state(env, "REVIEW")
     assert act(env, {"action": "execute"}, fakes)[0] == 409
-    for state in ("DONE", "CANCELLED", "BLOCKED"):
+    for state in ("DONE", "CANCELLED"):
         set_state(env, state)
         assert act(env, {"action": "cancel", "reason": "r"}, fakes)[0] == 409
     assert not fakes.runs and not fakes.starts

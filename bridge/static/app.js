@@ -1282,7 +1282,7 @@ function renderDetail() {
     callout.append(el('p', tr({approve: 'nextApprove', resume: 'nextResume'}[verb] || 'nextResult')), field, copy);
     body.append(callout);
   }
-  if (overview?.actions && !['DONE', 'CANCELLED', 'BLOCKED'].includes(task.state)) body.append(taskActions(task));
+  if (overview?.actions && !['DONE', 'CANCELLED'].includes(task.state)) body.append(taskActions(task));
   else if (actionNotice?.key === state.t) {
     const notice = el('p', actionNotice.message);
     attr(notice, 'role', actionNotice.error ? 'alert' : 'status'); body.append(notice);

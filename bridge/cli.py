@@ -1153,7 +1153,7 @@ def main(argv: list[str] | None = None) -> None:
     ls = sub.add_parser("list", help="tasks of this project, newest first")
     ls.add_argument("--state")
     ls.add_argument("--limit", type=int, default=50)
-    x = sub.add_parser("cancel", help="cancel a non-terminal task")
+    x = sub.add_parser("cancel", help="cancel a task that is not DONE or CANCELLED")
     x.add_argument("task_id")
     x.add_argument("--reason", required=True, help="why the task is cancelled")
     v = sub.add_parser("review", help="record the client review of a task in REVIEW")

@@ -111,7 +111,9 @@ def task_actions(row: dict[str, Any]) -> list[tuple[str, str]]:
         actions.append(("review", "Review: approve / rework / block"))
     actions.append(("patch", "Read the patch"))
     if state not in TERMINAL:
-        actions += [("move", "Move to another agent"), ("cancel_task", "Cancel")]
+        actions.append(("move", "Move to another agent"))
+    if state not in {"DONE", "CANCELLED"}:  # a BLOCKED task is closed by cancelling it
+        actions.append(("cancel_task", "Cancel"))
     return actions
 
 
