@@ -105,7 +105,8 @@ _CLAUDE_SECRET_READS = [".ai/orchestrator.yaml", ".env", ".env.*", "**/.env", "*
 # probe on claude 2.1.306; unscoped Write reached files outside the working directory).
 # Probed on 2.1.322: ./ rules resolve against the Bash cwd, which a `cd` moves (the in-scope write
 # is refused, a same-named subtree under the new cwd becomes writable and ./ Read denies stop
-# matching); //<absolute root>/ rules match the same files before and after the cd.
+# matching); //<absolute root>/ rules match the same files before and after the cd. The Write tool
+# obeys only Edit(...) rules there, allow and deny alike; Write(...) rules are emitted but inert.
 _CLAUDE_WRITE_TOOLS = ("Edit", "Write")
 
 
