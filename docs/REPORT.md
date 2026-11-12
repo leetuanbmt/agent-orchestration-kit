@@ -174,7 +174,11 @@ wrote only its own plan artifact outside the worktree. Isolating opencode by XDG
   an unscoped `Write` created a file outside the working directory; with `Edit(./src/**)` and
   `Write(./src/**)` the same run wrote `src/inside.txt` and was refused for a file outside the
   worktree and for `other.txt` in it. The adapter therefore scopes Edit/Write to the task's
-  `allowed_paths` and denies excluded and protected paths. Read tools still read anything the
+  `allowed_paths` and denies excluded and protected paths. Probe on 2.1.322 (haiku, `dontAsk`):
+  `./` rules resolve against the Bash cwd, so after `cd sub` the in-scope `src/a.txt` was refused,
+  `sub/src/b.txt` was written and `Read(./.env)` no longer blocked the root `.env`; with
+  `//<absolute root>/src/**` and `Read(//<absolute root>/.env)` the same run wrote `src/a.txt` and
+  refused the other two. Every project rule is therefore anchored at the absolute root. Read tools still read anything the
   user can subject to credential denies. With `allow_bash`, Bash and its children now run in
   Claude Code’s OS sandbox: credential reads denied, writes only to the working directory and
   `$TMPDIR`, no network, no unsandboxed retries, and failure if the sandbox is unavailable.

@@ -227,7 +227,7 @@ class AccountGate:
                 or (spec.get("sandbox") or cfg.sandbox) != "workspace-write"):
             return []
         return rule_unsafe([*spec["allowed_paths"], *spec.get("excluded_paths", []),
-                            *cfg.protected_paths])
+                            *cfg.protected_paths, str(self.bridge.root.resolve())])
 
     def _ineligible(self, name: str, need: str, spec: dict[str, Any] | None) -> str | None:
         """Why agent `name` cannot take this work (including scoping `spec`'s paths)."""

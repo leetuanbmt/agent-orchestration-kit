@@ -97,12 +97,14 @@ _CLASSES = [
 KILL_GRACE_S = 5.0
 POLL_S = 1.0
 _CLAUDE_READ_TOOLS = ["Read", "Glob", "Grep"]
-# Read denies the kit settings do not hold: the global Claude login and the project's secret files.
-_CLAUDE_SECRET_READS = ["Read(~/.claude/.credentials.json)", "Read(./.ai/orchestrator.yaml)", *(
-    f"Read(./{p})" for p in (".env", ".env.*", "**/.env", "**/.env.*",
-                             "*.pem", "*.key", "**/*.pem", "**/*.key"))]
+# Project files whose reads are denied besides the kit settings' denies (secrets).
+_CLAUDE_SECRET_READS = [".ai/orchestrator.yaml", ".env", ".env.*", "**/.env", "**/.env.*",
+                        "*.pem", "*.key", "**/*.pem", "**/*.key"]
 # Path-scoped rules: under dontAsk, Edit/Write outside these patterns are refused (verified by
 # probe on claude 2.1.306; unscoped Write reached files outside the working directory).
+# Probed on 2.1.322: ./ rules resolve against the Bash cwd, which a `cd` moves (the in-scope write
+# is refused, a same-named subtree under the new cwd becomes writable and ./ Read denies stop
+# matching); //<absolute root>/ rules match the same files before and after the cd.
 _CLAUDE_WRITE_TOOLS = ("Edit", "Write")
 
 
@@ -459,13 +461,17 @@ class ClaudeAdapter(Adapter):
 
     def build(self, req: RunRequest, tmp: Path) -> list[str]:
         tools = list(_CLAUDE_READ_TOOLS)
-        denied = [*_claude_credential_denies(), *_CLAUDE_SECRET_READS,
+        root = f"/{self.root.resolve()}"  # //abs: rules must not follow the agent's Bash cwd
+        if rule_unsafe([root]):
+            raise PathError(f"project path not expressible as a Claude permission rule: {self.root}")
+        denied = [*_claude_credential_denies(), "Read(~/.claude/.credentials.json)",
+                  *(f"Read({root}/{p})" for p in _CLAUDE_SECRET_READS),
                   *(_home_read_deny(home) for home in req.read_deny)]
         if req.sandbox == "workspace-write":
             if bad := rule_unsafe([*req.write_paths, *req.deny_paths]):
                 raise PathError(f"not expressible as Claude permission rules: {bad}")
-            tools += [f"{t}(./{p})" for p in req.write_paths for t in _CLAUDE_WRITE_TOOLS]
-            denied += [f"{t}(./{p})" for p in req.deny_paths for t in _CLAUDE_WRITE_TOOLS]
+            tools += [f"{t}({root}/{p})" for p in req.write_paths for t in _CLAUDE_WRITE_TOOLS]
+            denied += [f"{t}({root}/{p})" for p in req.deny_paths for t in _CLAUDE_WRITE_TOOLS]
         settings_path = req.hook_settings
         if req.allow_bash:
             from .review import verification_read_denies

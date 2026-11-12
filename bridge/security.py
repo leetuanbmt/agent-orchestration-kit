@@ -46,7 +46,7 @@ def hook_settings_error(path: str, root: Path) -> str | None:
 
 
 def rule_unsafe(patterns: Iterable[str]) -> list[str]:
-    """Patterns that cannot become Claude permission rules like Edit(./src/**): these characters
+    """Patterns that cannot become Claude permission rules like Edit(//root/src/**): these characters
     would let a pattern close the rule and smuggle in another one (e.g. "x),Bash(*")."""
     return [p for p in patterns if RULE_CHARS & set(p) or any(c.isspace() for c in p)]
 

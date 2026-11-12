@@ -1,6 +1,7 @@
 """Configurable roles, routing and workflows with fake Codex and Claude CLIs (configs A-E)."""
 
 import json
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -142,9 +143,10 @@ def test_config_b(make_orch, fake_codex, fake_claude, monkeypatch, tmp_path, rep
     assert result["attempts"][-1]["verification"]["checks"][0]["passed"]
     assert result["reviews"][-1]["reviewer"] == "codex"
     executor, = log(fake_claude)
-    assert tools(executor) == ["Read", "Glob", "Grep", "Edit(./src/**)", "Write(./src/**)"]
+    root = f"/{repo.resolve()}"
+    assert tools(executor) == ["Read", "Glob", "Grep", f"Edit({root}/src/**)", f"Write({root}/src/**)"]
     denied = executor["argv"][executor["argv"].index("--disallowedTools") + 1].split(",")
-    assert "Write(./.env)" in denied and "Edit(./.git/**)" in denied
+    assert f"Write({root}/.env)" in denied and f"Edit({root}/.git/**)" in denied
     assert executor["argv"][executor["argv"].index("--permission-mode") + 1] == "dontAsk"
     # Writes outside the task's paths are refused by the permission rules, not just detected.
     assert json.loads((fake_claude / "denials.jsonl").read_text()) == ["notes.txt", ".env"]
@@ -183,6 +185,55 @@ def test_claude_ignores_project_settings(make_orch, fake_codex, fake_claude, mon
     assert {"Read(~/.codex/auth.json)", "Read(~/.agent-bridge/homes/**)"} <= set(denied)
     assert "Bash" not in tools(executor)
     assert not (repo / "notes.txt").exists()
+
+
+# @pt.id KIT-SEC-CLAUDE-003-rules-survive-cd
+# @pt.item Claude permission rules stay anchored at the project root after a Bash cd
+# @pt.condition A Claude executor scoped to src/** has moved its Bash cwd into docs/ (claude 2.1.322 resolves ./ rules against it), then writes src/app.py, docs/src/leak.py, notes.txt and .env
+# @pt.expected Every rule names the absolute root (//root/...); the in-scope write lands, the three others are refused and .env keeps its content
+# @pt.target ClaudeAdapter.build
+# @pt.method integration
+# @pt.legacy ./ rules: after the cd the in-scope write was refused (T0001) and docs/src/** became writable
+def test_claude_rules_survive_cd(make_orch, fake_codex, fake_claude, monkeypatch, repo):
+    monkeypatch.setenv("FAKE_CLAUDE_BASH_CWD", "docs")
+    monkeypatch.setenv("FAKE_CLAUDE_WRITE", WRITE + ";docs/src/leak.py=x;notes.txt=stray;.env=X=1")
+    monkeypatch.setenv("FAKE_CODEX_PLAN", json.dumps([plan_task()]))
+    b = make_orch(CONFIG_B)
+    wf = run(b.run_workflow(run(b.plan("Set x to 2", wait=True))["workflow_id"], wait=True))
+    assert wf["state"] == "DONE"
+    executor, = log(fake_claude)
+    root = f"/{repo.resolve()}"
+    assert tools(executor)[3:] == [f"Edit({root}/src/**)", f"Write({root}/src/**)"]
+    denied = executor["argv"][executor["argv"].index("--disallowedTools") + 1].split(",")
+    assert {f"Write({root}/.env)", f"Read({root}/.env)", f"Read({root}/.ai/orchestrator.yaml)"} <= set(denied)
+    assert not [r for r in tools(executor) + denied if "(./" in r]
+    assert json.loads((fake_claude / "denials.jsonl").read_text()) == [
+        "docs/src/leak.py", "notes.txt", ".env"]
+    assert not (repo / "docs" / "src").exists() and (repo / ".env").read_text() == "SECRET_TOKEN=abc\n"
+
+
+# @pt.id KIT-SEC-CLAUDE-004-unscopable-root
+# @pt.item A project path Claude rules cannot hold blocks Claude runs instead of loosening them
+# @pt.condition The project lives under "my proj" (a space ends a rule in --allowedTools); a task is pinned to the Claude writer
+# @pt.expected The task is refused before RUNNING with a reassign hint and stays READY; building a read-only Claude run raises PathError naming the project path
+# @pt.target Gate._unscopable, ClaudeAdapter.build
+# @pt.method integration
+# @pt.legacy ./ rules worked in any path but followed the agent's Bash cwd
+def test_claude_unscopable_root(make_orch, fake_codex, fake_claude, repo, tmp_path):
+    from bridge.security import PathError
+    from bridge.service import Bridge
+
+    spaced = tmp_path / "my proj"
+    shutil.copytree(repo, spaced)
+    base = make_orch(CONFIG_B)
+    b = Bridge(spaced, base.cfg, base.orch)
+    tid = run(b.create_task(spec(agent="claude", verification_commands=[])))["task_id"]
+    with pytest.raises(ValueError, match="reassign"):
+        run(b.execute_task(tid, wait=True))
+    assert b.store.get(tid)["state"] == State.READY and not log(fake_claude)
+    with pytest.raises(PathError, match="project path"):
+        ClaudeAdapter(b.cfg, spaced).build(
+            RunRequest("p", b._account("cl"), "read-only", 60), tmp_path)
 
 
 # @pt.id KIT-SEC-CLAUDE-002-rule-unsafe-paths
