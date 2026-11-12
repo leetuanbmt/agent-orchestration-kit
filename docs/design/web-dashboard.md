@@ -182,7 +182,7 @@ drawer and the phone sidebar. Motion: color transitions under 150 ms, none with
 
 The task drawer offers review (approve, rework or block, with notes) in REVIEW,
 Run in READY, Resume in REWORK, FAILED or PAUSED (optional feedback), and a
-two-step Cancel task form with a required reason for every non-terminal task.
+two-step Cancel task form with a required reason for every non-terminal or BLOCKED task.
 Read the diff with the copyable result command before reviewing. Each action
 runs the agent-bridge CLI; execute and resume start detached. CLI failures are
 returned with redacted stderr. Human approval of high-risk tasks, reassignment

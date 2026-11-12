@@ -99,6 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it works next to `orchestrator.yaml`; it no longer shows legacy `accounts`.
 
 ### Fixed
+- `cancel` closes a BLOCKED task (`BLOCKED -> CANCELLED`, reason recorded like any other cancel), so a task whose work was finished and committed by hand no longer stays open. Before, both `cancel` (`illegal transition BLOCKED -> CANCELLED`) and `review` refused it; `review` still does. The TUI and the web dashboard offer Cancel on BLOCKED tasks too.
 - The web dashboard no longer shows stopped work as in progress.
   - A request gets an active stage only from tasks that can still move on their own (BACKLOG, READY, RUNNING, VERIFYING, REVIEW, APPROVED). BLOCKED, FAILED, PAUSED and REWORK tasks show through their status instead.
   - A REWORK task is listed under "Needs you" as "Waiting for resume" with its `agent-bridge resume` command, no longer under "waiting".

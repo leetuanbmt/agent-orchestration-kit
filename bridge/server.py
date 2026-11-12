@@ -161,7 +161,8 @@ async def bridge_resume_task(task_id: str, feedback: str = "") -> dict[str, Any]
 
 @mcp.tool()
 async def bridge_cancel_task(task_id: str, reason: str) -> dict[str, Any]:
-    """Cancel a non-terminal task; a running agent process group is killed."""
+    """Cancel a task that is not DONE or CANCELLED (BLOCKED included); a running agent process
+    group is killed."""
     return await _safe(bridge().cancel_task(task_id, reason))
 
 

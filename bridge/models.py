@@ -60,6 +60,8 @@ TRANSITIONS: dict[tuple[State, State], frozenset[Actor]] = {
     # Low/medium risk: the bridge closes the task once its quality gates hold.
     # High risk / sensitive change: only a human closes it.
     (S.APPROVED, S.DONE): frozenset({A.BRIDGE, A.HUMAN}),
+    # BLOCKED never runs again, but its work may be finished by hand: cancel closes it.
+    (S.BLOCKED, S.CANCELLED): frozenset({A.CLIENT, A.HUMAN}),
 }
 for _s in State:
     if _s not in TERMINAL:

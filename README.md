@@ -387,7 +387,8 @@ sequenceDiagram
 ```
 
 States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED → DONE`, plus `REWORK`,
-`FAILED`, `PAUSED`, `BLOCKED` and `CANCELLED`. `DONE`, `CANCELLED` and `BLOCKED` are terminal.
+`FAILED`, `PAUSED`, `BLOCKED` and `CANCELLED`. `DONE`, `CANCELLED` and `BLOCKED` are terminal;
+`cancel` still closes a `BLOCKED` task whose work you finished by hand.
 
 | Move | Who | Trigger |
 |---|---|---|
@@ -401,7 +402,7 @@ States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED →
 | `REVIEW → APPROVED` / `REWORK` / `BLOCKED` | Client or reviewer agent | `bridge_review_task` or reviewer run |
 | `REVIEW → APPROVED` | Bridge | No `review` stage and every gate passed |
 | `APPROVED → DONE` | Bridge, or a human for high risk | Quality gates re-checked |
-| Any non-terminal → `CANCELLED` | Client | `bridge_cancel_task` |
+| Any non-terminal or `BLOCKED` → `CANCELLED` | Client | `bridge_cancel_task` |
 
 A task runs at most `max_rework + 1` times (default 3). A runner that dies mid-run is detected on
 the next bridge start: the task becomes `PAUSED` (`INTERRUPTED`) and `bridge_resume_task`

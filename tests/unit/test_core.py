@@ -38,7 +38,8 @@ def test_task_spec_rejects_invalid() -> None:
 # @pt.id KIT-UNIT-002-transition-ownership
 # @pt.item State machine legality and ownership
 # @pt.condition client, reviewer agent and bridge (no review stage) approve; human approve; illegal jump; terminal exit
-# @pt.expected only listed (from,to,actor) triples pass; terminal states have no exits
+# @pt.expected only listed (from,to,actor) triples pass; terminal states have no exits except
+#   BLOCKED -> CANCELLED for client and human
 # @pt.target bridge.models.check_transition
 # @pt.method unit
 # @pt.legacy none (new kit)
@@ -57,6 +58,10 @@ def test_transitions_enforce_actor_and_legality() -> None:
     for t in TERMINAL:
         for dst in State:
             for actor in Actor:
+                if (t, dst) == (State.BLOCKED, State.CANCELLED) and actor in {Actor.CLIENT,
+                                                                             Actor.HUMAN}:
+                    check_transition(t, dst, actor)  # work finished by hand is closed by cancel
+                    continue
                 with pytest.raises(TransitionError):
                     check_transition(t, dst, actor)
 
