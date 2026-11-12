@@ -461,8 +461,9 @@ def test_claude_secret_read_denies(tmp_path: Path, monkeypatch: pytest.MonkeyPat
                      read_deny=[inside, outside])
     argv = ClaudeAdapter(BridgeConfig(), tmp_path).build(req, tmp_path)
     denied = argv[argv.index("--disallowedTools") + 1].split(",")
-    assert {"Read(~/.claude/.credentials.json)", "Read(./.env)", "Read(./**/.env.*)",
-            "Read(./**/*.key)", "Read(~/.codex/auth.json)", "Read(~/.claude-accounts/main/**)",
+    root = f"/{tmp_path.resolve()}"
+    assert {"Read(~/.claude/.credentials.json)", f"Read({root}/.env)", f"Read({root}/**/.env.*)",
+            f"Read({root}/**/*.key)", "Read(~/.codex/auth.json)", "Read(~/.claude-accounts/main/**)",
             f"Read(/{outside.resolve()}/**)"} <= set(denied)
     bad = RunRequest("p", Account("main", inside, "anthropic"), "read-only", 60,
                      read_deny=[tmp_path / "a,b"])

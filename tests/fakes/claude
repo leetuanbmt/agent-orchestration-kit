@@ -5,8 +5,10 @@ Speaks the event shapes verified against claude 2.1.306: system/init, rate_limit
 assistant, result (structured_output when --json-schema is given).
 
 FAKE_CLAUDE_SCENARIO: comma-separated, one per invocation (last repeats): ok | quota | auth | network | crash
-FAKE_CLAUDE_WRITE:    "path=content;..." written on ok runs where a Write(./glob) rule allows the
-                      path and no --disallowedTools rule denies it, like the real permission check.
+FAKE_CLAUDE_WRITE:    "path=content;..." written on ok runs where an Edit(./glob) or Edit(//abs/glob)
+                      rule allows the path and no --disallowedTools Edit rule denies it. Like the
+                      real Write tool (probed on 2.1.322), Write(...) rules are ignored either way.
+FAKE_CLAUDE_BASH_CWD: subdirectory an earlier Bash `cd` left the session in (./ rules follow it).
 FAKE_CLAUDE_DECISION: "decision:notes" for reviewer runs (default "approve:looks good").
 FAKE_CLAUDE_PLAN:     JSON list of tasks for planner runs (default: one task).
 FAKE_CLAUDE_UTIL:     five-hour utilization 0-1 reported in rate_limit_event (default 0.2).
@@ -60,9 +62,25 @@ if "project" in sources and project_settings.exists():
     tools += json.loads(project_settings.read_text()).get("permissions", {}).get("allow", [])
 
 
+start = Path(os.getcwd())
+# FAKE_CLAUDE_BASH_CWD: a directory (relative to the start) an earlier Bash `cd` moved into. Like
+# the real CLI (probed on 2.1.322), ./ rules then resolve against it; //abs rules do not move.
+bash_cwd = start / os.environ.get("FAKE_CLAUDE_BASH_CWD", "")
+
+
 def scoped(rules, path):
-    return any(fnmatch.fnmatch(path, r[len("Write(./"):-1]) for r in rules
-               if r.startswith("Write(./"))
+    target = str(start / path)
+    for r in rules:
+        pattern = r[len("Edit("):-1] if r.startswith("Edit(") else ""
+        if pattern.startswith("//"):
+            full = pattern[1:]
+        elif pattern.startswith("./"):
+            full = f"{bash_cwd}/{pattern[2:]}"
+        else:
+            continue
+        if fnmatch.fnmatch(target, full):
+            return True
+    return False
 schema = json.loads(argv[argv.index("--json-schema") + 1]) if "--json-schema" in argv else {}
 keys = set(schema.get("properties", {}))
 

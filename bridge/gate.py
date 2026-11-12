@@ -14,7 +14,7 @@ from .models import Actor
 from .orchestrator import AccountLimits, AgentConfig
 from .quota import BUDGET_PERIODS, effective_account_state, evaluate_limits, period_bounds, \
     run_cost
-from .security import redact, rule_unsafe
+from .security import redact, root_rule_unsafe, rule_unsafe
 from .state import ConflictError, LimitExceeded
 
 if TYPE_CHECKING:
@@ -226,8 +226,10 @@ class AccountGate:
         if (agent.adapter != "claude-cli" or not agent.writes
                 or (spec.get("sandbox") or cfg.sandbox) != "workspace-write"):
             return []
-        return rule_unsafe([*spec["allowed_paths"], *spec.get("excluded_paths", []),
-                            *cfg.protected_paths])
+        root = self.bridge.root
+        return [*rule_unsafe([*spec["allowed_paths"], *spec.get("excluded_paths", []),
+                              *cfg.protected_paths]),
+                *([str(root.resolve())] if root_rule_unsafe(root) else [])]
 
     def _ineligible(self, name: str, need: str, spec: dict[str, Any] | None) -> str | None:
         """Why agent `name` cannot take this work (including scoping `spec`'s paths)."""

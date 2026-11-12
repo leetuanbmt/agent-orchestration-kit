@@ -468,6 +468,8 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
 - **Claude CLI** dùng `--strict-mcp-config` (không MCP server), `--setting-sources ""`
   (không nạp settings của user/project), `--permission-mode dontAsk` và quyền Read/Glob/Grep.
   Với `allow_write: true`, Edit/Write vẫn giới hạn trong path của task, chặn path protected.
+  Rule ghi đường dẫn tuyệt đối của project, nên `cd` trong Bash không làm rule lệch; đường dẫn
+  project chứa dấu cách, dấu phẩy, ngoặc đơn, dấu nháy hoặc ký tự glob không viết được thành rule và lượt chạy Claude bị từ chối.
   Read/Edit giữ các permission rule hiện có, kể cả rule chặn đọc credential.
   Với `allow_bash: true`, Bash và tiến trình con chạy trong OS sandbox của Claude Code:
   không đọc được path credential (home của mọi account, registry homes, thư mục credential CLI

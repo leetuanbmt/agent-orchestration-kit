@@ -98,7 +98,7 @@ def test_codex_sandbox_flags(sandbox: Sandbox) -> None:
 # @pt.id QA-E2E-084-claude-permissions
 # @pt.item What a Claude CLI executor is allowed to do
 # @pt.condition a claude-cli writer with allowed_paths src/**
-# @pt.expected strict MCP config (no servers), no settings sources, dontAsk mode, Edit/Write scoped to ./src/**, the kit's credential read denies and protected-path write denies passed, no Bash
+# @pt.expected strict MCP config (no servers), no settings sources, dontAsk mode, Edit/Write scoped to //<root>/src/**, the kit's credential read denies and protected-path write denies passed, no Bash
 # @pt.target ClaudeAdapter argv
 # @pt.method e2e
 # @pt.legacy none
@@ -118,10 +118,11 @@ workflow: {stages: [execute, test]}
     assert "--strict-mcp-config" in argv
     assert argv[argv.index("--setting-sources") + 1] == ""
     assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
+    root = f"/{sandbox.root.resolve()}"
     allowed = argv[argv.index("--allowedTools") + 1]
-    assert "Edit(./src/**)" in allowed and "Bash" not in allowed, allowed
+    assert f"Edit({root}/src/**)" in allowed and "Bash" not in allowed, allowed
     denied = argv[argv.index("--disallowedTools") + 1]
-    assert "Read(~/.codex/auth.json)" in denied and "Write(./.env)" in denied, denied
+    assert "Read(~/.codex/auth.json)" in denied and f"Write({root}/.env)" in denied, denied
     assert "danger" not in joined
 
 
@@ -165,7 +166,7 @@ def test_verification_cannot_write_outside(sandbox: Sandbox) -> None:
 # @pt.id QA-E2E-087-claude-credential-reads
 # @pt.item A Claude agent cannot read Claude logins or the project's .env
 # @pt.condition a claude-cli executor on an account whose home is outside ~/.agent-bridge/homes (as in every shipped example: ~/.claude-accounts/<name>)
-# @pt.expected --disallowedTools holds Read denies for ~/.claude/.credentials.json, every configured anthropic account home and ./.env
+# @pt.expected --disallowedTools holds Read denies for ~/.claude/.credentials.json, every configured anthropic account home and the root .env
 # @pt.target ClaudeAdapter.build, .claude/settings.json deny list
 # @pt.method e2e
 # @pt.legacy none
@@ -186,4 +187,4 @@ workflow: {stages: [execute, test]}
     other_home = str(sandbox.base / "homes" / "cl2")
     assert "Read(~/.claude/.credentials.json)" in denied, denied
     assert other_home in denied, "another account's Claude login is readable"
-    assert "Read(./.env)" in denied, ".env is readable"
+    assert f"Read(/{sandbox.root.resolve()}/.env)" in denied, ".env is readable"

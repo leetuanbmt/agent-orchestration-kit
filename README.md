@@ -465,6 +465,8 @@ untrusted code.
 - **Claude CLI** uses `--strict-mcp-config` (no MCP servers), `--setting-sources ""`
   (no user/project settings), `--permission-mode dontAsk` and Read/Glob/Grep permissions.
   With `allow_write: true`, Edit/Write stay scoped to task paths, with protected paths denied.
+  Rules name the absolute project root, so a `cd` in Bash does not move them; a project path
+  containing a space, comma, parenthesis, quote or glob character cannot hold them and Claude runs are refused.
   Read/Edit tools keep their existing permission rules, including credential read denies.
   With `allow_bash: true`, Bash and its child processes run in Claude Code’s OS sandbox:
   credential paths (every account home, registry homes, global CLI credential directories and
