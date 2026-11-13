@@ -31,7 +31,7 @@ only `cancel` leaves `BLOCKED`, to close a task whose work was finished by hand.
 | RUNNING → FAILED | bridge | timeout or crash (BLOCKED when the attempt budget is spent) |
 | RUNNING / VERIFYING → PAUSED | bridge | quota, auth, network, missing CLI, interrupted runner (stop signal or dead runner) |
 | VERIFYING → REVIEW | bridge | scope clean, every verification command passed, agent status `completed` |
-| VERIFYING → REWORK | bridge | any check failed (BLOCKED when the budget is spent); agent `blocked` with no changes skips the checks |
+| VERIFYING → REWORK | bridge | any check failed (BLOCKED when the budget is spent); agent `blocked` with no changes skips the checks; an out-of-scope change an earlier attempt left counts until restored |
 | REVIEW → APPROVED / REWORK / BLOCKED | client or reviewer agent | `bridge_review_task` / reviewer run |
 | REVIEW → APPROVED | bridge | no review stage and every gate passed |
 | APPROVED → DONE | bridge, or human for high risk | quality gates re-checked |

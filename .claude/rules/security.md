@@ -52,6 +52,8 @@
   whole process group on timeout or cancel, and redacts secrets from stored output.
 - Path rules are checked twice: at task creation (traversal, absolute paths, symlink escape,
   protected files) and after the run (every changed file, HEAD unchanged), for every adapter.
+  Files an earlier attempt touched are judged against the task's first baseline, so what it left
+  out of scope stays a violation (`left by an earlier attempt: …`) until restored.
 
 Human approval is required before: production deployment, destructive file operations,
 migrations touching real data, changes to authentication or secrets, financial transactions,

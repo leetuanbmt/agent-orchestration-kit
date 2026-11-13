@@ -18,7 +18,7 @@ from .models import ACTIVE, Actor, ReviewDecision, State, leftover_failure, run_
     verdict
 from .review import EvidenceError, content_hashes, current_head, diff, protected_after, recheck, \
     run_verification, scope_violations, touches_sensitive, verification_read_denies
-from .security import process_started, redact
+from .security import matches, process_started, redact
 from .state import LimitExceeded
 
 if TYPE_CHECKING:
@@ -230,8 +230,7 @@ class TaskRunner:
         if res.outcome != "ok":
             # An attempt that ends early is never verified, and whatever it changed becomes the
             # next attempt's baseline: changes out of scope must stop the task now.
-            leftover = scope_violations(changes["files"], spec, b.cfg, changes["head_changed"],
-                                        changes["ignored_files"], root=b.root)
+            leftover = self._scope(task_id, n, spec, changes)
             if leftover:
                 record["verification"] = {"passed": False, "scope_violations": leftover,
                                           "checks": [], "interrupted": True,
@@ -260,8 +259,7 @@ class TaskRunner:
             return
 
         self.store.transition(task_id, State.VERIFYING, Actor.BRIDGE, {"attempt": n})
-        violations = scope_violations(changes["files"], spec, b.cfg, changes["head_changed"],
-                                      changes["ignored_files"], root=b.root)
+        violations = self._scope(task_id, n, spec, changes)
         agent_status = (res.final or {}).get("status", "unknown")
         # Checks cannot change the outcome of a run that gave up without touching anything, and
         # can take many minutes.
@@ -288,10 +286,10 @@ class TaskRunner:
         if commands:  # the checks ran code in the worktree: judge what they changed too
             final = recheck(b.root, before, changes, b.cfg)
             touched, later = final["files"], final["changed_by_verification"]
-            violations = scope_violations(touched, spec, b.cfg, final["head_changed"],
-                                          final["ignored_files"], enforce_ignored=enforce, root=b.root,
-                                          verification_ignored=[f for f in final["ignored_files"]
-                                                                if f not in changes["ignored_files"]])
+            violations = self._scope(task_id, n, spec, final, files=touched,
+                                     enforce_ignored=enforce,
+                                     verification_ignored=[f for f in final["ignored_files"]
+                                                           if f not in changes["ignored_files"]])
         passed, dst, failure = verdict(violations, checks, agent_status, stopped, used, max_att)
         record["verification"] = {"passed": passed, "scope_violations": violations,
                                   "checks": checks, "agent_status": agent_status,
@@ -300,7 +298,8 @@ class TaskRunner:
                                   **({"interrupted": True} if stopped else {}),
                                   **protected_after(b.root, violations)}
         # What a later approval is bound to: the verified content of every file the attempt touched.
-        # Earlier attempts' files stay part of the evidence: they are in this attempt's baseline.
+        # Earlier attempts' files stay part of the evidence, and their out-of-scope leftovers
+        # stay violations: `_scope` judges them against the task's first baseline.
         touched_all = self._all_touched(task_id, n, touched)
         changes["after_hashes"] = content_hashes(b.root, touched_all)
         changes["verified_head"] = current_head(b.root)
@@ -312,6 +311,62 @@ class TaskRunner:
             return  # cancelled while verifying
         self.store.transition(task_id, dst, Actor.BRIDGE, record["verification"],
                               failure=failure, needs_human=int(needs_human))
+
+    def _scope(self, task_id: str, n: int, spec: dict[str, Any], changes: dict[str, Any], *,
+               files: list[str] | None = None, enforce_ignored: bool = False,
+               verification_ignored: list[str] | None = None) -> list[str]:
+        """Scope violations of attempt `n`, with earlier attempts taken into account: what they
+        left out of scope still counts (this attempt's baseline already contains it), and what
+        they changed but is back to its task-start state no longer does."""
+        b = self.bridge
+        files = changes["files"] if files is None else files
+        ignored = changes["ignored_files"]
+        head_changed = changes["head_changed"]
+
+        def judge(f: list[str], ig: list[str], head: bool) -> list[str]:
+            return scope_violations(f, spec, b.cfg, head, ig, enforce_ignored=enforce_ignored,
+                                    root=b.root, verification_ignored=verification_ignored)
+
+        earlier_atts = sorted((a for a in self.store.attempts(task_id) if a.get("n", n) < n),
+                              key=lambda a: a["n"])
+        if not earlier_atts or not earlier_atts[0].get("baseline"):
+            return judge(files, ignored, head_changed)
+        try:
+            since_start = diff(b.root, earlier_atts[0]["baseline"], b.cfg.protected_paths)
+        except EvidenceError:
+            return judge(files, ignored, head_changed)
+        earlier: set[str] = set()
+        earlier_ignored: set[str] = set()
+        for att in earlier_atts:
+            earlier.update((att.get("changes") or {}).get("files") or [])
+            earlier.update((att.get("verification") or {}).get("changed_by_verification") or [])
+            earlier_ignored.update((att.get("changes") or {}).get("ignored_files") or [])
+        earlier = {f for f in earlier if not f.startswith(".git/")}
+        start_files = set(since_start["files"])
+
+        def never_suppressed(f: str) -> bool:
+            return bool(matches(f, b.cfg.protected_paths) or
+                        ((b.root / f).is_symlink()
+                         and not (b.root / f).resolve().is_relative_to(b.root.resolve())))
+
+        # Back to the task-start state: the current attempt's change is the restoration.
+        restored = {f for f in earlier - start_files if not never_suppressed(f)}
+        # ponytail: an ignored file has no stored baseline, so "restored" means "gone from disk";
+        # a pre-existing ignored file an earlier attempt modified cannot be recognised as restored.
+        gone = {f for f in earlier_ignored
+                if not ((b.root / f).exists() or (b.root / f).is_symlink())
+                and not never_suppressed(f)}
+        violations = judge([f for f in files if f not in restored],
+                           [f for f in ignored if f not in gone], head_changed)
+        kept = [f for f in sorted(earlier & start_files)]
+        kept_ig = [f for f in sorted(earlier_ignored)
+                   if (b.root / f).exists() or (b.root / f).is_symlink()]
+        leftover = scope_violations(kept, spec, b.cfg, since_start["head_changed"], kept_ig,
+                                    root=b.root)
+        for v in leftover:
+            if v not in violations:
+                violations.append(f"left by an earlier attempt: {v}")
+        return violations
 
     def _all_touched(self, task_id: str, n: int, current: list[str]) -> list[str]:
         """`current` plus every other attempt's changed files and files changed by its checks."""

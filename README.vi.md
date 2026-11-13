@@ -401,7 +401,7 @@ thái kết thúc; `cancel` vẫn đóng được task `BLOCKED` mà bạn đã 
 | `RUNNING → FAILED` | Bridge | Timeout hoặc crash (`BLOCKED` khi hết ngân sách attempt) |
 | `RUNNING` / `VERIFYING → PAUSED` | Bridge | Quota, auth, mạng, thiếu CLI hoặc runner bị gián đoạn (nhận tín hiệu dừng hoặc runner chết); không tốn ngân sách attempt |
 | `VERIFYING → REVIEW` | Bridge | Không vi phạm phạm vi, mọi lệnh verification đều qua, agent báo `completed` |
-| `VERIFYING → REWORK` | Bridge | Có kiểm tra thất bại (`BLOCKED` khi hết ngân sách); agent báo `blocked` mà không thay đổi gì thì bỏ qua các kiểm tra (`verification.skipped`) |
+| `VERIFYING → REWORK` | Bridge | Có kiểm tra thất bại (`BLOCKED` khi hết ngân sách); agent báo `blocked` mà không thay đổi gì thì bỏ qua các kiểm tra (`verification.skipped`); thay đổi ngoài phạm vi do attempt trước để lại vẫn bị tính cho tới khi được khôi phục |
 | `REVIEW → APPROVED` / `REWORK` / `BLOCKED` | Client hoặc reviewer agent | `bridge_review_task` hoặc lượt chạy của reviewer |
 | `REVIEW → APPROVED` | Bridge | Không có stage `review` và mọi gate đều qua |
 | `APPROVED → DONE` | Bridge, hoặc con người với task rủi ro cao | Kiểm tra lại quality gate |
@@ -438,7 +438,9 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
 - **Bằng chứng.** Lệnh git lỗi sẽ làm task tạm dừng (`EVIDENCE_ERROR`) thay vì cho ra diff rỗng.
   Patch được lưu giữ từng file từ đầu và ghi rõ phần bị lược. Attempt kết thúc sớm (quota, crash,
   timeout, runner chết) mà để lại thay đổi ngoài task sẽ chặn task (`SCOPE: …`), để lần resume
-  không lấy chúng làm trạng thái gốc.
+  không lấy chúng làm trạng thái gốc. File mà một attempt trước đã đụng tới được xét so với trạng
+  thái gốc đầu tiên của task: thay đổi ngoài phạm vi nó để lại vẫn bị tính (`left by an earlier
+  attempt: …`), còn file đã được trả về trạng thái lúc task bắt đầu thì không còn bị tính.
 - **Duyệt.** Executor không tự approve được. Client hoặc reviewer agent approve; bridge chỉ tự
   approve khi workflow không có stage `review`. Task rủi ro cao, đụng path nhạy cảm, hoặc sửa chỉ
   dẫn cho agent (`CLAUDE.md`, `AGENTS.md`, `.claude/**`, `.codex/**`, `.envrc`, `.vscode/**`) cần
@@ -641,7 +643,7 @@ origin; `agent-bridge web --read-only` ẩn các thao tác và từ chối chún
 | Workflow `WAITING` | `detail.waiting` và trạng thái task cho biết cần xử lý gì; xử lý xong thì chạy lại `bridge_run_workflow`. |
 | `ConflictError … already writing` | Mỗi worktree chỉ một tiến trình ghi; chờ, hoặc dùng worktree khác. |
 | `account … busy in another bridge process` | Slot chạy song song của account đang được dùng ở nơi khác. Task không ghim sẽ được định tuyến sang agent khác, và workflow chờ slot tối đa `routing.slot_wait_s` (mặc định 1800 s); task ghim vào account này vẫn ở `READY` và không mất attempt, nên chạy lại khi có slot trống. |
-| `REWORK` với `outside allowed paths` | Executor sửa file ngoài phạm vi task; đọc patch rồi yêu cầu rework. |
+| `REWORK` với `outside allowed paths` | Executor sửa file ngoài phạm vi task; đọc patch rồi yêu cầu rework. File mà một attempt trước để lại khiến mọi attempt sau không vào được `REVIEW` (`left by an earlier attempt: …`) cho tới khi được khôi phục. |
 | `health` cảnh báo storage legacy | Migrate bằng `agent-bridge storage status`, rồi `storage migrate --apply` ([chi tiết](docs/configuration.md#migrating-and-maintaining-state)). |
 
 ## Câu hỏi thường gặp

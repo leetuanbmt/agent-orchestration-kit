@@ -398,7 +398,7 @@ States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED →
 | `RUNNING → FAILED` | Bridge | Timeout or crash (`BLOCKED` when the attempt budget is spent) |
 | `RUNNING` / `VERIFYING → PAUSED` | Bridge | Quota, auth, network, missing CLI or interrupted runner (a stop signal or a dead runner); does not use the attempt budget |
 | `VERIFYING → REVIEW` | Bridge | Scope clean, every verification command passed, agent reported `completed` |
-| `VERIFYING → REWORK` | Bridge | Any check failed (`BLOCKED` when the budget is spent); an agent that reports `blocked` and changed nothing skips the checks (`verification.skipped`) |
+| `VERIFYING → REWORK` | Bridge | Any check failed (`BLOCKED` when the budget is spent); an agent that reports `blocked` and changed nothing skips the checks (`verification.skipped`); an out-of-scope change an earlier attempt left still counts until it is restored |
 | `REVIEW → APPROVED` / `REWORK` / `BLOCKED` | Client or reviewer agent | `bridge_review_task` or reviewer run |
 | `REVIEW → APPROVED` | Bridge | No `review` stage and every gate passed |
 | `APPROVED → DONE` | Bridge, or a human for high risk | Quality gates re-checked |
@@ -435,7 +435,9 @@ untrusted code.
 - **Evidence.** A failing git command pauses the task (`EVIDENCE_ERROR`) instead of yielding an
   empty diff. The stored patch keeps every file from its start and names what it had to omit. An
   attempt that ends early (quota, crash, timeout, a dead runner) and left changes outside the task
-  blocks it (`SCOPE: …`), so a resume never takes them as its baseline.
+  blocks it (`SCOPE: …`), so a resume never takes them as its baseline. Files an earlier attempt
+  touched are judged against the task's first baseline: an out-of-scope change it left still
+  counts (`left by an earlier attempt: …`), and one restored to its task-start state no longer does.
 - **Approval.** Executors cannot approve. The client or a reviewer agent approves; the bridge
   approves only when the workflow has no `review` stage. High-risk or sensitive-path tasks, and
   changes to agent instructions (`CLAUDE.md`, `AGENTS.md`, `.claude/**`, `.codex/**`, `.envrc`,
@@ -640,7 +642,7 @@ and rejects other `Host` headers. The threat model is in
 | Workflow `WAITING` | `detail.waiting` and the task states say what needs attention; run `bridge_run_workflow` again afterwards. |
 | `ConflictError … already writing` | One writer per worktree; wait, or use another worktree. |
 | `account … busy in another bridge process` | The account's concurrency slots are in use elsewhere. Unpinned tasks route around it, and a workflow waits up to `routing.slot_wait_s` (default 1800 s) for a slot; a task pinned to it stays `READY` with no attempt spent, so start it again once a slot is free. |
-| `REWORK` with `outside allowed paths` | The executor changed files outside the task; read the patch and rework. |
+| `REWORK` with `outside allowed paths` | The executor changed files outside the task; read the patch and rework. A file an earlier attempt left there keeps every later attempt out of `REVIEW` (`left by an earlier attempt: …`) until it is restored. |
 | `health` warns about legacy storage | Migrate with `agent-bridge storage status`, then `storage migrate --apply` ([details](docs/configuration.md#migrating-and-maintaining-state)). |
 
 ## FAQ
