@@ -110,8 +110,8 @@ These need an interactive terminal and a typed confirmation (or the TUI). The
 |---|---|
 | `approve <id>` | Close a high-risk or sensitive-path task waiting at `APPROVED` |
 | `reassign <id> <agent\|account>` | Move a task to another agent; starts a new session |
-| `account-login <name> [--device-auth]` | Fresh login into the account's own home (`codex login`, `claude auth login`, agy sign-in, `opencode auth login`) |
-| `account-add <name> --provider openai\|anthropic\|google\|opencode [--home DIR] [--device-auth]` | Create a machine-wide account under `~/.agent-bridge/homes/` (or register `--home`), then log in |
+| `account-login <name> [--device-auth]` | Fresh login into the account's own home (`codex login`, `claude auth login`, agy sign-in, `opencode auth login`, `cursor-agent login`) |
+| `account-add <name> --provider openai\|anthropic\|google\|opencode\|cursor [--home DIR] [--device-auth]` | Create a machine-wide account under `~/.agent-bridge/homes/` (or register `--home`), then log in |
 | `account-set-token <name> [--delete]` | Store a setup-token or API key in the macOS Keychain for an account with `credential: keychain`; `security` prompts for the secret on the terminal, so it never passes through argv. `--delete` removes the stored token. Refuses accounts without `credential: keychain` |
 | `account-remove <name>` | Forget a machine-wide account; deletes its home only if `account-add` created it |
 | `project-account-add <name> (--provider P \| --login L) [--home DIR] [--credential keychain] [--token-env VAR] [--executor] [--json]` | Declare an account in `.ai/accounts.yaml` (a new home, or a reference to a registry login); prints the agent line to paste into `orchestrator.yaml` |

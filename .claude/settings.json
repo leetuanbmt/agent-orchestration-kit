@@ -12,6 +12,8 @@
       "Bash(*config-init*)",
       "Bash(*opencode auth login*)",
       "Bash(*opencode auth logout*)",
+      "Bash(*agent login*)",
+      "Bash(*agent logout*)",
       "Bash(*codex login*)",
       "Bash(*codex logout*)",
       "Bash(*claude auth login*)",

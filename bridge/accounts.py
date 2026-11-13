@@ -21,11 +21,18 @@ from .config import BridgeConfig
 from .registry import known_projects as known_projects
 from .registry import registry_dir
 from .registry import remember_project as remember_project
+from .security import clean_env
 from .state import ConflictError
+
+# Providers with no isolated auth home: opencode keeps credentials behind one background service
+# per user, and none was verified for cursor-agent 2026.11.11. Their only account is the global
+# login, which a human creates with the command below.
+GLOBAL_LOGIN_COMMANDS = {"opencode": "opencode auth login", "cursor": "cursor-agent login"}
+GLOBAL_ONLY_PROVIDERS = frozenset(GLOBAL_LOGIN_COMMANDS)
 
 # Env var that points each provider's CLI at an isolated auth home. agy has no such variable
 # and keeps its login under $HOME/.gemini, so its isolated home is a whole HOME (probed on
-# agy 1.4.5). opencode has none at all: its only account is the global login.
+# agy 1.4.5). opencode and cursor have none at all: their only account is the global login.
 HOME_ENV = {"openai": "CODEX_HOME", "anthropic": "CLAUDE_CONFIG_DIR", "google": "HOME"}
 GLOBAL_HOME = {"openai": ".codex", "anthropic": ".claude", "google": ".gemini"}
 # Machine-wide accounts created by `agent-bridge account-add`, usable from every project.
@@ -199,7 +206,7 @@ def codex_overrides(acc: Account) -> list[str]:
 
 def binary(cfg: BridgeConfig, provider: str) -> str:
     return {"openai": cfg.codex_bin, "anthropic": cfg.claude_bin, "google": cfg.agy_bin,
-            "opencode": cfg.opencode_bin}[provider]
+            "opencode": cfg.opencode_bin, "cursor": cfg.cursor_bin}[provider]
 
 
 AGY_TOKEN = Path(".gemini") / "antigravity-cli" / "antigravity-oauth-token"
@@ -219,9 +226,14 @@ def login_status(cfg: BridgeConfig, acc: Account) -> bool | None:
     exe = binary(cfg, acc.provider)
     argv = {"openai": [exe, "login", "status", *codex_overrides(acc)],
             "anthropic": [exe, "auth", "status"],
-            "opencode": [exe, "auth", "list"]}[acc.provider]
+            "opencode": [exe, "auth", "list"],
+            "cursor": [exe, "status", "--format", "json"]}[acc.provider]
+    env: Mapping[str, str] = os.environ
+    if acc.provider == "cursor":
+        # The environment a run gets: a login that exists only as CURSOR_API_KEY is no login.
+        env = clean_env(os.environ, cfg.env_deny, cfg.env_allow)
     try:
-        result = subprocess.run(argv, env=account_env(acc, os.environ), timeout=20,
+        result = subprocess.run(argv, env=account_env(acc, env), timeout=20,
                                 capture_output=True, text=True, check=False,
                                 stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
@@ -233,6 +245,12 @@ def login_status(cfg: BridgeConfig, acc: Account) -> bool | None:
             return False
     if acc.provider == "opencode":
         return result.returncode == 0 and "stored" in result.stdout
+    if acc.provider == "cursor":
+        # Only the boolean: the output also holds the user's e-mail, which is never kept.
+        try:
+            return json.loads(result.stdout).get("isAuthenticated") is True
+        except (ValueError, AttributeError):
+            return False
     return result.returncode == 0
 
 
@@ -247,7 +265,8 @@ def login_argv(cfg: BridgeConfig, acc: Account, device_auth: bool = False,
             "anthropic": [exe, "auth", "login"],
             # agy signs in on its first interactive start; the human exits it afterwards.
             "google": [exe],
-            "opencode": [exe, "auth", "login"]}[acc.provider]
+            "opencode": [exe, "auth", "login"],
+            "cursor": [exe, "login"]}[acc.provider]
 
 
 def global_login_marker(cfg: BridgeConfig, provider: str) -> object:
@@ -302,14 +321,14 @@ def register(name: str, provider: str, home: str | None = None) -> Account:
 def _register(name: str, provider: str, home: str | None) -> Account:
     if name == "default" or not _NAME.fullmatch(name):
         raise ValueError(f"invalid or reserved account name: {name!r} (use [a-z0-9_-])")
-    if provider not in HOME_ENV and provider != "opencode":
+    if provider not in HOME_ENV and provider not in GLOBAL_ONLY_PROVIDERS:
         raise ValueError(f"unknown provider {provider!r}")
     data = load_registry()
     if any(display_name(k) == name and e.get("provider") == provider for k, e in data.items()):
         raise ValueError(f"account {name} ({provider}) already exists")
     key = name if name not in data else account_id(name, provider)
     if provider not in HOME_ENV:
-        # opencode has no isolated home: the account is its global login, so only one exists.
+        # opencode and cursor have no isolated home: the account is its global login, so only one exists.
         if home is not None:
             raise ValueError(f"{provider} has no isolated home; its global login is used")
         if other := next((n for n, e in data.items() if e.get("provider") == provider), None):
@@ -356,7 +375,7 @@ def shell_use(acc: Account) -> str:
             return "unset -f agy 2>/dev/null; true"
         return f"agy() {{ HOME={shlex.quote(str(acc.home))} command agy \"$@\"; }}"
     if var is None:
-        return "true  # opencode always uses its global login"
+        return f"true  # {acc.provider} always uses its global login"
     if acc.home is None:
         return f"unset {var}"
     return f"export {var}={shlex.quote(str(acc.home))}"
