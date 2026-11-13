@@ -766,16 +766,16 @@ def test_opencode_records_shell_commands(repo):
 # @pt.id KIT-HEALTH-probed-versions-others
 # @pt.item opencode and agy have probed versions
 # @pt.condition Bridge.PROBED_VERSIONS
-# @pt.expected opencode-cli 2.2.6 and agy-cli 1.5.5 are listed; a newer version is unprobed, the same is not
+# @pt.expected opencode-cli 2.2.6 and agy-cli 1.5.7 are listed; a newer version is unprobed, the same is not
 # @pt.target bridge.service.Bridge.PROBED_VERSIONS, bridge.service.Bridge.unprobed
 # @pt.method unit
 # @pt.legacy none
 def test_probed_versions_for_opencode_and_agy():
     from bridge.service import Bridge
     assert Bridge.PROBED_VERSIONS["opencode-cli"] == (2, 2, 6)
-    assert Bridge.PROBED_VERSIONS["agy-cli"] == (1, 5, 5)
+    assert Bridge.PROBED_VERSIONS["agy-cli"] == (1, 5, 7)
     assert not Bridge.unprobed("opencode-cli", "2.2.6") and Bridge.unprobed("opencode-cli", "2.2.7")
-    assert not Bridge.unprobed("agy-cli", "1.5.5") and Bridge.unprobed("agy-cli", "1.6.0")
+    assert not Bridge.unprobed("agy-cli", "1.5.7") and Bridge.unprobed("agy-cli", "1.5.8")
 
 
 OC_WRITER = """
@@ -1005,7 +1005,7 @@ def test_agy_executor_config():
 # @pt.id KIT-ADAPTER-agy-write-settings
 # @pt.item A writing agy run gets write_file allows and no write_file deny; a read-only run keeps the deny settings
 # @pt.condition build() for a workspace-write request (src/**, README.md, docs dir) and a read-only one
-# @pt.expected writing: request-review, allow write_file(src/), write_file(README.md), write_file(docs/); deny exactly command(*) and mcp(*); no --mode; read-only: exactly _AGY_SETTINGS
+# @pt.expected both modes pin agentMode="" (Default); writing: request-review, allow write_file(src/), write_file(README.md), write_file(docs/); deny exactly command(*) and mcp(*); no --mode; read-only: exactly _AGY_SETTINGS
 # @pt.target bridge.executor.AgyAdapter.build, bridge.executor.agy_write_rules
 # @pt.method integration
 # @pt.legacy none
@@ -1014,12 +1014,13 @@ def test_agy_write_settings(repo, tmp_path):
     (repo / "docs").mkdir()
     adapter = AgyAdapter(BridgeConfig(), repo)
     argv = adapter.build(_agy_write_request(write_paths=["src/**", "README.md", "docs"]), tmp_path)
-    assert _agy_settings(argv) == {"toolPermission": "request-review", "permissions": {
+    assert _agy_settings(argv) == {"toolPermission": "request-review", "agentMode": "", "permissions": {
         "allow": ["write_file(src/)", "write_file(README.md)", "write_file(docs/)"],
         "deny": ["command(*)", "mcp(*)"]}}
     assert "--mode" not in argv
     argv = adapter.build(_agy_request(), tmp_path)
     assert _agy_settings(argv) == _AGY_SETTINGS and "write_file(*)" in _AGY_SETTINGS["permissions"]["deny"]
+    assert _AGY_SETTINGS["agentMode"] == ""
     for bad in ("*.md", "**"):
         with pytest.raises(ValueError, match="directory-anchored"):
             adapter.build(_agy_write_request(write_paths=[bad]), tmp_path)
@@ -1093,8 +1094,8 @@ def test_agy_resumed_turn_needs_fresh_json(repo, fake_others, monkeypatch):
 
 # @pt.id KIT-FLOW-agy-executor
 # @pt.item An agy executor task reaches verification with its change in scope
-# @pt.condition fake agy writes src/app.py when a write_file allow covers it (and src-evil/x.py, which none does); the task allows src/**
-# @pt.expected the task is DONE after verification; the run's settings carried write_file(src/) and no write_file deny; the file outside the allow is not written
+# @pt.condition fake agy defaults to Auto (all workspace writes); Default requires allows; attempts src/app.py and src-evil/x.py; task allows src/**
+# @pt.expected the task is DONE after verification; the run's settings pin agentMode="" (Default), with write_file(src/) and no write_file deny; the file outside the allow is not written
 # @pt.target bridge.executor.AgyAdapter, Bridge.execute_task
 # @pt.method integration
 # @pt.legacy none
@@ -1105,6 +1106,7 @@ def test_agy_executor_flow(make_orch, fake_others, monkeypatch):
     assert run(b.execute_task(tid, wait=True))["state"] == "DONE"
     call, = log(fake_others / "agy")
     settings = _agy_settings(call["argv"])
+    assert settings["agentMode"] == ""
     assert settings["permissions"]["allow"] == ["write_file(src/)"]
     assert "write_file(*)" not in settings["permissions"]["deny"]
     assert "no shell" in call["stdin"]

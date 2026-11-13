@@ -7,7 +7,7 @@ through the bridge, including two accounts in parallel.
 
 `agent-bridge health` warns (`cli_unprobed`) when an installed Codex, Claude, Cursor, opencode or agy CLI is newer than
 the version in `PROBED_VERSIONS` (`bridge/service.py`): codex-cli 0.163.0, Claude Code
-2.1.308, cursor-agent 2026.11.11, opencode 2.2.6 and agy 1.5.5 (the CLI self-updated from 1.5.3 on 2026-11-11 during the probes). After re-running the probes below on a newer CLI, update both this table and that
+2.1.308, cursor-agent 2026.11.11, opencode 2.2.6 and agy 1.5.7 (re-probed on 2026-11-13). After re-running the probes below on a newer CLI, update both this table and that
 constant.
 
 | Component | Version | What was verified |
@@ -18,6 +18,7 @@ constant.
 | Claude Code | 2.1.303 | `.mcp.json` with `${CLAUDE_PROJECT_DIR:-.}`; `enabledMcpjsonServers` honoured only after the folder is trusted; `.claude/rules/*.md` auto-loaded; `claude -p` called `bridge_health`; `claude mcp list` → Connected |
 | Claude Code headless | 2.1.306 | `claude -p --output-format stream-json --verbose`, prompt on stdin; events `system/init` (session_id; `mcp_servers: []` under `--strict-mcp-config`), `rate_limit_event` (`unifiedWindows.five_hour/seven_day.utilization` 0–1, `resetsAt`), `result` (`is_error`, `subtype`, `structured_output` with `--json-schema`, `session_id`, `api_error_status`); `--permission-mode dontAsk` + `--allowedTools`; `--setting-sources ""` (probed on 2.1.308: allow rules from any loaded settings source extend `--allowedTools`; the empty list loads none); `--resume`; `auth status` JSON `loggedIn`; `--bare` disables OAuth, so it is not used |
 | codex-switch | local repo `claude-switcher/agents-switch` | profiles are full auth snapshots incl. refresh tokens, `switch` overwrites the global `auth.json` → not used for execution; new `home` subcommands used instead (below) |
+| agy CLI | 1.5.7 | Headless Auto default; every bridge run pins `agentMode: ""` (Default) so write_file allow rules hold; read-only deny-all and command denies verified on 2026-11-13 |
 
 ## 2. Architecture
 
@@ -204,6 +205,27 @@ Probe, 2026-11-11 (opencode 2.2.6, agy 1.5.3, cursor-agent 2026.11.11), real CLI
   records, user hooks and skills stay global. The CLI rewrites that file and adds keys such as
   `authInfo`, so the bridge keeps the existing object and replaces only `permissions`. Whether a
   project `.cursor/cli.json` can loosen the denies was not established, so it is refused.
+Probe, 2026-11-13 (agy 1.5.7 on macOS, gemini-3.8-flash-low, global login), real CLI:
+
+- Read-only settings (`toolPermission: request-review`, deny `write_file(*)`,
+  `command(*)`, `mcp(*)`): writes in `src/`, at the repository root and outside the
+  repository, plus shell `touch`, all failed with "Matches user-configured deny rule".
+  The turn continued and ended SUCCESS.
+- Writing settings without agentMode (`request-review`, allow `write_file(src/)`, deny
+  `command(*)`, `mcp(*)`): 1.5.7 starts headless runs in Auto when no mode is saved,
+  as documented in its changelog. Auto approved workspace writes outside the allow rules:
+  `other_root.txt`, `.env` and `.git/hooks/pre-commit` were written. A write outside the
+  workspace was denied and ended the turn with `denied_actions`. The command deny held:
+  `touch x` and `sh -c 'echo X > f'` were both refused.
+- With the same writing settings plus `"agentMode": ""` (Default), writes to
+  `other_root.txt` and `.env` outside the allow rules were denied and ended the turn
+  with `denied_actions`; `src/` writes still worked. Every bridge run now pins this mode.
+- In a real task run, the bridge post-run scope check caught the Auto write: REWORK,
+  "outside allowed paths: other_root.txt".
+- The old main-branch argv `--mode plan --sandbox --disable-slash-commands` printed
+  "warning: --mode plan has no effect while slash command expansion is disabled."
+  Every write and shell command succeeded. This branch already dropped `--mode`.
+
 - agy executor probe, 2026-11-11 (agy 1.5.5 on macOS; the CLI updated itself from 1.5.3 that
   day), real CLI. Settings `{"toolPermission":"request-review","permissions":{"allow":
   ["write_file(src/)","write_file(README.md)"],"deny":["command(*)","mcp(*)"]}}` via

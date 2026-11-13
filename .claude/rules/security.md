@@ -30,16 +30,20 @@
   in `OPENCODE_CONFIG_CONTENT` that denies everything first and allows only read, glob and grep
   (`.env` files denied; `execute`/MCP, skills, websearch, subagents denied), with project config
   disabled and `XDG_CONFIG_HOME` set to an empty per-run directory so the user's plugins, MCP
-  servers, agents and skills are not loaded (login and sessions stay). agy (1.5.5) runs
-  `--sandbox --disable-slash-commands --settings` with `toolPermission: request-review` and deny
+  servers, agents and skills are not loaded (login and sessions stay). agy (1.5.7) runs
+  `--sandbox --disable-slash-commands --settings` with `toolPermission: request-review`,
+  `agentMode: ""` (Default) and deny
   rules for `write_file(*)`, `command(*)` and `mcp(*)`; `--mode plan` enforces nothing and is not
-  used. A tool needing approval ends an agy turn with `denied_actions`, which the bridge treats as
+  used (1.5.7 warns it has no effect with slash commands disabled, and every write and shell
+  command then succeeded). The mode is pinned because 1.5.7 starts headless runs in Auto when no
+  mode is saved, and Auto approves any workspace write outside the allow rules, including `.env`
+  and `.git/hooks/` (probed 2026-11-13); deny rules still hold in every mode. A tool needing approval ends an agy turn with `denied_actions`, which the bridge treats as
   a failed turn. agy refuses a directory with `.agents/hooks.json` or `.agents/mcp_config.json`
   (agy runs them at start-up with no trust prompt). Still open: neither CLI has an OS sandbox for
   its own process; agy still allows `search_web`, subagents and browser tools, runs user-level
   hooks and MCP servers, and merges the user's global settings.
-- **agy executor mode** (`allow_write: true`, probed 2026-11-11 on agy 1.5.5): the run uses
-  `toolPermission: request-review`, allow rules `write_file(<dir>/)` per allowed directory (every
+- **agy executor mode** (`allow_write: true`, probed 2026-11-11 on agy 1.5.5 and 2026-11-13
+  on 1.5.7): the run uses `toolPermission: request-review`, `agentMode: ""`, allow rules `write_file(<dir>/)` per allowed directory (every
   depth, by path component) and `write_file(<file>)` per exact file, and deny only `command(*)` and
   `mcp(*)` (no `write_file` deny: it would beat every allow). The allow rules cover every depth
   under each directory; the bridge's post-run scope check enforces the task scope. A write outside
@@ -50,7 +54,7 @@
   user's global agy settings are merged and user-level hooks/MCP servers still start; agy keeps
   state under `~/.gemini`. Deny rules are not a boundary (case-sensitive on a case-insensitive
   filesystem). No OS sandbox: prefer Codex for untrusted work. The CLI self-updates (1.5.3 became
-  1.5.5 during the probe); its login check is known to be unreliable on 1.5.x. On a resumed
+  1.5.5 during the first probe; 1.5.7 changed the headless default mode); its login check is known to be unreliable on 1.5.x. On a resumed
   conversation `structured_output` can be stale, so the answer is taken only from a JSON object in
   the response text; prose fails the turn.
 - **opencode executor mode** (`allow_write: true`): the run keeps the deny-all config and adds one

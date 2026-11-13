@@ -489,7 +489,7 @@ class Bridge:
     # TEST-04): a newer CLI may have changed it, so health asks for a re-probe.
     PROBED_VERSIONS = {"codex-cli": (0, 163, 0), "claude-cli": (2, 1, 308),
                       "cursor-cli": (2026, 11, 11), "opencode-cli": (2, 2, 6),
-                      "agy-cli": (1, 5, 5)}
+                      "agy-cli": (1, 5, 7)}
 
     @classmethod
     def unprobed(cls, adapter: str, version: str | None) -> bool:

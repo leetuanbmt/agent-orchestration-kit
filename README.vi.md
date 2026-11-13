@@ -485,8 +485,8 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   read, glob và grep (file `.env`, MCP, skill, websearch và subagent bị chặn), tắt config của
   project, và một `XDG_CONFIG_HOME` rỗng riêng cho mỗi lượt chạy, nên plugin, MCP server, agent
   và skill opencode cấp người dùng không được nạp khi bridge chạy (login và session giữ nguyên).
-  agy (1.5.5) chạy với `--sandbox --disable-slash-commands` và `--settings` theo phiên đặt
-  `toolPermission: request-review`, chặn `write_file(*)`, `command(*)` và `mcp(*)`; `--mode plan`
+  agy (1.5.7) chạy với `--sandbox --disable-slash-commands` và `--settings` theo phiên đặt
+  `toolPermission: request-review`, ghim `agentMode: ""` (Default), chặn `write_file(*)`, `command(*)` và `mcp(*)`; `--mode plan`
   không ép gì cả nên không dùng. Lượt mà agy cần phê duyệt kết thúc với `denied_actions` và bị
   tính là thất bại. agy từ chối thư mục có `.agents/hooks.json` hoặc `.agents/mcp_config.json`,
   vì nó chạy chúng khi khởi động mà không hỏi tin cậy. Vẫn còn hở: cả hai không có OS sandbox
@@ -505,7 +505,7 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   với model miễn phí nên model khác có thể lộ thêm tool; không có OS sandbox, hãy ưu tiên Codex
   cho việc không tin cậy.
   **Chế độ executor của agy (tự chọn bật):** agy chỉ thực thi khi có `allow_write: true`. Lượt
-  chạy dùng settings `request-review` với quy tắc cho phép `write_file(<thư mục>/)` và
+  chạy dùng settings `request-review` ghim `agentMode: ""` (Default), vì 1.5.7 mặc định chạy headless ở Auto, cho phép ghi trong workspace ngoài quy tắc cho phép (kể cả `.env` và `.git/hooks`), với quy tắc cho phép `write_file(<thư mục>/)` và
   `write_file(<file>)` cho các allowed path đã ánh xạ, và chỉ chặn `command(*)` và `mcp(*)`. Các
   quy tắc cho phép này phủ mọi độ sâu dưới thư mục và kiểm tra phạm vi sau lượt chạy của bridge
   mới áp dụng phạm vi task; ghi ngoài chúng sẽ kết thúc lượt và làm lượt thất bại. Không có
@@ -514,7 +514,7 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
   schedule, tạo ảnh và `search_web`. Việc đọc trong workspace (kể cả `.env`) không bị chặn,
   settings agy global của bạn được gộp vào, hook và MCP server cấp người dùng vẫn khởi động, và
   agy giữ trạng thái dưới `~/.gemini`. Không có OS sandbox, hãy ưu tiên Codex cho việc không
-  tin cậy. CLI tự cập nhật (đã probe trên 1.5.5), và việc kiểm tra login của agy được biết là
+  tin cậy. CLI tự cập nhật (đã probe trên 1.5.7), và việc kiểm tra login của agy được biết là
   không đáng tin trên 1.5.x. Lượt agy được resume phải trả lời bằng một JSON object trong
   response text; nếu không thì thất bại thay vì dùng lại kết quả của lượt trước.
 - **cursor** cũng chỉ đọc. Nó chạy `cursor-agent` với `--mode ask`, `--sandbox enabled` và

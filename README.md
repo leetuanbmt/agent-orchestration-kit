@@ -482,9 +482,9 @@ untrusted code.
   opencode (2.2.6) runs with a deny-all config in `OPENCODE_CONFIG_CONTENT` that allows only
   read, glob and grep (`.env` files, MCP, skills, websearch and subagents denied), project config
   disabled, and an empty per-run `XDG_CONFIG_HOME`, so your user-level opencode plugins, MCP
-  servers, agents and skills are not loaded for bridge runs (login and sessions stay). agy (1.5.5)
+  servers, agents and skills are not loaded for bridge runs (login and sessions stay). agy (1.5.7)
   runs with `--sandbox --disable-slash-commands` and session `--settings` that set
-  `toolPermission: request-review` and deny `write_file(*)`, `command(*)` and `mcp(*)`; `--mode
+  `toolPermission: request-review`, pin `agentMode: ""` (Default), and deny `write_file(*)`, `command(*)` and `mcp(*)`; `--mode
   plan` enforces nothing and is not used. A turn where agy needed approval ends with
   `denied_actions` and counts as failed. agy refuses a directory with `.agents/hooks.json` or
   `.agents/mcp_config.json`, which it would run at start-up without a trust prompt. Still open:
@@ -503,7 +503,7 @@ untrusted code.
   (governed by `edit`, refused outside the allowlist). Probed with free models only, so other
   models may expose other tools; there is no OS sandbox, so prefer Codex for untrusted work.
   **agy executor mode (opt-in):** agy executes only with `allow_write: true`. Its run uses
-  `request-review` settings with `write_file(<dir>/)` and `write_file(<file>)` allows for the
+  `request-review` settings pinned to `agentMode: ""` (Default), because 1.5.7 defaults headless runs to Auto, which approves workspace writes outside the allow rules (including `.env` and `.git/hooks`), with `write_file(<dir>/)` and `write_file(<file>)` allows for the
   mapped allowed paths and denies only `command(*)` and `mcp(*)`. The allow rules cover every
   depth under each directory and the bridge's post-run scope check enforces the task scope; a
   write outside them ends the turn and fails it. There is no shell, so no tests, delete or
@@ -511,7 +511,7 @@ untrusted code.
   the run. Not gated: subagents, schedule, image generation and `search_web`. Workspace reads
   (including `.env`) are not blocked, your global agy settings are merged, user-level hooks and
   MCP servers still start, and agy keeps its state under `~/.gemini`. There is no OS sandbox, so
-  prefer Codex for untrusted work. The CLI self-updates (probed on 1.5.5), and the agy login
+  prefer Codex for untrusted work. The CLI self-updates (probed on 1.5.7), and the agy login
   check is known to be unreliable on 1.5.x. A resumed agy turn must answer with a JSON object in
   its response text; otherwise it fails rather than reusing the previous turn's output.
 - **cursor** is read-only too. It runs `cursor-agent` in `--mode ask` with `--sandbox enabled`

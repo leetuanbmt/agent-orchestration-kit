@@ -938,14 +938,16 @@ class CursorAdapter(ReadOnlyAdapter):
         return res.final is not None and not ctx["errors"]
 
 
-_AGY_SETTINGS = {"toolPermission": "request-review",
+_AGY_SETTINGS = {"toolPermission": "request-review", "agentMode": "",
                  "permissions": {"deny": ["write_file(*)", "command(*)", "mcp(*)"]}}
 
 
 class AgyAdapter(Adapter):
     """Antigravity CLI print mode with session-only `--settings` (merged with the user's global
     settings) that set toolPermission request-review and deny write_file(*), command(*) and
-    mcp(*). Probed on agy 1.5.5: file writes, edits, every shell command and MCP calls then fail
+    mcp(*). agentMode is pinned to Default (""): agy 1.5.7 starts headless runs in Auto,
+    which approves any workspace write outside the allow rules, including .env and .git/hooks.
+    Probed on agy 1.5.7: file writes, edits, every shell command and MCP calls then fail
     with "Matches user-configured deny rule" and the turn continues. A writing run (only for an
     agent with allow_write) instead allows write_file(<dir>/) / write_file(<file>) for its mapped
     allowed paths (every depth under a directory; the bridge's post-run scope check enforces the
@@ -969,7 +971,7 @@ class AgyAdapter(Adapter):
     def _settings(self, req: RunRequest) -> dict[str, Any]:
         if req.sandbox == "read-only":
             return _AGY_SETTINGS
-        return {"toolPermission": "request-review",
+        return {"toolPermission": "request-review", "agentMode": "",
                 "permissions": {"allow": agy_write_rules(req.write_paths, self.root),
                                 "deny": ["command(*)", "mcp(*)"]}}
 
