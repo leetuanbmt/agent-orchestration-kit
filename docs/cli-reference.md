@@ -19,7 +19,7 @@ exposes these tools.
 | `bridge_task_result` | `task_id` | Spec, attempts, the agent's final JSON, diff stat and patch, the bridge's checks, reviews |
 | `bridge_review_task` | `task_id`, `decision`, `notes` | `approve`, `rework` or `block` by the client; also overrides a failed reviewer agent |
 | `bridge_resume_task` | `task_id`, `feedback` | Rework or recover on the same agent and session |
-| `bridge_cancel_task` | `task_id`, `reason` | Kills the run's process group and cancels the task |
+| `bridge_cancel_task` | `task_id`, `reason` | Kills the run's process group and cancels the task (any state except DONE and CANCELLED) |
 | `bridge_list_tasks` | `state`, `limit` (50) | Tasks, newest first |
 | `bridge_plan` | `objective`, `context` | Runs the planner agent and creates a workflow |
 | `bridge_workflow_status` | `workflow_id`, `wait_s` | Workflow state and tasks; `wait_s` (≤ 55) blocks while `PLANNING` or `RUNNING` |
@@ -70,7 +70,7 @@ run.)
 | `result <id>` | Task result with patch and checks |
 | `review <id> --decision approve\|rework\|block --notes TEXT` | Review a task in `REVIEW` |
 | `resume <id> [--feedback TEXT]` | Continue a task on the same agent and session |
-| `cancel <id> --reason TEXT` | Cancel a task |
+| `cancel <id> --reason TEXT` | Cancel a task in any state except DONE and CANCELLED (BLOCKED included) |
 | `plan "<objective>" [--context TEXT]` | Run the planner agent; creates a workflow |
 | `run-workflow <W…>` / `workflow-status <W…>` | Drive a workflow / read its state |
 

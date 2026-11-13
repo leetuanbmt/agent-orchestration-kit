@@ -25,7 +25,7 @@ SUBCOMMAND_HELP = {
     "status": "compact status of a task; --wait blocks until it leaves RUNNING/VERIFYING",
     "storage": "where bridge state lives; migrate, relink, prune and clean it up",
     "list": "tasks of this project, newest first",
-    "cancel": "cancel a non-terminal task",
+    "cancel": "cancel a task that is not DONE or CANCELLED",
     "review": "record the client review of a task in REVIEW",
     "run-workflow": "run the tasks of a planned workflow in dependency order",
     "workflow-status": "status of a workflow and its tasks",

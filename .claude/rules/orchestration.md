@@ -20,7 +20,8 @@ and `config-check` lists them under `deprecated`; a name declared in two places 
   task stays in REVIEW and you decide.
 
 States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED → DONE`, plus `REWORK`,
-`FAILED`, `PAUSED`, `BLOCKED`, `CANCELLED`. Terminal: `DONE`, `CANCELLED`, `BLOCKED`.
+`FAILED`, `PAUSED`, `BLOCKED`, `CANCELLED`. Terminal: `DONE`, `CANCELLED`, `BLOCKED`;
+only `cancel` leaves `BLOCKED`, to close a task whose work was finished by hand.
 
 | Move | Who | Trigger |
 |---|---|---|
@@ -34,7 +35,7 @@ States: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED →
 | REVIEW → APPROVED / REWORK / BLOCKED | client or reviewer agent | `bridge_review_task` / reviewer run |
 | REVIEW → APPROVED | bridge | no review stage and every gate passed |
 | APPROVED → DONE | bridge, or human for high risk | quality gates re-checked |
-| any non-terminal → CANCELLED | client | `bridge_cancel_task`; the owning runner, in any process, kills its agent or check and frees the account within ~1 s |
+| any non-terminal or BLOCKED → CANCELLED | client | `bridge_cancel_task`; the owning runner, in any process, kills its agent or check and frees the account within ~1 s |
 
 - The bridge, not any agent, decides REVIEW vs REWORK: it re-runs the verification commands.
 - `risk_level: high`, or a change under a sensitive path (migrations, auth, deploy, CI, secrets),

@@ -392,7 +392,7 @@ sequenceDiagram
 
 Các trạng thái: `BACKLOG → READY → RUNNING → VERIFYING → REVIEW → APPROVED → DONE`, cùng với
 `REWORK`, `FAILED`, `PAUSED`, `BLOCKED` và `CANCELLED`. `DONE`, `CANCELLED` và `BLOCKED` là trạng
-thái kết thúc.
+thái kết thúc; `cancel` vẫn đóng được task `BLOCKED` mà bạn đã tự hoàn tất phần việc.
 
 | Chuyển | Ai | Điều kiện |
 |---|---|---|
@@ -406,7 +406,7 @@ thái kết thúc.
 | `REVIEW → APPROVED` / `REWORK` / `BLOCKED` | Client hoặc reviewer agent | `bridge_review_task` hoặc lượt chạy của reviewer |
 | `REVIEW → APPROVED` | Bridge | Không có stage `review` và mọi gate đều qua |
 | `APPROVED → DONE` | Bridge, hoặc con người với task rủi ro cao | Kiểm tra lại quality gate |
-| Mọi trạng thái chưa kết thúc → `CANCELLED` | Client | `bridge_cancel_task` |
+| Mọi trạng thái chưa kết thúc hoặc `BLOCKED` → `CANCELLED` | Client | `bridge_cancel_task` |
 
 Mỗi task chạy tối đa `max_rework + 1` lần (mặc định 3). Runner chết giữa chừng được phát hiện ở
 lần khởi động bridge kế tiếp: task chuyển sang `PAUSED` (`INTERRUPTED`) và `bridge_resume_task`

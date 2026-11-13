@@ -10,7 +10,7 @@ from . import osutil, progress
 from .security import redact
 
 STARTABLE = {"execute": {"READY"}, "resume": {"REWORK", "FAILED", "PAUSED"}}
-TERMINAL = {"DONE", "CANCELLED", "BLOCKED"}
+CLOSED = {"DONE", "CANCELLED"}  # cancel works from every other state, BLOCKED included
 DECISIONS = {"approve", "rework", "block"}
 FIELDS = {
     "review": {"decision", "notes"},
@@ -98,7 +98,7 @@ def run_action(roots, pid, tid, body, runner=None, starter=None):
     elif action == "review":
         allowed = state == "REVIEW"
     else:
-        allowed = state not in TERMINAL
+        allowed = state not in CLOSED
     if not allowed:
         return 409, {"error": f"cannot {action} a task in state {state}", "state": state}
     argv = [sys.executable, "-P", "-m", "bridge", action, tid, *args]
