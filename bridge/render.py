@@ -184,7 +184,7 @@ def usage_view(report: dict[str, Any]) -> Group:
     return Group(table, note)
 
 
-def health_view(h: dict[str, Any]) -> Group:
+def health_view(h: dict[str, Any], width: int = NARROW) -> Group:
     head = Text()
     head.append(" OK " if h["ok"] else " NOT OK ",
                 style="bold black on green" if h["ok"] else "bold white on red")
@@ -192,11 +192,17 @@ def health_view(h: dict[str, Any]) -> Group:
     orch = h["orchestrator"]
     head.append(f"config {orch['source']} · stages {' → '.join(orch['stages'])}"
                 f" · sandbox {h['sandbox']}", style="dim")
-    adapters = Table("Adapter", "Path", "Version", title="Adapters", title_justify="left")
+    compact = width < NARROW
+    adapters = Table("Adapter", *(() if compact else ("Path",)), "Version",
+                     title="Adapters", title_justify="left")
     for name, info in h["adapters"].items():
         missing = not info["path"]
-        adapters.add_row(name, Text("not installed", style="red") if missing else info["path"],
-                         info["version"] or "-")
+        path = Text("not installed", style="red") if missing else info["path"]
+        if compact:  # the path is long; show only whether the adapter is installed
+            adapters.add_row(name, Text("not installed", style="red") if missing
+                             else (info["version"] or "installed"))
+        else:
+            adapters.add_row(name, path, info["version"] or "-")
     # Problems first (they make the result NOT OK), then warnings; each fix with its cause.
     hints = [f"{entry['message']}: {entry['fix']}"
              for entry in [*h.get("problems", []), *h.get("warnings", [])]]
@@ -214,21 +220,24 @@ def health_view(h: dict[str, Any]) -> Group:
     return Group(head, Text(""), adapters, quota, counts, *_steps(hints, "To fix:"))
 
 
-def agents_view(a: dict[str, Any]) -> Group:
+def agents_view(a: dict[str, Any], width: int = NARROW) -> Group:
     head = Text(f"config {a['source']} · stages {' → '.join(a['stages'])}\n", style="dim")
     for role, spec in a["roles"].items():
         head.append(f"{role:<9}", style="bold")
         head.append(f"{', '.join(spec['agents']) or '-'}\n")
     fallback = a["quota_fallback"]
     head.append(f"quota fallback {'on' if fallback['enabled'] else 'off'}", style="dim")
-    table = Table("Agent", "Adapter", "Account", "Model", "Roles", "Can", "Status")
+    compact = width < NARROW
+    table = Table("Agent", *(() if compact else ("Adapter",)), "Account",
+                  *(() if compact else ("Model", "Roles", "Can")), "Status")
     for ag in a["agents"]:
         can = "/".join(c for c in ("read", "write") if ag[c]) + (" +bash" if ag["allow_bash"]
                                                                   else "")
         status = (Text("available", style="green") if ag["available"]
                   else Text(ag["unavailable_reason"] or "unavailable", style="red"))
-        table.add_row(ag["agent"], ag["adapter"], ag["account"] or "-", ag["model"] or "-",
-                      ", ".join(ag["roles"]) or "-", can or "-", status)
+        table.add_row(ag["agent"], *(() if compact else (ag["adapter"],)), ag["account"] or "-",
+                      *(() if compact else (ag["model"] or "-", ", ".join(ag["roles"]) or "-",
+                                            can or "-")), status)
     hints = [f"`agent-bridge account-list` to see why {ag['agent']} is unavailable"
              for ag in a["agents"] if not ag["available"] and ag["account"]][:1]
     return Group(head, table, *_steps(hints))
@@ -379,11 +388,13 @@ def _next_for(task: dict[str, Any]) -> str | None:
     return None
 
 
-def projects_view(data: dict[str, Any], now: float | None = None) -> Group | Text:
+def projects_view(data: dict[str, Any], now: float | None = None,
+                  width: int = NARROW) -> Group | Text:
     """`agent-bridge tasks`: one block per project or worktree, newest activity first."""
     if not data["projects"]:
         return Text("No project has tasks yet. Projects appear here once agent-bridge has run "
                     "in them (the MCP server, the dashboard or any command).", style="dim")
+    compact = width < NARROW
     blocks: list[RenderableType] = []
     for p in data["projects"]:
         head = Text()
@@ -392,13 +403,14 @@ def projects_view(data: dict[str, Any], now: float | None = None) -> Group | Tex
         head.append(f"  {p['root']}", style="dim")
         head.append("\n" + " · ".join(f"{n} {s}" for s, n in sorted(p["counts"].items())),
                     style="dim")
-        table = Table("", "Task", "State", "Agent", "Updated", expand=True)
+        table = Table("", "Task", "State", *(() if compact else ("Agent", "Updated")),
+                      expand=True)
         table.add_column("Objective", ratio=1, no_wrap=True, overflow="ellipsis")
         for t in p["tasks"]:
             mark = Text("●", style="bold yellow") if t["state"] in ATTENTION else ""
+            cells = (() if compact else (t["agent"] or "-", ago(t["updated_at"], now)))
             table.add_row(mark, t["task_id"], Text(t["state"], style=STYLE.get(t["state"], "")),
-                          t["agent"] or "-", ago(t["updated_at"], now),
-                          (t["objective"].splitlines() or [""])[0])
+                          *cells, (t["objective"].splitlines() or [""])[0])
         blocks += [head, table] if p["tasks"] else [head]
     blocks.append(Text("Details of one: run agent-bridge list or result in that project.",
                        style="dim"))
@@ -410,7 +422,8 @@ def task_list_notice(shown: int, total: int) -> str:
 
 
 def tasks_view(tasks: list[dict[str, Any]], now: float | None = None,
-               project: str | None = None, total: int | None = None) -> Group | Text:
+               project: str | None = None, total: int | None = None,
+               width: int = NARROW) -> Group | Text:
     """`project` is the root the tasks belong to: each project (worktree) has its own tasks."""
     head = Text()
     if project:
@@ -422,12 +435,15 @@ def tasks_view(tasks: list[dict[str, Any]], now: float | None = None,
         head.append(("\n" if project else "") + "No tasks yet. Ask Claude Code for a change; it "
                     "creates them through the bridge.", style="dim")
         return head
-    table = Table("", "Task", "State", "Agent", "Tries", "Updated", expand=True)
+    compact = width < NARROW
+    table = Table("", "Task", "State", *(() if compact else ("Agent", "Tries", "Updated")),
+                  expand=True)
     table.add_column("Objective", ratio=1, no_wrap=True, overflow="ellipsis")
     for t in tasks:
         mark = Text("●", style="bold yellow") if t["state"] in ATTENTION else ""
+        cells = (() if compact else (t["agent"] or "-", f"{t['attempts']}/{t['max_attempts']}",
+                                     ago(t["updated_at"], now)))
         table.add_row(mark, t["task_id"], Text(t["state"], style=STYLE.get(t["state"], "")),
-                      t["agent"] or "-", f"{t['attempts']}/{t['max_attempts']}",
-                      ago(t["updated_at"], now), (t["objective"].splitlines() or [""])[0])
+                      *cells, (t["objective"].splitlines() or [""])[0])
     hints = [hint for t in tasks if (hint := _next_for(t))]
     return Group(*([head] if head else []), table, *_steps(hints, "● needs you:"))

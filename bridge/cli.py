@@ -1208,8 +1208,11 @@ def main(argv: list[str] | None = None) -> None:
             console = Console()
             extra = ({"width": console.width, "show_all": args.all}
                      if args.cmd == "account-list" else
-                     {"project": str(find_root()), "total": args.task_total}
-                     if args.cmd == "list" else {})
+                     {"project": str(find_root()), "total": args.task_total,
+                      "width": console.width}
+                     if args.cmd == "list" else
+                     {"width": console.width}
+                     if args.cmd in ("tasks", "health", "agents") else {})
             console.print(getattr(render, view)(out, **extra))
         else:
             print(dumps(out))
