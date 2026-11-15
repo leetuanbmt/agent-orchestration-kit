@@ -48,6 +48,7 @@ class BridgeConfig(BaseModel):
     # Owner-supplied hooks-only file: trusted code runs without a sandbox.
     claude_hook_settings: str | None = None
     opencode_bin: str = "opencode"
+    cursor_bin: str = "cursor-agent"
     agy_bin: str = "agy"
     model: str | None = None
     # danger-full-access is deliberately not representable: no silent fallback to unrestricted.

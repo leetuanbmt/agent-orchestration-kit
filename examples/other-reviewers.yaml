@@ -1,5 +1,5 @@
 # Antigravity (agy) plans, Codex implements, opencode reviews. opencode and agy are read-only
-# adapters: they can plan and review but never write. Its accounts are in .ai/accounts.yaml.
+# here: they plan and review but never write (opencode and agy can execute only with allow_write: true). Its accounts are in .ai/accounts.yaml.
 version: 1
 agents:
   agy: {adapter: agy-cli, account: gm, model: gemini-3.8-flash-low}

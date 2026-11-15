@@ -12,7 +12,7 @@ from bridge.config import BridgeConfig
 from bridge.models import Actor
 from bridge.orchestrator import legacy, parse
 from bridge.render import account_rows
-from tests.conftest import run
+from tests.conftest import run, spec
 from tests.integration.test_orchestration import WRITE, events, log
 
 # F: agy plans, Codex executes, opencode reviews.
@@ -34,7 +34,7 @@ workflow: {stages: [plan, execute, test, review]}
 # @pt.id KIT-FLOW-F-agy-codex-opencode
 # @pt.item Config F: agy planner, Codex executor, opencode reviewer
 # @pt.condition fake agy and opencode; opencode wraps its JSON reply in a code fence
-# @pt.expected agy plans read-only (plan mode, sandbox, prompt on stdin, its own HOME); opencode reviews with writes, shell and web denied and the schema in its prompt; the task is DONE with the reviewer recorded as actor agent
+# @pt.expected agy plans read-only (sandbox, request-review settings with write/shell/MCP denied, no --mode, prompt on stdin, its own HOME); opencode reviews with the deny-all V2 config, an empty private XDG_CONFIG_HOME and the schema in its prompt; the task is DONE with the reviewer recorded as actor agent
 # @pt.target bridge.executor.AgyAdapter, bridge.executor.OpenCodeAdapter, Bridge.plan, Bridge._review_stage
 # @pt.method integration
 # @pt.legacy none
@@ -48,15 +48,25 @@ def test_config_f(make_orch, fake_codex, fake_others, monkeypatch):
 
     planner, = log(fake_others / "agy")
     argv = planner["argv"]
-    assert argv[argv.index("--mode") + 1] == "plan" and "--sandbox" in argv and "-p=" in argv
+    assert "--mode" not in argv and "--sandbox" in argv and "-p=" in argv
+    settings = json.loads(argv[argv.index("--settings") + 1])
+    assert settings["toolPermission"] == "request-review"
+    assert settings["permissions"]["deny"] == ["write_file(*)", "command(*)", "mcp(*)"]
     assert "PLANNER" not in " ".join(argv)  # the prompt is not on the command line
     message = json.loads(planner["stdin"])
     assert message["event"] == "user" and "PLANNER" in message["message"]["content"]
     assert planner["home"].endswith("/gm") and planner["agent_env"] == "1"
 
     reviewer, = log(fake_others / "opencode")
-    assert json.loads(reviewer["config"]) == {"permission": {
-        "edit": "deny", "bash": "deny", "webfetch": "deny", "external_directory": "deny"}}
+    config = json.loads(reviewer["config"])
+    assert config["permissions"][0] == {"action": "*", "resource": "*", "effect": "deny"}
+    assert config["policies"][0] == {"action": "tool.use", "resource": "*", "effect": "deny"}
+    assert {"action": "mcp.use", "resource": "*", "effect": "deny"} in config["policies"]
+    assert {"action": "read", "resource": "*.env", "effect": "deny"} in config["permissions"]
+    assert "--standalone" in reviewer["argv"]
+    xdg = Path(reviewer["xdg_config_home"])
+    assert reviewer["xdg_listing"] == [] and xdg.is_absolute()
+    assert not xdg.is_relative_to(b.root) and not xdg.exists()  # per-run directory, removed after
     assert reviewer["project_config_disabled"] == "1"
     assert "REVIEWER" in reviewer["prompt"] and '"decision"' in reviewer["prompt"]
     assert reviewer["argv"][reviewer["argv"].index("-m") + 1] == "ollama-cloud/gpt-oss:120b"
@@ -86,7 +96,7 @@ def test_opencode_quota(make_orch, fake_codex, fake_others, monkeypatch):
 
 
 # @pt.id KIT-CFG-READONLY-adapters
-# @pt.item opencode and agy cannot be configured to write
+# @pt.item opencode and agy cannot be configured to write without allow_write
 # @pt.condition allow_write, a write capability, the executor role, or an opencode account with a home
 # @pt.expected each is rejected with a reason; reading roles stay valid
 # @pt.target bridge.orchestrator.AgentConfig, bridge.orchestrator.AccountProfile
@@ -106,10 +116,6 @@ roles: {ROLES}
 
 
 @pytest.mark.parametrize("oc,agy,roles,message", [
-    ("{provider: opencode}", "{adapter: agy-cli, account: gm, allow_write: true}",
-     "{executor: codex}", "read-only"),
-    ("{provider: opencode}", "{adapter: agy-cli, account: gm, capabilities: [write]}",
-     "{executor: codex}", "read-only"),
     ("{provider: opencode}", "{adapter: agy-cli, account: gm}",
      "{executor: opencode}", "write"),
     ("{provider: opencode, home: /tmp/oc}", "{adapter: agy-cli, account: gm}",
@@ -309,3 +315,800 @@ def test_agy_login_status_reads_token_file(fake_others, tmp_path, monkeypatch):
     assert login_status(cfg, Account("global", None, "google")) is True  # fixture's $HOME token
     assert not (fake_others / "agy" / "models_called").exists()
     assert login_status(BridgeConfig(agy_bin="agy-not-installed"), acc) is None
+
+
+# Cursor (cursor-agent): a read-only planner and reviewer on its global login.
+CONFIG_CURSOR = """
+version: 1
+accounts:
+  cx: {provider: openai, home: {home}/cx}
+  cu: {provider: cursor}
+agents:
+  codex: {adapter: codex-cli, account: cx}
+  cursor: {adapter: cursor-cli, account: cu, model: auto}
+roles: {planner: cursor, executor: codex, reviewer: cursor}
+workflow: {stages: [plan, execute, test, review]}
+"""
+
+
+def _cursor_request(**over):
+    from bridge.executor import RunRequest
+    base = {"prompt": "REVIEWER", "account": accounts.Account("cu", None, "cursor"),
+            "sandbox": "read-only", "timeout_s": 60, "schema": {"properties": {"decision": {}}}}
+    return RunRequest(**{**base, **over})
+
+
+# @pt.id KIT-FLOW-F3-cursor-planner-reviewer
+# @pt.item Config with Cursor as planner and reviewer
+# @pt.condition fake cursor-agent; Codex executes
+# @pt.expected the workflow reaches DONE with the review recorded as an agent review by cursor; every Cursor run is in ask mode with the sandbox enabled and trust, the prompt on stdin with the schema, and none of the write or approve flags
+# @pt.target bridge.executor.CursorAdapter, Bridge.plan, Bridge._review_stage
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_planner_and_reviewer(make_orch, fake_codex, fake_others, monkeypatch):
+    monkeypatch.setenv("FAKE_CODEX_WRITE", WRITE)
+    b = make_orch(CONFIG_CURSOR)
+    wid = run(b.plan("Set x to 2", wait=True))["workflow_id"]
+    wf = run(b.run_workflow(wid, wait=True))
+    assert wf["state"] == "DONE", wf
+    planner, reviewer = log(fake_others / "cursor")
+    for call in (planner, reviewer):
+        argv = call["argv"]
+        assert argv[argv.index("--mode") + 1] == "ask"
+        assert argv[argv.index("--sandbox") + 1] == "enabled" and "--trust" in argv
+        assert argv[argv.index("--model") + 1] == "auto"
+        assert not {"-f", "--yolo", "--force", "--approve-mcps"} & set(argv)
+        assert call["agent_env"] == "1"
+    assert '"tasks"' in planner["prompt"] and '"decision"' in reviewer["prompt"]
+    assert "REVIEWER" in reviewer["prompt"]
+    review, = events(b, wf["tasks"][0]["task_id"], "review")
+    assert review["actor"] == Actor.AGENT and review["detail"]["reviewer"] == "cursor"
+
+
+# @pt.id KIT-CFG-READONLY-cursor
+# @pt.item cursor-cli cannot be configured to write
+# @pt.condition allow_write, a write capability, the executor role, or a cursor account with a home
+# @pt.expected each is rejected with a reason naming read-only, write or `cursor-agent login`; reading roles stay valid
+# @pt.target bridge.orchestrator.AgentConfig, bridge.orchestrator.AccountProfile
+# @pt.method unit
+# @pt.legacy none
+@pytest.mark.parametrize("account,agent,roles,message", [
+    ("{provider: cursor}", "{adapter: cursor-cli, account: cu, allow_write: true}",
+     "{executor: codex}", "read-only"),
+    ("{provider: cursor}", "{adapter: cursor-cli, account: cu, capabilities: [write]}",
+     "{executor: codex}", "read-only"),
+    ("{provider: cursor}", "{adapter: cursor-cli, account: cu}", "{executor: cursor}", "write"),
+    ("{provider: cursor, home: /tmp/cu}", "{adapter: cursor-cli, account: cu}",
+     "{executor: codex}", "cursor-agent login"),
+    ("{provider: opencode, home: /tmp/cu}", "{adapter: opencode-cli, account: cu}",
+     "{executor: codex}", "opencode auth login"),
+])
+def test_cursor_read_only(account, agent, roles, message):
+    def text(account, agent, roles):
+        return f"""
+accounts:
+  cx: {{provider: openai}}
+  cu: {account}
+agents:
+  cursor: {agent}
+  codex: {{adapter: codex-cli, account: cx}}
+roles: {roles}
+"""
+    parse(text("{provider: cursor}", "{adapter: cursor-cli, account: cu}",
+               "{planner: cursor, executor: codex, reviewer: cursor}"))
+    with pytest.raises(ValueError, match=message):
+        parse(text(account, agent, roles))
+
+
+# @pt.id KIT-ADAPTER-cursor-last-assistant
+# @pt.item Cursor's final answer comes from the last assistant event
+# @pt.condition the fake emits two assistant messages and a result that concatenates them; one run resumes a session
+# @pt.expected final is the JSON of the last assistant message, usage is kept as reported with no cost, the session id is reported, and --resume carries the given id
+# @pt.target bridge.executor.CursorAdapter.handle, bridge.executor.CursorAdapter.argv
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_last_assistant_event(repo, fake_others, monkeypatch):
+    from bridge.executor import CursorAdapter
+    monkeypatch.setenv("FAKE_CURSOR_SCENARIO", "multi")
+    seen = []
+    adapter = CursorAdapter(BridgeConfig(), repo)
+    res = run(adapter.run(_cursor_request(session_id="sess-1"), on_session=seen.append))
+    assert res.outcome == "ok" and res.final == {"decision": "approve", "notes": "looks good"}
+    assert res.final_text.startswith("{") and res.cost_usd is None
+    assert res.usage == {"inputTokens": 1, "outputTokens": 1, "cacheReadTokens": 1,
+                         "cacheWriteTokens": 0, "reasoningTokens": 1}
+    assert seen == ["sess-1"] and res.session_id == "sess-1"
+    call, = log(fake_others / "cursor")
+    assert call["argv"][call["argv"].index("--resume") + 1] == "sess-1"
+    assert call["argv"][call["argv"].index("--workspace") + 1] == str(repo)
+    assert "--resume" not in adapter.argv(_cursor_request())
+
+
+# @pt.id KIT-ADAPTER-cursor-error-result
+# @pt.item A Cursor error result fails the turn
+# @pt.condition the fake answers with a result of subtype error and is_error true
+# @pt.expected the run is not ok and the error text carries the subtype and the result text
+# @pt.target bridge.executor.CursorAdapter.handle, bridge.executor.CursorAdapter.finish
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_error_result(repo, fake_others, monkeypatch):
+    from bridge.executor import CursorAdapter
+    monkeypatch.setenv("FAKE_CURSOR_SCENARIO", "error")
+    res = run(CursorAdapter(BridgeConfig(), repo).run(_cursor_request()))
+    assert res.outcome != "ok" and res.final is None
+    assert "error: Usage limit reached" in (res.error or "")
+
+
+# @pt.id KIT-ADAPTER-cursor-hooks-refused
+# @pt.item Cursor is refused in a directory with project hooks
+# @pt.condition the run directory contains .cursor/hooks.json, and a write run is requested elsewhere
+# @pt.expected a ValueError naming the file and saying Cursor would execute it; the fake CLI is never started; a write run is refused as read-only
+# @pt.target bridge.executor.CursorAdapter.argv, bridge.executor.ReadOnlyAdapter.build
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_refuses_project_hooks(repo, fake_others):
+    from bridge.executor import CursorAdapter
+    adapter = CursorAdapter(BridgeConfig(), repo)
+    with pytest.raises(ValueError, match="read-only"):
+        run(adapter.run(_cursor_request(sandbox="workspace-write")))
+    (repo / ".cursor").mkdir()
+    (repo / ".cursor" / "hooks.json").write_text("{}")
+    with pytest.raises(ValueError, match=r"hooks\.json.*execute"):
+        run(adapter.run(_cursor_request()))
+    assert not (fake_others / "cursor" / "calls").exists()
+
+
+# @pt.id KIT-ADAPTER-cursor-claude-hooks-refused
+# @pt.item Cursor is refused when .claude settings define hooks or cannot be read
+# @pt.condition .claude/settings.json or settings.local.json holds hooks, an empty hooks value, no hooks, invalid JSON or a JSON list
+# @pt.expected hooks and unreadable files are refused with a message naming the file and saying Cursor would execute its hooks; the others are not; the fake CLI is never started for a refusal
+# @pt.target bridge.executor.CursorAdapter.refusal, bridge.executor.CursorAdapter.argv
+# @pt.method integration
+# @pt.legacy none
+@pytest.mark.parametrize("name", ["settings.json", "settings.local.json"])
+@pytest.mark.parametrize("content,refused", [
+    ('{"hooks": {"PreToolUse": []}}', True), ('{"hooks": {"Stop": [{"hooks": []}]}}', True),
+    ("{not json", True), ("[]", True),
+    ('{"hooks": {}}', False), ('{"permissions": {"deny": []}}', False)])
+def test_cursor_refuses_claude_settings_hooks(repo, fake_others, name, content, refused):
+    from bridge.executor import CursorAdapter
+    settings = repo / ".claude" / name
+    settings.parent.mkdir(exist_ok=True)
+    settings.write_text(content)
+    adapter = CursorAdapter(BridgeConfig(), repo)
+    if refused:
+        assert name in (adapter.refusal() or "") and adapter.refusal_file() == settings
+        with pytest.raises(ValueError, match=rf"{name}.*Cursor would execute its hooks"):
+            run(adapter.run(_cursor_request()))
+        assert not (fake_others / "cursor" / "calls").exists()
+    else:
+        assert adapter.refusal() is None
+        assert run(adapter.run(_cursor_request())).outcome == "ok"
+
+
+CONFIG_CURSOR_REVIEW = CONFIG_CURSOR.replace(
+    "roles: {planner: cursor, executor: codex, reviewer: cursor}",
+    "roles: {planner: codex, executor: codex, reviewer: cursor}").replace(
+    "[plan, execute, test, review]", "[execute, test, review]")
+
+
+# @pt.id KIT-ADAPTER-cursor-refusal-surfaced
+# @pt.item A refused Cursor reviewer is unavailable, skipped, and reported by health
+# @pt.condition Cursor reviews, Codex executes, and .claude/settings.json holds hooks
+# @pt.expected the agent is listed unavailable with the refusal reason, the task stays in REVIEW with an agent_review_skipped event, the fake CLI never runs, and health carries an adapter_refused warning whose fix names the file
+# @pt.target bridge.service.Bridge._unavailable, bridge.service.Bridge.list_agents, bridge.service.Bridge.health, bridge.runner.TaskRunner._review_stage
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_refusal_is_surfaced(make_orch, fake_codex, fake_others, monkeypatch):
+    from tests.conftest import spec
+    monkeypatch.setenv("FAKE_CODEX_WRITE", WRITE)
+    b = make_orch(CONFIG_CURSOR_REVIEW)
+    settings = b.root / ".claude" / "settings.json"
+    settings.parent.mkdir(exist_ok=True)
+    settings.write_text('{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "x"}]}]}}')
+    listed = {a["agent"]: a for a in b.list_agents(logins={"cx": True, "cu": True})["agents"]}
+    assert listed["cursor"]["available"] is False
+    assert "settings.json" in listed["cursor"]["unavailable_reason"]
+    assert "Cursor would execute its hooks" in listed["cursor"]["unavailable_reason"]
+    t = run(b.create_task(spec(objective="Set x to 2")))["task_id"]
+    run(b.execute_task(t, wait=True))
+    assert b.store.get(t)["state"] == "REVIEW"
+    skipped, = events(b, t, "agent_review_skipped")
+    assert "settings.json" in skipped["detail"]["reason"] or "reviewer" in skipped["detail"]["reason"]
+    assert not (fake_others / "cursor" / "calls").exists()
+    health = run(b.health())
+    warning, = [w for w in health["warnings"] if w["code"] == "adapter_refused"]
+    assert str(settings) in warning["fix"] and "another reviewer/planner agent" in warning["fix"]
+    assert "adapter_refused" not in [x["code"] for x in health["problems"]]
+
+
+# @pt.id KIT-ADAPTER-cursor-result-text
+# @pt.item The result text answers when the last assistant message holds no JSON
+# @pt.condition the fake answers with the JSON first and a prose message last; the result text joins both
+# @pt.expected the run is ok and final is the JSON object from the result text
+# @pt.target bridge.executor.CursorAdapter.finish
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_result_text_fallback(repo, fake_others, monkeypatch):
+    from bridge.executor import CursorAdapter
+    monkeypatch.setenv("FAKE_CURSOR_SCENARIO", "early")
+    res = run(CursorAdapter(BridgeConfig(), repo).run(_cursor_request()))
+    assert res.final_text == "Done."
+    assert res.outcome == "ok" and res.final == {"decision": "approve", "notes": "looks good"}
+
+
+# @pt.id KIT-HEALTH-cursor-unprobed
+# @pt.item A Cursor CLI newer than the probed version is a health warning
+# @pt.condition the cursor adapter reports 2026.11.11 (probed), then 2026.12.1
+# @pt.expected only 2026.12.1 adds cli_unprobed
+# @pt.target bridge.service.Bridge.health, bridge.service.Bridge.PROBED_VERSIONS
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_unprobed_version(make_orch, monkeypatch):
+    from bridge.executor import CursorAdapter
+    b = make_orch(CONFIG_CURSOR)
+    for version, warned in (("2026.11.11", False), ("2026.12.1", True)):
+        monkeypatch.setattr(CursorAdapter, "version", lambda self, v=version: v)
+        warnings = run(b.health())["warnings"]
+        assert any(w["code"] == "cli_unprobed" and "cursor-cli" in w["message"]
+                   for w in warnings) is warned, version
+
+
+# @pt.id KIT-ACCT-cursor-status-env
+# @pt.item The Cursor login check does not see CURSOR_API_KEY
+# @pt.condition CURSOR_API_KEY is set in the environment while the status command runs against the fake
+# @pt.expected the fake logs a status call with no CURSOR_API_KEY
+# @pt.target bridge.accounts.login_status
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_status_env_is_scrubbed(fake_others, monkeypatch):
+    monkeypatch.setenv("CURSOR_API_KEY", "key-for-test")
+    assert accounts.login_status(BridgeConfig(), accounts.Account("cu", None, "cursor")) is True
+    calls = [json.loads(line) for line in
+             (fake_others / "cursor" / "status.jsonl").read_text().splitlines()]
+    assert calls == [{"cursor_api_key": None}]
+
+
+# @pt.id KIT-CFG-cursor-no-budget
+# @pt.item A cursor account cannot carry a budget or pricing
+# @pt.condition limits with budget_usd, with pricing, and with percentage and cooldown only; also through a registry login
+# @pt.expected budget and pricing are rejected with a message saying Cursor reports no cost; percentage and cooldown limits load
+# @pt.target bridge.orchestrator.AccountProfile
+# @pt.method unit
+# @pt.legacy none
+@pytest.mark.parametrize("limits,ok", [
+    ("{budget_usd: {day: 5}}", False),
+    ("{pricing: {input_per_mtok: 1, output_per_mtok: 1}}", False),
+    ("{five_hour_pct: 80, cooldown_s: 600}", True)])
+@pytest.mark.parametrize("via_login", [False, True])
+def test_cursor_cost_limits(limits, ok, via_login):
+    account = "{login: cu, limits: %s}" % limits if via_login else (
+        "{provider: cursor, limits: %s}" % limits)
+    text = f"""
+accounts:
+  cx: {{provider: openai}}
+  cu: {account}
+agents:
+  cursor: {{adapter: cursor-cli, account: cu}}
+  codex: {{adapter: codex-cli, account: cx}}
+roles: {{planner: cursor, executor: codex, reviewer: cursor}}
+"""
+    registry = {"cu": {"provider": "cursor", "home": None}} if via_login else None
+    if ok:
+        parse(text, registry=registry)
+    else:
+        with pytest.raises(ValueError, match="Cursor reports no cost"):
+            parse(text, registry=registry)
+
+
+# @pt.id KIT-ACCT-cursor-registry
+# @pt.item Cursor accounts: add, second refused, login status
+# @pt.condition account-add --provider cursor, a second cursor account, a home, fake status with and without a login, shell switch
+# @pt.expected one home-less cursor account, second and home refused, logged in only when isAuthenticated is true, login runs `cursor-agent login`, shell switch keeps the global login
+# @pt.target bridge.accounts.register, bridge.accounts.login_status, bridge.accounts.login_argv, bridge.cli._run
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_accounts(fake_others, monkeypatch):
+    _human(monkeypatch)
+    add = cli.argparse.Namespace(cmd="account-add", name="cu", provider="cursor", home=None,
+                                 device_auth=False)
+    monkeypatch.setattr(cli, "_login", lambda *a, **k: True)
+    assert asyncio.run(cli._run(add))["account"] == "cu"
+    assert accounts.load_registry()["cu"] == {"provider": "cursor", "home": None}
+    for args, message in [(("cu2", "cursor"), "already uses the global cursor login"),
+                          (("cu3", "cursor", "/tmp/x"), "no isolated home")]:
+        with pytest.raises(ValueError, match=message):
+            accounts.register(*args)
+    acc = accounts.Account("cu", None, "cursor")
+    cfg = BridgeConfig()
+    assert accounts.login_status(cfg, acc) is True
+    assert accounts.login_argv(cfg, acc) == ["cursor-agent", "login"]
+    assert accounts.shell_use(acc) == "true  # cursor always uses its global login"
+    monkeypatch.setenv("FAKE_CURSOR_LOGGED_OUT", "1")
+    assert accounts.login_status(cfg, acc) is False
+    assert accounts.login_status(BridgeConfig(cursor_bin="cursor-not-installed"), acc) is None
+
+
+def _agy_request(**over):
+    from bridge.executor import RunRequest
+    base = {"prompt": "PLANNER", "account": accounts.Account("gm", None, "google"),
+            "sandbox": "read-only", "timeout_s": 60, "schema": {"properties": {"decision": {}}}}
+    return RunRequest(**{**base, **over})
+
+
+# @pt.id KIT-ADAPTER-agy-agents-files-refused
+# @pt.item agy is refused in a directory whose .agents files it would execute
+# @pt.condition the run directory contains .agents/hooks.json, or .agents/mcp_config.json, or neither
+# @pt.expected each file is refused with a message naming it, refusal_file is that file, the fake CLI is never started; without them the run is ok
+# @pt.target bridge.executor.AgyAdapter.refusal, bridge.executor.AgyAdapter.argv
+# @pt.method integration
+# @pt.legacy none
+@pytest.mark.parametrize("name", ["hooks.json", "mcp_config.json"])
+def test_agy_refuses_agents_files(repo, fake_others, name):
+    from bridge.executor import AgyAdapter
+    adapter = AgyAdapter(BridgeConfig(), repo)
+    assert adapter.refusal() is None and adapter.refusal_file() is None
+    path = repo / ".agents" / name
+    path.parent.mkdir()
+    path.write_text("{}")
+    assert name in (adapter.refusal() or "") and adapter.refusal_file() == path
+    with pytest.raises(ValueError, match=rf"{name}.*exists"):
+        run(adapter.run(_agy_request()))
+    assert not (fake_others / "agy" / "calls").exists()
+
+
+# @pt.id KIT-ADAPTER-agy-refusal-surfaced
+# @pt.item A refused agy planner is unavailable and health names the file with a fitting fix
+# @pt.condition agy is the planner and .agents/mcp_config.json exists
+# @pt.expected the agent is listed unavailable with the reason, and health carries an adapter_refused warning whose fix names the file and does not talk about hooks of that file only
+# @pt.target bridge.service.Bridge.list_agents, bridge.service.Bridge.health
+# @pt.method integration
+# @pt.legacy none
+def test_agy_refusal_is_surfaced(make_orch, fake_codex, fake_others):
+    b = make_orch(CONFIG_F)
+    path = b.root / ".agents" / "mcp_config.json"
+    path.parent.mkdir()
+    path.write_text("{}")
+    listed = {a["agent"]: a for a in b.list_agents(logins={"cx": True, "gm": True, "oc": True})["agents"]}
+    assert listed["agy"]["available"] is False and "mcp_config.json" in listed["agy"]["unavailable_reason"]
+    warning, = [w for w in run(b.health())["warnings"] if w["code"] == "adapter_refused"]
+    assert f"removes {path}" in warning["fix"] and "another reviewer/planner agent" in warning["fix"]
+    assert not (fake_others / "agy" / "calls").exists()
+
+
+# @pt.id KIT-ADAPTER-agy-denied-actions
+# @pt.item An agy result with denied_actions fails the turn
+# @pt.condition the fake answers SUCCESS with no structured output and denied_actions naming run_command; separately a normal run
+# @pt.expected the denied run is not ok and its error names run_command; the normal run is ok
+# @pt.target bridge.executor.AgyAdapter.handle
+# @pt.method integration
+# @pt.legacy none
+def test_agy_denied_actions_fail_the_turn(repo, fake_others, monkeypatch):
+    from bridge.executor import AgyAdapter
+    adapter = AgyAdapter(BridgeConfig(), repo)
+    assert run(adapter.run(_agy_request())).outcome == "ok"
+    monkeypatch.setenv("FAKE_AGY_DENIED", "run_command")
+    res = run(adapter.run(_agy_request()))
+    assert res.outcome != "ok" and res.final is None
+    assert "denied actions" in (res.error or "") and "run_command" in (res.error or "")
+
+
+# @pt.id KIT-ADAPTER-cursor-config-dir
+# @pt.item Cursor runs get a private config directory whose permissions deny writes and shell
+# @pt.condition no cli-config.json, then one with extra keys and old permissions, then a corrupt one and a JSON list
+# @pt.expected CURSOR_CONFIG_DIR is <state_dir>/cursor-config (mode 0700, file 0600); permissions equal allow [] / deny Write(**), Shell(*); other keys survive; corrupt or non-object content is replaced; the argv is unchanged
+# @pt.target bridge.executor.CursorAdapter.extra_env
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_config_dir_denies_write_and_shell(repo, fake_others):
+    import os
+    import stat
+    from bridge.executor import CursorAdapter
+    adapter = CursorAdapter(BridgeConfig(), repo)
+    path = adapter.state_dir / "cursor-config" / "cli-config.json"
+    deny = {"allow": [], "deny": ["Write(**)", "Shell(*)"]}
+
+    def go():
+        res = run(adapter.run(_cursor_request()))
+        assert res.outcome == "ok"
+        return json.loads(path.read_text())
+
+    assert go() == {"permissions": deny}
+    call, = log(fake_others / "cursor")
+    assert call["config_dir"] == str(path.parent)
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert "--force" not in call["argv"] and "ask" in call["argv"]
+    path.write_text(json.dumps({"authInfo": {"x": 1}, "model": "m",
+                                "permissions": {"allow": ["Shell(ls)"], "deny": []}}))
+    assert go() == {"authInfo": {"x": 1}, "model": "m", "permissions": deny}
+    for bad in ("{not json", "[]"):
+        path.write_text(bad)
+        assert go() == {"permissions": deny}
+    assert sorted(os.listdir(path.parent)) == ["cli-config.json"]
+
+
+# @pt.id KIT-ADAPTER-cursor-cli-json-refused
+# @pt.item Cursor is refused in a directory with .cursor/cli.json
+# @pt.condition the run directory contains .cursor/cli.json
+# @pt.expected refusal names the file, refusal_file is it, the fake CLI is never started
+# @pt.target bridge.executor.CursorAdapter.refusal
+# @pt.method integration
+# @pt.legacy none
+def test_cursor_refuses_project_cli_json(repo, fake_others):
+    from bridge.executor import CursorAdapter
+    adapter = CursorAdapter(BridgeConfig(), repo)
+    path = repo / ".cursor" / "cli.json"
+    path.parent.mkdir()
+    path.write_text("{}")
+    assert adapter.refusal_file() == path and "cli.json" in (adapter.refusal() or "")
+    with pytest.raises(ValueError, match=r"cli\.json.*permission"):
+        run(adapter.run(_cursor_request()))
+    assert not (fake_others / "cursor" / "calls").exists()
+
+
+# @pt.id KIT-ADAPTER-opencode-shell-tool
+# @pt.item opencode shell tool events are recorded as commands
+# @pt.condition tool_use events for tool shell (dict input), bash (string input) and read
+# @pt.expected shell and bash commands are recorded, read is not
+# @pt.target bridge.executor.OpenCodeAdapter.handle
+# @pt.method unit
+# @pt.legacy none
+def test_opencode_records_shell_commands(repo):
+    from bridge.executor import OpenCodeAdapter, RunResult
+    adapter, res = OpenCodeAdapter(BridgeConfig(), repo), RunResult("ok")
+    ctx = {"errors": [], "on_session": None}
+    for tool, given in (("shell", {"command": "ls -la"}), ("bash", "pwd"), ("read", {"path": "x"})):
+        adapter.handle({"type": "tool_use", "part": {"tool": tool, "state": {"input": given}}}, res, ctx)
+    assert res.commands == ["ls -la", "pwd"]
+
+
+# @pt.id KIT-HEALTH-probed-versions-others
+# @pt.item opencode and agy have probed versions
+# @pt.condition Bridge.PROBED_VERSIONS
+# @pt.expected opencode-cli 2.2.6 and agy-cli 1.5.7 are listed; a newer version is unprobed, the same is not
+# @pt.target bridge.service.Bridge.PROBED_VERSIONS, bridge.service.Bridge.unprobed
+# @pt.method unit
+# @pt.legacy none
+def test_probed_versions_for_opencode_and_agy():
+    from bridge.service import Bridge
+    assert Bridge.PROBED_VERSIONS["opencode-cli"] == (2, 2, 6)
+    assert Bridge.PROBED_VERSIONS["agy-cli"] == (1, 5, 7)
+    assert not Bridge.unprobed("opencode-cli", "2.2.6") and Bridge.unprobed("opencode-cli", "2.2.7")
+    assert not Bridge.unprobed("agy-cli", "1.5.7") and Bridge.unprobed("agy-cli", "1.5.8")
+
+
+OC_WRITER = """
+version: 1
+accounts:
+  oc: {provider: opencode}
+agents:
+  opencode: {adapter: opencode-cli, account: oc, allow_write: true}
+roles: {executor: opencode}
+workflow: {stages: [execute, test]}
+"""
+
+
+def _oc_request(**over):
+    from bridge.executor import RunRequest
+    base = {"prompt": "EXECUTOR", "account": accounts.Account("oc", None, "opencode"),
+            "sandbox": "workspace-write", "timeout_s": 60, "write_paths": ["src/**"],
+            "deny_paths": [".env", ".git/**"]}
+    return RunRequest(**{**base, **over})
+
+
+def _oc_build(repo, tmp_path, **over):
+    from bridge.executor import OpenCodeAdapter
+    adapter = OpenCodeAdapter(BridgeConfig(), repo)
+    req = _oc_request(**over)
+    tmp = tmp_path / "oc-run"
+    tmp.mkdir(parents=True, exist_ok=True)
+    argv = adapter.build(req, tmp)
+    return adapter, req, argv
+
+
+# @pt.id KIT-CFG-opencode-executor
+# @pt.item An opencode agent with allow_write is an executor; cursor still is not
+# @pt.condition opencode-cli allow_write true as executor; cursor-cli with allow_write
+# @pt.expected opencode validates and can write; cursor is refused as read-only
+# @pt.target bridge.orchestrator.AgentConfig, bridge.orchestrator.READ_ONLY_ADAPTERS
+# @pt.method unit
+# @pt.legacy none
+def test_opencode_executor_config():
+    orch = parse(OC_WRITER)
+    assert orch.agents["opencode"].can("write") and orch.agents["opencode"].writes
+    from bridge.orchestrator import AgentConfig
+    assert not AgentConfig(adapter="opencode-cli", account="oc").can("write")
+    with pytest.raises(ValueError, match="needs 'write'"):
+        parse(OC_WRITER.replace(", allow_write: true", ""))
+    for adapter, provider in (("cursor-cli", "cursor"),):
+        text = OC_WRITER.replace("opencode-cli, account: oc", f"{adapter}, account: oc") \
+            .replace("{provider: opencode}", f"{{provider: {provider}}}")
+        with pytest.raises(ValueError, match="read-only"):
+            parse(text)
+
+
+# @pt.id KIT-ADAPTER-opencode-write-config
+# @pt.item A writing opencode run gets edit allows; a read-only run never does
+# @pt.condition build() and extra_env() for a workspace-write and a read-only request
+# @pt.expected writing: deny-all first, read/glob/grep, edit allow for src/*, edit policy after grep, external_directory deny last, no shell allow; read-only: exactly the deny-all config without edit
+# @pt.target bridge.executor.OpenCodeAdapter.extra_env, bridge.executor._opencode_config
+# @pt.method integration
+# @pt.legacy none
+def test_opencode_write_config(repo, tmp_path):
+    from bridge.executor import _OPENCODE_READ_ONLY
+    adapter, req, argv = _oc_build(repo, tmp_path)
+    env = adapter.extra_env(req)
+    config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
+    perms = config["permissions"]
+    assert perms[0] == {"action": "*", "resource": "*", "effect": "deny"}
+    assert {"action": "edit", "resource": "src/*", "effect": "allow"} in perms
+    assert perms[-1] == {"action": "external_directory", "resource": "*", "effect": "deny"}
+    assert not [r for r in perms if r["effect"] == "allow"
+                and r["action"] not in ("read", "glob", "grep", "edit")]
+    assert config["policies"][4] == {"action": "tool.use", "resource": "edit:*", "effect": "allow"}
+    assert config["policies"][:4] == _OPENCODE_READ_ONLY["policies"][:4]
+    assert env["OPENCODE_DISABLE_PROJECT_CONFIG"] == "1" and env["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
+    assert "--standalone" in argv and Path(env["XDG_CONFIG_HOME"]).is_dir()
+
+    adapter, req, _ = _oc_build(repo, tmp_path / "ro", sandbox="read-only")
+    config = json.loads(adapter.extra_env(req)["OPENCODE_CONFIG_CONTENT"])
+    assert config == _OPENCODE_READ_ONLY
+    assert not [r for r in config["permissions"] if r["action"] == "edit"]
+    assert "no shell" not in adapter.stdin(req)
+
+
+# @pt.id KIT-ADAPTER-opencode-path-mapping
+# @pt.item Allowed paths map to opencode edit patterns
+# @pt.condition directories, directory globs, exact files and prefix-less globs
+# @pt.expected dir and glob-under-dir become <prefix>/*, exact files stay exact, prefix-less globs and unsafe rules are refused
+# @pt.target bridge.executor.opencode_edit_patterns
+# @pt.method unit
+# @pt.legacy none
+def test_opencode_path_mapping(repo):
+    from bridge.executor import opencode_edit_patterns as m
+    (repo / "docs").mkdir()
+    assert m(["src/**", "src/*", "src/**/*.py", "docs/*.md", "docs", "README.md",
+              "src/app.py"], repo) == ["src/*", "docs/*", "README.md", "src/app.py"]
+    for bad in ("*.md", "**", "**/x"):
+        with pytest.raises(ValueError, match=r"directory-anchored.*"):
+            m(["src/**", bad], repo)
+    with pytest.raises(ValueError, match="not expressible"):
+        m(["a b/**"], repo)
+
+
+# @pt.id KIT-ADAPTER-opencode-refusals
+# @pt.item A writing opencode run is refused before start for symlinks and protected files
+# @pt.condition a symlink under an allowed directory, an exact allowed path that is a symlink, an ignored .env under an allowed directory, an unanchored pattern
+# @pt.expected ValueError naming the file; the fake CLI is never started
+# @pt.target bridge.executor.OpenCodeAdapter.build
+# @pt.method integration
+# @pt.legacy none
+def test_opencode_write_refusals(repo, tmp_path, fake_others):
+    from bridge.executor import OpenCodeAdapter
+    adapter = OpenCodeAdapter(BridgeConfig(), repo)
+    (repo / "src").mkdir(exist_ok=True)
+    (repo / "src" / "link").symlink_to("../README.md")
+    with pytest.raises(ValueError, match=r"symlink src/link"):
+        run(adapter.run(_oc_request()))
+    (repo / "src" / "link").unlink()
+    (repo / "top").symlink_to("src")
+    with pytest.raises(ValueError, match=r"symlink top"):
+        run(adapter.run(_oc_request(write_paths=["top/x.py"])))
+    (repo / "top").unlink()
+    (repo / "src" / ".env").write_text("SECRET=1\n")
+    with pytest.raises(ValueError, match=r"file src/\.env"):
+        run(adapter.run(_oc_request(deny_paths=["**/.env"])))
+    (repo / "src" / ".env").unlink()
+    with pytest.raises(ValueError, match="directory-anchored"):
+        run(adapter.run(_oc_request(write_paths=["*.md"])))
+    assert not (fake_others / "opencode" / "calls").exists()
+
+
+# @pt.id KIT-ADAPTER-opencode-write-prompt
+# @pt.item The writing prompt states the limits
+# @pt.condition a writing request for src/** and docs/a.md
+# @pt.expected the prompt says no shell, delete or rename, lists the patterns and tells the agent to report what it could not check; the schema is still appended
+# @pt.target bridge.executor.OpenCodeAdapter.stdin
+# @pt.method unit
+# @pt.legacy none
+def test_opencode_write_prompt(repo, tmp_path):
+    adapter, req, _ = _oc_build(repo, tmp_path, write_paths=["src/**", "docs/a.md"])
+    text = adapter.stdin(req)
+    assert text.startswith("EXECUTOR") and "no shell" in text and "delete or rename" in text
+    assert "src/*, docs/a.md" in text and "could not check" in text and '"status"' in text
+
+
+# @pt.id KIT-FLOW-opencode-executor
+# @pt.item An opencode executor task reaches verification with its change in scope
+# @pt.condition fake opencode writes src/app.py when its edit allowlist matches; the task allows src/**
+# @pt.expected the task is DONE after verification; the run's config carried the edit allow for src/*
+# @pt.target bridge.executor.OpenCodeAdapter, Bridge.execute_task
+# @pt.method integration
+# @pt.legacy none
+def test_opencode_executor_flow(make_orch, fake_others, monkeypatch):
+    monkeypatch.setenv("FAKE_OPENCODE_WRITE", "src/app.py=x = 2\n")
+    b = make_orch(OC_WRITER)
+    tid = run(b.create_task(spec()))["task_id"]
+    assert run(b.execute_task(tid, wait=True))["state"] == "DONE"
+    call, = log(fake_others / "opencode")
+    config = json.loads(call["config"])
+    assert {"action": "edit", "resource": "src/*", "effect": "allow"} in config["permissions"]
+    assert "no shell" in call["prompt"]
+    assert (b.root / "src" / "app.py").read_text() == "x = 2\n"
+
+
+# @pt.id KIT-ADAPTER-opencode-agy-hardlink
+# @pt.item A writing run is refused for a hardlinked file under an allowed directory or at an allowed exact path
+# @pt.condition src/linked is a second name of an inode (os.link), once under src/** and once as an exact allowed path; opencode and agy
+# @pt.expected ValueError naming the file for both adapters; the fake CLI is never started
+# @pt.target bridge.executor._write_preflight
+# @pt.method integration
+# @pt.legacy none
+@pytest.mark.parametrize("which", ["opencode", "agy"])
+def test_write_refuses_hardlinks(repo, fake_others, which):
+    import os
+
+    from bridge.executor import AgyAdapter, OpenCodeAdapter
+    adapter = (OpenCodeAdapter if which == "opencode" else AgyAdapter)(BridgeConfig(), repo)
+    make = _oc_request if which == "opencode" else _agy_write_request
+    (repo / "src").mkdir(exist_ok=True)
+    (repo / "secret.txt").write_text("x")
+    os.link(repo / "secret.txt", repo / "src" / "linked")
+    with pytest.raises(ValueError, match=r"hardlinked file src/linked"):
+        run(adapter.run(make()))
+    with pytest.raises(ValueError, match=r"src/linked is a hardlink"):
+        run(adapter.run(make(write_paths=["src/linked"])))
+    assert not (fake_others / which / "calls").exists()
+
+
+AGY_WRITER = """
+version: 1
+accounts:
+  gm: {provider: google}
+agents:
+  agy: {adapter: agy-cli, account: gm, allow_write: true}
+roles: {executor: agy}
+workflow: {stages: [execute, test]}
+"""
+
+
+def _agy_write_request(**over):
+    base = {"prompt": "EXECUTOR", "sandbox": "workspace-write", "write_paths": ["src/**"],
+            "deny_paths": [".env", ".git/**"]}
+    return _agy_request(**{**base, **over})
+
+
+def _agy_settings(argv):
+    return json.loads(argv[argv.index("--settings") + 1])
+
+
+# @pt.id KIT-CFG-agy-executor
+# @pt.item An agy agent with allow_write is an executor; without it, and cursor with it, are not
+# @pt.condition agy-cli with allow_write as executor; agy-cli without it; cursor-cli with it
+# @pt.expected agy validates and can write; agy without allow_write cannot; cursor is still refused
+# @pt.target bridge.orchestrator.AgentConfig
+# @pt.method unit
+# @pt.legacy agy was read-only
+def test_agy_executor_config():
+    from bridge.orchestrator import AgentConfig
+    orch = parse(AGY_WRITER)
+    assert orch.agents["agy"].can("write") and orch.agents["agy"].writes
+    assert not AgentConfig(adapter="agy-cli", account="gm").can("write")
+    with pytest.raises(ValueError, match="needs 'write'"):
+        parse(AGY_WRITER.replace(", allow_write: true", ""))
+    text = AGY_WRITER.replace("agy-cli", "cursor-cli").replace("google", "cursor")
+    with pytest.raises(ValueError, match="read-only"):
+        parse(text)
+
+
+# @pt.id KIT-ADAPTER-agy-write-settings
+# @pt.item A writing agy run gets write_file allows and no write_file deny; a read-only run keeps the deny settings
+# @pt.condition build() for a workspace-write request (src/**, README.md, docs dir) and a read-only one
+# @pt.expected both modes pin agentMode="" (Default); writing: request-review, allow write_file(src/), write_file(README.md), write_file(docs/); deny exactly command(*) and mcp(*); no --mode; read-only: exactly _AGY_SETTINGS
+# @pt.target bridge.executor.AgyAdapter.build, bridge.executor.agy_write_rules
+# @pt.method integration
+# @pt.legacy none
+def test_agy_write_settings(repo, tmp_path):
+    from bridge.executor import _AGY_SETTINGS, AgyAdapter
+    (repo / "docs").mkdir()
+    adapter = AgyAdapter(BridgeConfig(), repo)
+    argv = adapter.build(_agy_write_request(write_paths=["src/**", "README.md", "docs"]), tmp_path)
+    assert _agy_settings(argv) == {"toolPermission": "request-review", "agentMode": "", "permissions": {
+        "allow": ["write_file(src/)", "write_file(README.md)", "write_file(docs/)"],
+        "deny": ["command(*)", "mcp(*)"]}}
+    assert "--mode" not in argv
+    argv = adapter.build(_agy_request(), tmp_path)
+    assert _agy_settings(argv) == _AGY_SETTINGS and "write_file(*)" in _AGY_SETTINGS["permissions"]["deny"]
+    assert _AGY_SETTINGS["agentMode"] == ""
+    for bad in ("*.md", "**"):
+        with pytest.raises(ValueError, match="directory-anchored"):
+            adapter.build(_agy_write_request(write_paths=[bad]), tmp_path)
+
+
+# @pt.id KIT-ADAPTER-agy-write-refusals
+# @pt.item A writing agy run is refused for symlinks, protected files and .agents hooks
+# @pt.condition a symlink and an ignored .env under src/, then .agents/hooks.json
+# @pt.expected ValueError naming the file; the fake CLI is never started; a read-only run ignores the preflight
+# @pt.target bridge.executor.AgyAdapter.build
+# @pt.method integration
+# @pt.legacy none
+def test_agy_write_refusals(repo, fake_others):
+    from bridge.executor import AgyAdapter
+    adapter = AgyAdapter(BridgeConfig(), repo)
+    (repo / "src").mkdir(exist_ok=True)
+    (repo / "src" / "link").symlink_to("../README.md")
+    with pytest.raises(ValueError, match=r"symlink src/link"):
+        run(adapter.run(_agy_write_request()))
+    assert run(adapter.run(_agy_request())).outcome == "ok"
+    (repo / "src" / "link").unlink()
+    (repo / "src" / ".env").write_text("SECRET=1\n")
+    with pytest.raises(ValueError, match=r"file src/\.env"):
+        run(adapter.run(_agy_write_request(deny_paths=["**/.env"])))
+    (repo / "src" / ".env").unlink()
+    (repo / ".agents").mkdir()
+    (repo / ".agents" / "hooks.json").write_text("{}")
+    with pytest.raises(ValueError, match="hooks.json"):
+        run(adapter.run(_agy_write_request()))
+
+
+# @pt.id KIT-ADAPTER-agy-write-prompt
+# @pt.item The writing agy prompt states the limits
+# @pt.condition a writing request for src/** and docs/a.md; a read-only one
+# @pt.expected the prompt says no shell, delete or rename, lists the paths, says an outside write ends the turn and asks to report untested checks; the read-only prompt is unchanged
+# @pt.target bridge.executor.AgyAdapter.stdin
+# @pt.method unit
+# @pt.legacy none
+def test_agy_write_prompt(repo):
+    from bridge.executor import AgyAdapter
+    adapter = AgyAdapter(BridgeConfig(), repo)
+    text = json.loads(adapter.stdin(_agy_write_request(write_paths=["src/**", "docs/a.md"])))
+    content = text["message"]["content"]
+    assert content.startswith("EXECUTOR") and "no shell" in content and "delete or rename" in content
+    assert "src/ (any depth), docs/a.md" in content and "ends your turn" in content
+    assert "could not check" in content
+    assert json.loads(adapter.stdin(_agy_request()))["message"]["content"] == "PLANNER"
+
+
+# @pt.id KIT-ADAPTER-agy-resumed-stale-output
+# @pt.item A resumed agy turn takes its answer only from the response text
+# @pt.condition the fake answers in prose while keeping a structured_output, with and without a session_id; and answers JSON on a resumed turn
+# @pt.expected without session_id the structured output is used; resumed with prose the turn fails naming the missing fresh JSON answer; resumed with JSON it succeeds and the prompt asks for one JSON object
+# @pt.target bridge.executor.AgyAdapter.handle, bridge.executor.AgyAdapter.stdin
+# @pt.method integration
+# @pt.legacy a resumed turn returned the previous turn's structured_output
+def test_agy_resumed_turn_needs_fresh_json(repo, fake_others, monkeypatch):
+    from bridge.executor import AgyAdapter
+    adapter = AgyAdapter(BridgeConfig(), repo)
+    monkeypatch.setenv("FAKE_AGY_PROSE", "1")
+    assert run(adapter.run(_agy_request())).outcome == "ok"
+    res = run(adapter.run(_agy_request(session_id="conv-1")))
+    assert res.outcome != "ok" and res.final is None
+    assert "no fresh JSON answer" in (res.error or "")
+    monkeypatch.delenv("FAKE_AGY_PROSE")
+    res = run(adapter.run(_agy_request(session_id="conv-1")))
+    assert res.outcome == "ok" and res.final is not None
+    assert "exactly one JSON object" in log(fake_others / "agy")[-1]["stdin"]
+    assert "exactly one JSON object" not in log(fake_others / "agy")[0]["stdin"]
+
+
+# @pt.id KIT-FLOW-agy-executor
+# @pt.item An agy executor task reaches verification with its change in scope
+# @pt.condition fake agy defaults to Auto (all workspace writes); Default requires allows; attempts src/app.py and src-evil/x.py; task allows src/**
+# @pt.expected the task is DONE after verification; the run's settings pin agentMode="" (Default), with write_file(src/) and no write_file deny; the file outside the allow is not written
+# @pt.target bridge.executor.AgyAdapter, Bridge.execute_task
+# @pt.method integration
+# @pt.legacy none
+def test_agy_executor_flow(make_orch, fake_others, monkeypatch):
+    monkeypatch.setenv("FAKE_AGY_WRITE", "src/app.py=x = 2\n;src-evil/x.py=bad\n")
+    b = make_orch(AGY_WRITER)
+    tid = run(b.create_task(spec()))["task_id"]
+    assert run(b.execute_task(tid, wait=True))["state"] == "DONE"
+    call, = log(fake_others / "agy")
+    settings = _agy_settings(call["argv"])
+    assert settings["agentMode"] == ""
+    assert settings["permissions"]["allow"] == ["write_file(src/)"]
+    assert "write_file(*)" not in settings["permissions"]["deny"]
+    assert "no shell" in call["stdin"]
+    assert (b.root / "src" / "app.py").read_text() == "x = 2\n"
+    assert not (b.root / "src-evil").exists()

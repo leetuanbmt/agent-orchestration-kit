@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from . import install, orchestrator
-from .accounts import (KEYCHAIN_SERVICE, account_env, global_auth_fingerprint,
+from .accounts import (GLOBAL_ONLY_PROVIDERS, KEYCHAIN_SERVICE, account_env, global_auth_fingerprint,
                        global_claude_identity, global_login_marker, keychain, keychain_account,
                        load_registry, login_argv, login_status,
                        pick_account, register, resolve_profile, shell_use, unregister)
@@ -59,9 +59,8 @@ HUMAN_ACCOUNT_CMDS = {"account-login", "account-add", "account-remove", "account
                       "project-account-add", "project-account-remove",
                       "project-agent-add", "project-agent-remove",
                       "project-account-limits", "config-set", "config-unset"}
-# Adapter per provider for `project-account-add`; google and opencode only plan and review.
-_PROVIDER_ADAPTER = {"openai": "codex-cli", "anthropic": "claude-cli", "google": "agy-cli",
-                     "opencode": "opencode-cli"}
+# Adapter per provider for `project-account-add`; google, opencode and cursor only plan and review unless the agent opts in (opencode, google).
+_PROVIDER_ADAPTER = orchestrator.PROVIDER_ADAPTER
 EXAMPLES = install.KIT / "examples"
 
 
@@ -461,7 +460,7 @@ def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
         if provider is None:
             raise ValueError("give --provider (or --login to use a machine registry login)")
         home = Path(args.home).expanduser() if args.home else None
-        if home is None and provider != "opencode":
+        if home is None and provider not in GLOBAL_ONLY_PROVIDERS:
             home = registry_dir() / "homes" / args.name  # a fresh login home, like account-add
         account = {"provider": provider}
         if home is not None:
@@ -477,7 +476,7 @@ def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
         account["limits"] = limits
     adapter = _PROVIDER_ADAPTER[provider]
     spec: dict[str, Any] = {"adapter": adapter, "account": args.name}
-    if adapter not in orchestrator.READ_ONLY_ADAPTERS:
+    if adapter not in (orchestrator.READ_ONLY_ADAPTERS | orchestrator.OPT_IN_WRITE_ADAPTERS):
         spec["allow_write"] = True
     if args.model:
         spec["model"] = args.model
@@ -558,7 +557,7 @@ def _project_agent_add(args: argparse.Namespace) -> dict[str, Any]:
                                  "project-account-add`)")
             adapter = _PROVIDER_ADAPTER[profile.provider]
             spec: dict[str, Any] = {"adapter": adapter, "account": args.account}
-            if adapter not in orchestrator.READ_ONLY_ADAPTERS:
+            if adapter not in (orchestrator.READ_ONLY_ADAPTERS | orchestrator.OPT_IN_WRITE_ADAPTERS):
                 spec["allow_write"] = True
         else:
             adapter, spec = "client", {"adapter": "client"}
@@ -907,7 +906,7 @@ async def _run(args: argparse.Namespace) -> Any:
                 return None
             print(shell_use(acc))
             return None
-        if acc.home is None and acc.provider != "opencode":
+        if acc.home is None and acc.provider not in GLOBAL_ONLY_PROVIDERS:
             raise ValueError("account-login requires a configured named account (with its own "
                              "home)")
         return _login(cfg, acc, args.device_auth, getattr(args, "with_api_key", False))
@@ -1040,7 +1039,7 @@ def main(argv: list[str] | None = None) -> None:
                                              "log in (fresh login in its own home)")
     add.add_argument("name")
     add.add_argument("--provider", required=True,
-                     choices=["openai", "anthropic", "google", "opencode"])
+                     choices=list(_PROVIDER_ADAPTER))
     add.add_argument("--home", help="register an existing isolated home (e.g. a codex-switch "
                                     "home) instead of creating one")
     add.add_argument("--device-auth", action="store_true")

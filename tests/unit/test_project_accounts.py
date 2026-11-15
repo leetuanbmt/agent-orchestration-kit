@@ -254,3 +254,16 @@ def test_project_account_commands_need_terminal(tmp_path):
         out = subprocess.run([exe, *argv], cwd=tmp_path, capture_output=True, text=True,
                              stdin=subprocess.DEVNULL)
         assert out.returncode == 2 and "human only" in out.stderr, argv
+
+
+# @pt.id KIT-PROJ-ACCT-001-opt-in-writers
+# @pt.item project-account-add never sets allow_write for opencode or agy
+# @pt.condition add a google and an opencode account
+# @pt.expected the pasted agent stanza has no allow_write (the human opts in); a claude account's does
+# @pt.target bridge.cli._project_account_add, bridge.orchestrator.OPT_IN_WRITE_ADAPTERS
+# @pt.method unit
+# @pt.legacy none
+def test_opt_in_writers_get_no_allow_write(project):
+    assert "allow_write" not in add("gg", provider="google")["paste"]["agents"]
+    assert "allow_write" not in add("oo", provider="opencode")["paste"]["agents"]
+    assert "allow_write" in add("cc", provider="anthropic")["paste"]["agents"]

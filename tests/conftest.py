@@ -77,12 +77,13 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_codex: Pat
 
 @pytest.fixture
 def fake_others(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_codex: Path) -> Path:
-    """Fake opencode and agy (on PATH through fake_codex); agy is logged in under $HOME."""
-    for name in ("opencode", "agy"):
+    """Fake opencode, cursor-agent and agy (on PATH through fake_codex); agy is logged in under $HOME."""
+    for name in ("opencode", "cursor-agent", "agy"):
         exe = FAKES / name
         exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     state = tmp_path / "fake_others"
     monkeypatch.setenv("FAKE_OPENCODE_DIR", str(state / "opencode"))
+    monkeypatch.setenv("FAKE_CURSOR_DIR", str(state / "cursor"))
     monkeypatch.setenv("FAKE_AGY_DIR", str(state / "agy"))
     token = Path(os.environ["HOME"]) / ".gemini/antigravity-cli/antigravity-oauth-token"
     token.parent.mkdir(parents=True, exist_ok=True)

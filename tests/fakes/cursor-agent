@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Deterministic stand-in for `cursor-agent -p --output-format stream-json` (cursor-agent 2026.11.11).
+
+Events: system/init (session_id), thinking deltas, assistant (one per message; the last holds the
+answer), tool_call, result (`result` is every assistant text concatenated, no separator).
+The prompt is read from stdin; the schema in it decides which object is answered.
+
+FAKE_CURSOR_SCENARIO: comma-separated per invocation (last repeats): ok | multi | early | error | crash
+FAKE_CURSOR_DECISION: "decision:notes" for reviewer runs (default "approve:looks good").
+FAKE_CURSOR_LOGGED_OUT: when set, `status --format json` reports isAuthenticated false.
+FAKE_CURSOR_DIR:       scratch dir for the call counter and argv/prompt log; `status` logs whether
+                       CURSOR_API_KEY reached it in status.jsonl there.
+Scenario `early`: the answer comes first and a prose message ("Done.") last.
+"""
+
+import json
+import os
+import sys
+import uuid
+from pathlib import Path
+
+argv = sys.argv[1:]
+if argv[:1] == ["--version"]:
+    print("2026.11.11")
+    sys.exit(0)
+if argv[:3] == ["status", "--format", "json"]:
+    if os.environ.get("FAKE_CURSOR_DIR"):
+        _dir = Path(os.environ["FAKE_CURSOR_DIR"])
+        _dir.mkdir(parents=True, exist_ok=True)
+        with (_dir / "status.jsonl").open("a") as f:
+            f.write(json.dumps({"cursor_api_key": os.environ.get("CURSOR_API_KEY")}) + "\n")
+    print(json.dumps({"isAuthenticated": not os.environ.get("FAKE_CURSOR_LOGGED_OUT"),
+                      "email": "someone@example.invalid"}))
+    sys.exit(0)
+
+state = Path(os.environ["FAKE_CURSOR_DIR"])
+state.mkdir(parents=True, exist_ok=True)
+counter = state / "calls"
+n = int(counter.read_text()) if counter.exists() else 0
+counter.write_text(str(n + 1))
+scenarios = os.environ.get("FAKE_CURSOR_SCENARIO", "ok").split(",")
+scenario = scenarios[min(n, len(scenarios) - 1)]
+prompt = sys.stdin.read()
+with (state / "log.jsonl").open("a") as f:
+    f.write(json.dumps({"argv": argv, "prompt": prompt, "cwd": os.getcwd(),
+                        "agent_env": os.environ.get("AGENT_BRIDGE_AGENT"),
+                        "config_dir": os.environ.get("CURSOR_CONFIG_DIR")}) + "\n")
+
+session = argv[argv.index("--resume") + 1] if "--resume" in argv else str(uuid.uuid4())
+
+
+def emit(**event):
+    print(json.dumps({**event, "session_id": session}), flush=True)
+
+
+def assistant(text):
+    emit(type="assistant", message={"role": "assistant", "content": [{"type": "text", "text": text}]})
+
+
+emit(type="system", subtype="init", model="Auto")
+emit(type="thinking", subtype="delta", text="hmm")
+if scenario == "crash":
+    print("fatal: fake crash", file=sys.stderr)
+    sys.exit(2)
+if scenario == "error":
+    emit(type="result", subtype="error", is_error=True, result="Usage limit reached")
+    sys.exit(1)
+
+if '"decision"' in prompt:
+    decision, _, notes = os.environ.get("FAKE_CURSOR_DECISION", "approve:looks good").partition(":")
+    out = {"decision": decision, "notes": notes}
+elif '"tasks"' in prompt:
+    out = {"tasks": [{"objective": "Set x to 2 in src/app.py", "context": "", "scope": "",
+                      "allowed_paths": ["src/**"], "excluded_paths": [],
+                      "acceptance_criteria": ["src/app.py contains x = 2"],
+                      "verification_commands": [], "depends_on": [], "risk_level": "low"}],
+           "notes": "fake cursor plan"}
+else:
+    out = {"status": "completed", "summary": "fake cursor", "files_changed": [],
+           "tests_run": [], "notes": ""}
+texts = []
+if scenario == "multi":
+    texts.append("Reading seed.txt.")
+    emit(type="tool_call", subtype="started", tool_call={"readToolCall": {"args": {"path": "seed.txt"}}})
+    assistant(texts[-1])
+    emit(type="tool_call", subtype="completed", tool_call={"readToolCall": {"args": {"path": "seed.txt"}}})
+texts.append(json.dumps(out))
+assistant(texts[-1])
+if scenario == "early":
+    texts.append("Done.")
+    assistant(texts[-1])
+emit(type="result", subtype="success", is_error=False, result="".join(texts),
+     usage={"inputTokens": 1, "outputTokens": 1, "cacheReadTokens": 1, "cacheWriteTokens": 0,
+            "reasoningTokens": 1})

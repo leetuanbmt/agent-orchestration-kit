@@ -301,8 +301,8 @@ set a key under it.
 - **`strategy`.** `ordered` is the order above. `quota` picks the agent whose account has the
   most quota left. `explicit` requires every task to name its agent.
 - **Write access.** Only `codex-cli` and `claude-cli` can execute. `codex-cli` writes by
-  default; `claude-cli` needs `allow_write: true`. `opencode-cli` and `agy-cli` only plan and
-  review.
+  default; `claude-cli` needs `allow_write: true`. `opencode-cli`, `cursor-cli` and `agy-cli` only
+  plan and review.
 - **Stages.** `plan` (planner agent), `execute`, `test` (the bridge re-runs the checks) and
   `review`. Without `review`, the bridge approves work that passed every check. High-risk work
   still waits for a human.
