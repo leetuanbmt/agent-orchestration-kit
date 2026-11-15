@@ -117,3 +117,24 @@ def test_concurrent_register(tmp_path):
         list(pool.map(add, names))
     assert set(accounts.load_registry()) == set(names)
     assert not list(registry.registry_dir().glob("accounts.json.*tmp"))
+
+
+# @pt.id KIT-CFG-REGHOME-006
+# @pt.item Leftover registry home refused
+# @pt.condition homes/<name> exists and no registry account owns it
+# @pt.expected register raises ValueError naming the directory; registry and directory unchanged; --home path works
+# @pt.target bridge.accounts.register
+# @pt.method unit
+# @pt.legacy None
+def test_register_leftover_home_is_value_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_BRIDGE_HOME", str(tmp_path / "bh"))
+    path = registry.registry_dir() / "homes" / "left"
+    path.mkdir(parents=True)
+    (path / "auth.json").write_text("login")
+    with pytest.raises(ValueError) as err:
+        accounts.register("left", "openai")
+    assert str(path) in str(err.value) and "--home" in str(err.value)
+    assert not (registry.registry_dir() / "accounts.json").exists()
+    assert [p.name for p in path.iterdir()] == ["auth.json"]
+    assert (path / "auth.json").read_text() == "login"
+    assert accounts.register("left", "openai", str(path)).home == path.resolve()
