@@ -319,7 +319,13 @@ def _register(name: str, provider: str, home: str | None) -> Account:
         return Account(key, None, provider)
     if home is None:
         path = registry_dir() / "homes" / key
-        path.mkdir(mode=0o700, parents=True, exist_ok=False)
+        try:
+            path.mkdir(mode=0o700, parents=True, exist_ok=False)
+        except FileExistsError:
+            raise ValueError(
+                f"{path} already exists but no registry account owns it; rerun "
+                f"`agent-bridge account-add --provider {provider} --home {path} {name}` "
+                "to keep the login in it, or remove the directory for a fresh one") from None
         if provider == "openai":
             # Interactive `codex` started with this CODEX_HOME must find the file-stored login.
             (path / "config.toml").write_text('cli_auth_credentials_store = "file"\n')
