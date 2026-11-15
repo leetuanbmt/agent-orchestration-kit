@@ -117,7 +117,8 @@ LISTING = {
 
 
 def _text(renderable, width):
-    console = Console(width=width, record=True, file=io.StringIO())
+    # height too: with TERM=dumb Rich ignores a width given alone
+    console = Console(width=width, height=25, record=True, file=io.StringIO())
     console.print(renderable)
     return console.export_text()
 
@@ -139,6 +140,60 @@ def test_accounts_compact():
     wide = _text(accounts_view(LISTING, width=160, show_all=True), 160)
     assert all(s in wide for s in ("Home", "/h/work", "old", "me", "not added", "no account"))
     assert "5h 78% left" in wide and "more not usable" not in wide
+
+
+def _table_lines(text):
+    # command hints are raw (never wrapped, so they can be copied); only the table must fit
+    return [ln for ln in text.splitlines() if ln[:1] in "┏┃┡│└"]
+
+
+def _task(tid, state, agent="codex"):
+    return {"task_id": tid, "state": state, "agent": agent, "attempts": 1, "max_attempts": 3,
+            "updated_at": 0, "objective": "Make the very long objective line fit " * 4,
+            "failure": None, "review_pending": False, "needs_human_approval": False}
+
+
+# @pt.id KIT-CLI-VIEW-006-tables-compact
+# @pt.item list, tasks, health and agents drop secondary columns on a narrow terminal
+# @pt.condition sample tasks, projects, health and agents data rendered at width 60 and at 160
+# @pt.expected narrow output keeps the attention mark, Task, State and Objective, drops Agent, Tries, Updated, Adapter Path and the wide agent columns, and no line exceeds 60 columns; wide output keeps every column
+# @pt.target bridge.render.tasks_view, bridge.render.projects_view, bridge.render.health_view, bridge.render.agents_view
+# @pt.method unit
+# @pt.legacy none
+def test_tables_compact():
+    from bridge.render import agents_view, health_view, projects_view, tasks_view
+    tasks = [_task("T0001", "REVIEW"), _task("T0002", "RUNNING"), _task("T0003", "DONE")]
+    narrow = _text(tasks_view(tasks, now=100, project="/some/project", width=60), 60)
+    assert _table_lines(narrow) and all(len(line) <= 60 for line in _table_lines(narrow))
+    assert all(s in narrow for s in ("Task", "State", "Objective", "T0001", "REVIEW", "●"))
+    assert not any(s in narrow for s in ("Agent", "Tries", "Updated", "codex"))
+    wide = _text(tasks_view(tasks, now=100, width=160), 160)
+    assert all(s in wide for s in ("Agent", "Tries", "Updated", "codex", "1/3"))
+
+    data = {"projects": [{"project": "p", "root": "/r", "counts": {"REVIEW": 1},
+                          "tasks": tasks[:1]}]}
+    narrow = _text(projects_view(data, now=100, width=60), 60)
+    assert _table_lines(narrow) and all(len(line) <= 60 for line in _table_lines(narrow))
+    assert "Task" in narrow and "Objective" in narrow and "●" in narrow
+    assert "Agent" not in narrow and "Updated" not in narrow
+    wide = _text(projects_view(data, now=100, width=160), 160)
+    assert "Agent" in wide and "Updated" in wide
+
+    health = {"ok": True, "project_root": "/r", "sandbox": "on",
+              "orchestrator": {"source": "default", "stages": ["a"]},
+              "adapters": {"codex": {"path": "/usr/local/bin/codex", "version": "1.2"}},
+              "quota": {}, "task_counts": {}, "active_tasks": []}
+    assert "Path" not in _text(health_view(health, width=60), 60)
+    assert "/usr/local/bin/codex" in _text(health_view(health, width=160), 160)
+
+    agents = {"source": "default", "stages": ["a"], "roles": {},
+              "quota_fallback": {"enabled": False},
+              "agents": [{"agent": "codex", "adapter": "codex", "account": "work",
+                          "model": "m", "roles": ["executor"], "read": True, "write": True,
+                          "allow_bash": False, "available": True, "unavailable_reason": None}]}
+    narrow = _text(agents_view(agents, width=60), 60)
+    assert "Adapter" not in narrow and "Model" not in narrow and "Status" in narrow
+    assert "Adapter" in _text(agents_view(agents, width=160), 160)
 
 
 # @pt.id KIT-CLI-VIEW-003-ago

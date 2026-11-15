@@ -59,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   meaningful progress events on stderr.
 
 ### Changed
+- `agent-bridge list`, `tasks`, `health` and `agents` tables now fit narrow terminals (under 120 columns): secondary columns (Agent, Tries, Updated, adapter path, model, roles) are dropped while the attention mark, Task, State and Objective stay. `--json` is unchanged.
 - `agent-bridge init` now takes the installed deny list from `templates/claude-settings.json`, so the kit repository's own `.claude/settings.json` no longer changes what projects get.
 - The MCP server reloads `.ai/config.json`, `.ai/orchestrator.yaml`, `.ai/accounts.yaml` and the machine account registry on its next tool call instead of needing a `/mcp` reconnect. It defers while one of its own tasks runs, and an invalid edit keeps the previous settings and shows as `config_reload_failed` in `health`.
 - `config-check`, `config-migrate` and `project-account-add` print a readable view in a terminal (moves, proposed files, the line to paste, next commands) instead of raw JSON. `--json`, or output that is not a terminal, still prints the same JSON.
