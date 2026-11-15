@@ -1,4 +1,5 @@
 {
   "verify_sandbox": "auto",
-  "verify_writable": ["~/.cache/uv"]
+  "verify_writable": ["~/.cache/uv"],
+  "verify_timeout_s": 2400
 }
