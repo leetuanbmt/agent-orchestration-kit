@@ -8,7 +8,7 @@ import subprocess
 from bridge import review
 from bridge.models import State
 from bridge.review import diff, snapshot
-from tests.conftest import run, spec
+from tests.conftest import git, run, spec
 
 
 def _blob(repo, rel: str) -> str:
@@ -24,26 +24,33 @@ def _stored(repo, sha: str) -> bool:
 
 # @pt.id KIT-REV-SNAP-001
 # @pt.item The review snapshot skips cache directories and untracked files over the size cap
-# @pt.condition after the baseline, untracked .codex-tmp/gocache/ab/x-d, untracked big.bin over the cap and untracked src/new.py appear
-# @pt.expected no blob of the cache file or big.bin exists in the object store; src/new.py is in the patch; all three are in changes.files
+# @pt.condition after the baseline, untracked .codex-tmp/gocache/ab/x-d, untracked big.bin over the cap and untracked src/new.py appear, and tracked .cache/keep.txt changes
+# @pt.expected no blob of the cache file or big.bin exists in the object store; both are in changes.files and patch_omitted_files with patch_truncated set; src/new.py and .cache/keep.txt are in the patch
 # @pt.target bridge.review._worktree_tree, bridge.review.diff
 # @pt.method integration
 # @pt.legacy 2026-11-17: harness-vibecode/.git held ~17 GB of unreachable Codex GOCACHE blobs
 def test_snapshot_skips_caches_and_big_untracked(repo, monkeypatch):
     monkeypatch.setattr(review, "UNTRACKED_TREE_CAP", 1024, raising=False)
+    (repo / ".cache").mkdir()
+    (repo / ".cache" / "keep.txt").write_text("old\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "tracked file in a cache dir")
     before = snapshot(repo, [])
     cache = repo / ".codex-tmp" / "gocache" / "ab"
     cache.mkdir(parents=True)
     (cache / "x-d").write_bytes(os.urandom(64))
     (repo / "big.bin").write_bytes(os.urandom(4096))
     (repo / "src" / "new.py").write_text("y = 1\n")
+    (repo / ".cache" / "keep.txt").write_text("new\n")
     skipped = [_blob(repo, ".codex-tmp/gocache/ab/x-d"), _blob(repo, "big.bin")]
 
     changes = diff(repo, before, [])
 
     assert [s for s in skipped if _stored(repo, s)] == []
-    assert "src/new.py" in changes["patch"]
+    assert "src/new.py" in changes["patch"] and ".cache/keep.txt" in changes["patch"]
     assert {".codex-tmp/gocache/ab/x-d", "big.bin", "src/new.py"} <= set(changes["files"])
+    assert changes["patch_omitted_files"] == [".codex-tmp/gocache/ab/x-d", "big.bin"]
+    assert changes["patch_truncated"]
 
 
 # @pt.id KIT-REV-SNAP-002
