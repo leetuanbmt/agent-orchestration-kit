@@ -54,16 +54,39 @@ def _git(root: Path, *args: str, env: dict[str, str] | None = None,
     return out.stdout.decode(errors="replace")
 
 
+# Scratch and cache directories agents and tools write inside the worktree (Codex puts GOCACHE in
+# .codex-tmp). `git add` would store every file in them as a blob that nothing references.
+TREE_SKIP_DIRS = (".codex-tmp", ".cache", "__pycache__", ".pytest_cache", ".pytest_tmp",
+                  ".mypy_cache", ".ruff_cache", "node_modules/.cache")
+# Untracked files larger than this stay out of the snapshot tree: the patch could not show them.
+UNTRACKED_TREE_CAP = 5 << 20
+
+
 def _worktree_tree(root: Path) -> str | None:
-    """Tree object of the whole working tree (tracked + untracked, .gitignore respected),
-    built in a throwaway index so the real index and history are untouched."""
+    """Tree object of the working tree (tracked + untracked, .gitignore respected), built in a
+    throwaway index so the real index and history are untouched. It feeds only the stat and the
+    patch: TREE_SKIP_DIRS and untracked files over UNTRACKED_TREE_CAP are left out, so their
+    blobs never reach the object store. `changes.files` and the scope check come from git status
+    and sha256 hashes, so they still list those paths.
+
+    ponytail: a tracked file inside a skipped directory drops out of the patch too.
+    """
     real = Path(_git(root, "rev-parse", "--path-format=absolute", "--git-path", "index").strip())
+    big = []
+    for f in untracked(root):
+        with contextlib.suppress(OSError):
+            if os.lstat(root / f).st_size > UNTRACKED_TREE_CAP:
+                big.append(f)
+    specs = [":/", *(f":(exclude,glob)**/{d}/**" for d in TREE_SKIP_DIRS),
+             *(f":(exclude,literal){f}" for f in big)]
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d) / "index"
         if real.is_file():
             shutil.copyfile(real, tmp)  # reuse stat cache: only touched files get rehashed
+        (Path(d) / "pathspec").write_text("\0".join(specs))
         env = {"GIT_INDEX_FILE": str(tmp)}
-        _git(root, "add", "-A", env=env)
+        _git(root, "add", "-A", f"--pathspec-from-file={Path(d) / 'pathspec'}",
+             "--pathspec-file-nul", env=env)
         return _git(root, "write-tree", env=env).strip() or None
 
 

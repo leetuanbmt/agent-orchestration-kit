@@ -40,7 +40,8 @@ human CLI ────────────▶ bridge/cli.py ────┴�
   `(from, to, actor)` with actor ∈ {bridge, claude, human}; terminal states have no exits.
 - A run: snapshot the worktree → `codex exec` in its own process group → parse JSONL and the
   schema-bound final message → diff against the snapshot (throwaway git index, so untracked files
-  count) → scope check → bridge re-runs the verification commands → `REVIEW` or `REWORK`.
+  count; cache directories and untracked files over 5 MiB stay out of the patch but not out of
+  the changed-file list) → scope check → bridge re-runs the verification commands → `REVIEW` or `REWORK`.
 - Rework and resume continue the same Codex session on the same account.
 - Dependencies: a task waits in `BACKLOG` until its `depends_on` tasks are `DONE`.
 
