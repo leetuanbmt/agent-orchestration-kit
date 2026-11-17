@@ -84,7 +84,8 @@ def _worktree_tree(root: Path) -> str | None:
         env = {"GIT_INDEX_FILE": str(tmp)}
         _git(root, "add", "-A", f"--pathspec-from-file={Path(d) / 'pathspec'}",
              "--pathspec-file-nul", env=env)
-        _git(root, "add", "-u", ":/", env=env)  # tracked files inside a skipped directory
+        # Tracked files inside a skipped directory. No pathspec: `:/` fails on an empty index.
+        _git(root, "add", "-u", env=env)
         return _git(root, "write-tree", env=env).strip() or None
 
 
