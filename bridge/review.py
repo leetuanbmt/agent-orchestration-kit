@@ -54,16 +54,38 @@ def _git(root: Path, *args: str, env: dict[str, str] | None = None,
     return out.stdout.decode(errors="replace")
 
 
+# Scratch and cache directories agents and tools write inside the worktree (Codex puts GOCACHE in
+# .codex-tmp). `git add` would store every file in them as a blob that nothing references.
+TREE_SKIP_DIRS = (".codex-tmp", ".cache", "__pycache__", ".pytest_cache", ".pytest_tmp",
+                  ".mypy_cache", ".ruff_cache", "node_modules/.cache")
+# Untracked files larger than this stay out of the snapshot tree: the patch could not show them.
+UNTRACKED_TREE_CAP = 5 << 20
+
+
 def _worktree_tree(root: Path) -> str | None:
-    """Tree object of the whole working tree (tracked + untracked, .gitignore respected),
-    built in a throwaway index so the real index and history are untouched."""
+    """Tree object of the working tree (tracked + untracked, .gitignore respected), built in a
+    throwaway index so the real index and history are untouched. It feeds only the stat and the
+    patch: untracked files under TREE_SKIP_DIRS or over UNTRACKED_TREE_CAP are left out, so their
+    blobs never reach the object store. `changes.files` and the scope check come from git status
+    and sha256 hashes, so they still list those paths, and `diff` names them as omitted."""
     real = Path(_git(root, "rev-parse", "--path-format=absolute", "--git-path", "index").strip())
+    big = []
+    for f in untracked(root):
+        with contextlib.suppress(OSError):
+            if os.lstat(root / f).st_size > UNTRACKED_TREE_CAP:
+                big.append(f)
+    specs = [":/", *(f":(exclude,glob)**/{d}/**" for d in TREE_SKIP_DIRS),
+             *(f":(exclude,literal){f}" for f in big)]
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d) / "index"
         if real.is_file():
             shutil.copyfile(real, tmp)  # reuse stat cache: only touched files get rehashed
+        (Path(d) / "pathspec").write_text("\0".join(specs))
         env = {"GIT_INDEX_FILE": str(tmp)}
-        _git(root, "add", "-A", env=env)
+        _git(root, "add", "-A", f"--pathspec-from-file={Path(d) / 'pathspec'}",
+             "--pathspec-file-nul", env=env)
+        # Tracked files inside a skipped directory. No pathspec: `:/` fails on an empty index.
+        _git(root, "add", "-u", env=env)
         return _git(root, "write-tree", env=env).strip() or None
 
 
@@ -293,10 +315,18 @@ def diff(root: Path, before: dict[str, Any], protected: list[str]) -> Changes:
                      if f not in b or b[f] != (a[f] if f in a else _hash(root / f)))
     trees = (before.get("tree"), after["tree"])
     stat = patch = ""
+    in_patch: set[str] = set()
     if all(trees) and trees[0] != trees[1]:
         stat = _git(root, "diff", "--stat", *trees)  # type: ignore[arg-type]
         patch = _git(root, "diff", "--no-color", *trees)  # type: ignore[arg-type]
+        in_patch = set(_git(root, "diff", "--name-only", "--no-renames", "-z",
+                            *trees).split("\0"))  # type: ignore[arg-type]
     shown, truncated, omitted = bounded_patch(patch, PATCH_LIMIT)
+    # Changed files the trees leave out (caches, big untracked files, ignored protected files)
+    # are not in the patch either: name them so the reviewer reads them in the worktree.
+    unshown = [f for f in changed if f not in in_patch and not f.startswith(".git/")]
+    if unshown:
+        truncated, omitted = True, sorted({*omitted, *unshown})
     ig_b, ig_a = before.get("ignored"), after["ignored"]
     # A stored baseline has no ignored-file listing: compare ignored files only when it does.
     ignored = ([] if ig_b is None else
