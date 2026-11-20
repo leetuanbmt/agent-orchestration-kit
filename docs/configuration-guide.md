@@ -210,6 +210,68 @@ That removes the agent from `agents:` and from every role (a role it would leave
 refused), and lists unfinished tasks pinned to it. It previews unless `--apply`; the old file is
 kept in `.ai/backup-<stamp>/` and comments in `orchestrator.yaml` are not kept.
 
+## Set up on another machine
+
+`.ai/accounts.yaml` and `.ai/orchestrator.yaml` are git-ignored; only `.ai/config.json` is
+tracked. A clone on a second machine therefore has neither file, and logins never travel with the
+project: a `login:` entry names a login in that machine's own registry
+(`~/.agent-bridge/accounts.json`), and its tokens stay on that machine. Make a fresh login there.
+
+1. Clone the project and install the bridge:
+
+```bash
+uv sync
+```
+
+2. Recreate the two ignored files with `config-init`, or with `project-account-add` and
+   `project-agent-add`, as in [Start a new project](#start-a-new-project) and
+   [Add an account](#add-an-account).
+
+3. Install the provider's CLI first (Codex, Claude Code, agy or opencode), following that
+   provider's own install instructions. The machine does not need Codex unless an agent uses it.
+   `health` reports `<adapter> is not installed` for a missing CLI, and `agents` shows an
+   `unavailable_reason` for it. Set `*_bin` in `.ai/config.json` if the CLI is not on `PATH`.
+
+4. Create the machine login. `account-add` registers it and then logs in, unless the account is
+   already logged in:
+
+```bash
+agent-bridge account-add work --provider openai
+```
+
+   If it fails with `account work (openai) already exists`, the machine login is already
+   registered: skip to step 6. To log it in again, first declare it in the project (step 6), then
+   run `agent-bridge account-login codex-work`, because `account-login` takes the name of an
+   account declared in `.ai/accounts.yaml`.
+
+5. On a machine with no browser, such as a Linux box reached over SSH, add `--device-auth`
+   (`account-add` and `account-login` both take it). For an `openai` account it is passed to
+   `codex login`; it is not used for the other providers.
+
+```bash
+agent-bridge account-add work --provider openai --device-auth
+```
+
+6. Declare the login in the project and add the agent, using the machine login's registry name:
+
+```bash
+agent-bridge project-account-add codex-work --login work
+agent-bridge project-agent-add agent-codex-work --account codex-work --role executor --default --apply
+```
+
+7. Check the result:
+
+```bash
+agent-bridge account-verify codex-work
+agent-bridge agents
+agent-bridge health
+```
+
+On Linux, `verify_sandbox: auto` confines the verification commands with Landlock where
+it is available (see [Verification checks and their sandbox](#verification-checks-and-their-sandbox)).
+`agents` shows quota as `UNKNOWN` for an account until a task has run on it: the bridge reads
+the limits the provider's CLI reported on its last run, and Codex's own session records.
+
 ## Limit how much an account is used
 
 Limits stop an account from taking new work. They are set per account in `.ai/accounts.yaml`.
@@ -374,6 +436,8 @@ agent-bridge config-check
 | `verify_writable needs absolute paths (or ~/...)` | A relative path | Use an absolute path or `~/...` |
 | `account x over its configured limit: weekly_pct: ...` | The account reached a limit | Wait for the reset shown, or raise it with `project-account-limits` |
 | Claude still reports an old limit or old roles after you edited `.ai/` | The MCP server reloads on its next tool call, but defers while one of its own tasks runs; an invalid edit keeps the previous settings and shows as NOT OK in `health` | Wait for the task to finish, or fix the file (`agent-bridge config-check`); `/mcp` reconnect is only needed after upgrading the kit's code |
+| `account x (openai) already exists` | `account-add` with a name that is already a machine login for that provider | Do not add it again: declare it with `project-account-add <name> --login x`; use `account-login <name>` to log it in again once declared |
+| `<path> already exists but no registry account owns it; rerun ... --home <path> ... or remove the directory for a fresh one` | The directory exists and no registry account owns it | Rerun the printed `account-add ... --home <path>` command to keep the login in it, or remove the directory for a fresh one |
 | `refused: <command> needs an interactive terminal (human only)` | A human-only command run from a script, a pipe or by Claude | Run it yourself in a terminal |
 
 ## What only a human does
