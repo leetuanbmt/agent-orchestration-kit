@@ -226,7 +226,9 @@ def _git_internals(root: Path) -> dict[str, str | None]:
     (and config commands such as core.fsmonitor) outside any sandbox. Read from disk, no git."""
     gitdir, common = git_dirs(root)
     found = {".git/config": _hash(common / "config")}
-    if (gitdir / "config.worktree").is_file():
+    # An empty config.worktree configures nothing; the Claude Bash sandbox (bwrap) creates one
+    # as a mount placeholder, so absent and empty hash alike. Any content still counts.
+    if (gitdir / "config.worktree").is_file() and (gitdir / "config.worktree").stat().st_size:
         found[".git/config.worktree"] = _hash(gitdir / "config.worktree")
     if (common / "info" / "attributes").is_file():
         found[".git/info/attributes"] = _hash(common / "info" / "attributes")
@@ -530,6 +532,11 @@ async def _verify(cmds: list[str], root: Path, cfg: BridgeConfig,
     # to a private directory removed afterwards (the only temp location a confined check has).
     env = {**clean_env(os.environ, cfg.env_deny, []), "PYTHONDONTWRITEBYTECODE": "1",
            AGENT_ENV: "1", "TMPDIR": tmp, "TMP": tmp, "TEMP": tmp}
+    # Go's default build cache is under $HOME, which a confined check cannot write.
+    for key, sub in (("GOCACHE", "go-build"), ("GOTMPDIR", "go-tmp")):
+        if key not in env:
+            env[key] = os.path.join(tmp, sub)
+            os.makedirs(env[key], exist_ok=True)
     loop = asyncio.get_running_loop()
     for cmd in cmds:
         if should_cancel and should_cancel():

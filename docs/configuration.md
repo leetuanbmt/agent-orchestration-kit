@@ -179,7 +179,9 @@ never silently weaken the sandbox.
 Test runners that write caches outside the project need them in `verify_writable`, for example
 `"verify_writable": ["~/.cache/uv"]` for `uv run pytest` or `["~/.npm"]` for `npm test` (absolute
 paths or `~/...`); the check's
-output shows `Permission denied` for anything missing. Everything a check changes inside the
+output shows `Permission denied` for anything missing. Go needs no entry: unless you set them,
+a check gets `GOCACHE` and `GOTMPDIR` inside its private `TMPDIR`, so it builds with a fresh
+cache that is removed afterwards. Everything a check changes inside the
 worktree is diffed again after verification and judged like the agent's changes.
 
 ## `.ai/config.json`
