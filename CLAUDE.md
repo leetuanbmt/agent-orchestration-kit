@@ -44,6 +44,10 @@ approvals and anything irreversible.
 `main` is the only long-lived branch; there is no `develop`. Branch every change from the latest
 `main` and open its PR against `main` (`gh pr create --base main`). Never push to `main` directly.
 
+CI runs on ubuntu and macOS and its minutes are paid. Before every push, `scripts/check.sh` (macOS)
+and `scripts/check-linux.sh` (both ubuntu jobs, end-to-end included, in Docker) must both pass; push once, with every
+fix batched. A CI failure is reproduced in Docker, never by pushing again.
+
 Details: `.claude/rules/` (loaded automatically). Workflow: the `agent-orchestration` skill.
 
 ## Commands
@@ -51,6 +55,7 @@ Details: `.claude/rules/` (loaded automatically). Workflow: the `agent-orchestra
 ```bash
 uv sync                           # install (Python 3.12, project-local .venv)
 scripts/check.sh                  # tests; --with-health also checks the agent CLIs, --e2e adds tests/qa
+scripts/check-linux.sh            # the ubuntu jobs (suite + tests/qa) in Docker, before every push
 uv run agent-bridge config-check  # validate .ai/orchestrator.yaml (or the legacy config)
 uv run agent-bridge agents        # agents, roles and availability
 uv run agent-bridge health        # adapters, quota per account, task counts

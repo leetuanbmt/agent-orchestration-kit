@@ -17,6 +17,7 @@ uv run agent-bridge --help
 ```bash
 scripts/check.sh            # full suite against fake agent CLIs: no logins, no quota
 scripts/check.sh --e2e      # also the end-to-end suite (CLI, MCP server, web dashboard in Chromium)
+scripts/check-linux.sh      # the ubuntu CI jobs, tests/qa included, in Docker: run it before every push
 ```
 
 The end-to-end browser tests need Node and Playwright; without them they are skipped. CI runs the

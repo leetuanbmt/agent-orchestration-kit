@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ctypes
 import json
 import os
 import signal
 import subprocess
+import sys
 
 WINDOWS = os.name == "nt"
 GROUP_KWARGS = ({"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200)}
@@ -143,3 +145,11 @@ def list_processes() -> dict[int, tuple[int, str]]:
         return processes
     except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError):
         return {}
+
+
+def disable_dumps() -> None:
+    """Linux: PR_SET_DUMPABLE 0, so another process of the same user cannot read this process's
+    /proc/<pid>/environ or memory (ptrace). Children reset it on exec. A no-op elsewhere."""
+    if sys.platform.startswith("linux"):
+        with contextlib.suppress(OSError, AttributeError):
+            ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0)

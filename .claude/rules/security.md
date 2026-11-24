@@ -2,7 +2,9 @@
 
 - **Codex CLI** runs with a `workspace-write` (or `read-only`) OS sandbox, no network, `/tmp`
   and `$TMPDIR` not writable, user `~/.codex/config.toml` ignored. `danger-full-access` is not
-  configurable.
+  configurable. The sandbox is a permission profile passed with `-c` (built-in `:workspace` or
+  `:read-only`) that also makes the bridge's credential store and every `credential_paths`
+  entry unreadable (probed with `codex sandbox` on Codex 0.169, macOS and Linux bwrap).
 - **Claude CLI** uses `--strict-mcp-config` (no MCP servers), `--setting-sources ""`
   (no user/project settings) and `--permission-mode dontAsk`. Read/Glob/Grep and scoped
   Edit/Write keep their existing permission rules, including credential read denies and
@@ -39,9 +41,11 @@
   TMPDIR and `verify_writable`; the worktree is diffed again after them. Never weaken this
   setting yourself, and treat any `.ai/config.json` change in a diff as a security change.
   On macOS (Seatbelt) a check also cannot write the repository's git config, `config.worktree`,
-  `hooks/` or `info/`, and cannot read any configured account home, the registry's `homes/`,
-  `~/.codex/auth.json`, `~/.claude/.credentials.json`, `.ai/orchestrator.yaml` or
-  `.ai/accounts.yaml`. Landlock (Linux) restricts writes only.
+  `hooks/` or `info/`, and cannot read any configured account home, the registry's `homes/` and
+  `credentials/`, any `credential_paths` entry, `~/.codex/auth.json`,
+  `~/.claude/.credentials.json`, `.ai/orchestrator.yaml` or `.ai/accounts.yaml`. Claude agents'
+  Read tools and Bash sandbox are denied the same credential paths. Landlock (Linux) restricts
+  writes only, so a Linux check can read them.
 - Git config is code the bridge would run (`core.fsmonitor`, filters, hooks). After every run the
   bridge hashes the repository's config, `config.worktree`, hooks and `info/attributes` from disk
   before any git call; a change BLOCKs the task without running git, and while it is still on
@@ -83,10 +87,16 @@ Accounts:
   limits a CLI reported on its last run through the bridge; `UNKNOWN` without either. A QUOTA
   or AUTH pause marks the account unavailable: report it to the user. AUTH never triggers a
   switch.
-- A `credential: keychain` token lives in the macOS login Keychain (service `agent-bridge`).
-  Claude never runs `agent-bridge account-set-token` and never runs `security
-  find-generic-password` for it; the bridge reads it only to build that account's run env.
+- A `credential: keychain` token lives in the macOS login Keychain (service `agent-bridge`); a
+  `credential: file` token (Linux) in `~/.agent-bridge/credentials/<account>`, which the bridge
+  reads only when it is a regular `0600` file the user owns in a `0700` directory. Claude never
+  runs `agent-bridge account-set-token` and never runs `security find-generic-password` for it;
+  the bridge reads it only to build that account's run env or check it. Tokens never go in a
+  shell profile; `token_env` is legacy and `config-check` warns about it. The bridge drops
+  `AGENT_BRIDGE_CLAUDE_*_TOKEN` variables from its own environment at start, redacts every
+  loaded secret's exact value from stored output, and on Linux sets itself non-dumpable; a
+  process running as the same user remains the limit.
 - Never read, print, copy or log `auth.json`, `.credentials.json`, `~/.codex-accounts/*`,
-  `~/.agent-bridge/homes/*`, `~/.gemini/antigravity-cli/*`, an account home's credentials or
+  `~/.agent-bridge/homes/*`, `~/.agent-bridge/credentials/*`, `~/.gemini/antigravity-cli/*`, an account home's credentials or
   any token. For agy the bridge checks only the token file's size and mtime, never its content. The bridge reads only
   `<codex_home>/sessions/**/rollout-*.jsonl`, and only their `rate_limits` field.

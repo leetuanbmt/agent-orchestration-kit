@@ -83,7 +83,7 @@ def test_state_outside_worktree_and_private(sandbox: Sandbox) -> None:
 # @pt.id QA-E2E-083-codex-sandbox-flags
 # @pt.item What the Codex executor is allowed to do
 # @pt.condition a normal run
-# @pt.expected the argv asks for the workspace-write sandbox, never danger-full-access, and the run happens in the project
+# @pt.expected the argv selects the bridge permission profile extending :workspace (no -s or sandbox_mode to override it), never danger-full-access, and the run happens in the project
 # @pt.target CodexAdapter argv
 # @pt.method e2e
 # @pt.legacy none
@@ -91,7 +91,8 @@ def test_codex_sandbox_flags(sandbox: Sandbox) -> None:
     sandbox.ok("execute", sandbox.create())
     call = sandbox.calls()[-1]
     argv = " ".join(call["argv"])
-    assert "workspace-write" in argv and "danger" not in argv, argv
+    assert 'default_permissions="bridge"' in argv and 'extends=":workspace"' in argv, argv
+    assert "-s" not in call["argv"] and "sandbox_mode" not in argv and "danger" not in argv, argv
     assert Path(call["cwd"]).resolve() == sandbox.root
 
 

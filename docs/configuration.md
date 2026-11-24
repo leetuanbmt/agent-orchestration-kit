@@ -87,7 +87,7 @@ workflow:
 | Section | Keys |
 |---|---|
 | `version` | Must be `1`. |
-| `accounts.<id>` (in `accounts.yaml`) | `provider`: `openai`, `anthropic`, `google` or `opencode`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode accepts no `home`). `login`: the name of a machine registry login instead; provider and home come from the registry (`home` is then refused, a `provider` must match). `max_concurrency`: 1–8, default 1. `token_env` (anthropic only): the name of a variable holding a `claude setup-token` token or a Console API key, see [Accounts](#accounts). `credential: keychain` (anthropic only, macOS): keep that secret in the login Keychain instead, exclusive with `token_env`. `credential_kind`: `oauth_token` (default) or `api_key`, what the secret is. `limits`: optional per-account limits, see [Per-account limits](#per-account-limits-opt-in). |
+| `accounts.<id>` (in `accounts.yaml`) | `provider`: `openai`, `anthropic`, `google` or `opencode`. `home`: isolated auth home; omit it to use the CLI's inherited global login (opencode accepts no `home`). `login`: the name of a machine registry login instead; provider and home come from the registry (`home` is then refused, a `provider` must match). `max_concurrency`: 1–8, default 1. `token_env` (anthropic only): the name of a variable holding a `claude setup-token` token or a Console API key, see [Accounts](#accounts). `credential: keychain` (anthropic only, macOS): keep that secret in the login Keychain instead; `credential: file` (anthropic only, any host, the one to use on Linux): keep it in `~/.agent-bridge/credentials/<id>`, a `0600` file in a `0700` directory. Either is exclusive with `token_env`, and `config-check` warns about every account that still uses `token_env`. `credential_kind`: `oauth_token` (default) or `api_key`, what the secret is. `limits`: optional per-account limits, see [Per-account limits](#per-account-limits-opt-in). |
 | `agents.<id>` | `adapter`: `codex-cli`, `claude-cli`, `client`, `opencode-cli` or `agy-cli`. `account` (required except for `client`), optional `provider` (must match the adapter), `model`, `capabilities` (subset of `[read, write]`), `allow_write` (default true for `codex-cli`, false otherwise), `allow_bash` (`claude-cli` only), `timeout_s` (≥ 30), `enabled` (default true). |
 | `roles.<name>` | An agent id, or `{agents: [...], default: <agent>, strategy: ordered \| explicit \| quota, requires: read \| write}`. `default` is tried first; the other agents are fallbacks in list order. `quota` picks the eligible agent whose account has the most remaining quota (unknown quota last, ties in list order). `default` cannot be combined with `strategy: explicit` or `quota`. |
 | `routing.slot_wait_s` | 0–86400, default 1800. How long `bridge_run_workflow` keeps retrying, with backoff from 5 s to 60 s, a task whose account slots (or the worktree's writer slot) are held by another bridge process. `0` ends the workflow `WAITING` at once, as before. |
@@ -198,6 +198,7 @@ keys are rejected. The full file with every default is `config.example.json`;
 | `codex_bin` / `claude_bin` / `opencode_bin` / `agy_bin` | `codex` / `claude` / `opencode` / `agy` | CLI executables. |
 | `ignore_user_config` | `true` | Pass `--ignore-user-config` to Codex, so `~/.codex/config.toml` (hooks, MCP servers, profiles) is not loaded. |
 | `claude_hook_settings` | `null` | Absolute path to a JSON file outside the project containing only a `hooks` object; passed to every Claude run as `--settings`. Trusted code, runs unsandboxed. Set it only by hand. |
+| `credential_paths` | `[]` | Absolute paths (`~` expands) of files or directories that hold secrets, such as an env file a wrapper sources `token_env` from. Claude agents' Read/Glob/Grep and Bash, Codex agents' commands and verification commands are denied them (`~/.agent-bridge/credentials` always is). No spaces, quotes, glob or control characters. Linux checks can still read them (Landlock restricts writes only); see [Credentials on Linux](setup-mac-and-vm.md#credentials-on-linux). |
 | `default_timeout_s` / `max_timeout_s` | `1800` / `7200` | Per-run time limits. |
 | `max_attempts` | `3` | Legacy setup only; with `orchestrator.yaml` use `workflow.max_rework`. |
 | `network_retries` / `retry_backoff_s` | `1` / `10` | Bounded retry for network errors only. |
@@ -241,8 +242,11 @@ project uses one only by declaring it with `login:`.
 - **codex-switch.** Homes made with `codex-switch home add` work as Codex accounts. codex-switch
   and claude-switch *profiles* are listed but never used, because they hold copied tokens.
 - **Claude credentials outside the home.** An `anthropic` account can take a `claude setup-token`
-  token or a Console API key from the macOS Keychain (`credential: keychain`) or from an
-  environment variable (`token_env`), with `credential_kind: oauth_token` (default) or `api_key`.
+  token or a Console API key from the macOS Keychain (`credential: keychain`), from a private
+  file under `~/.agent-bridge/credentials` (`credential: file`), or from an environment variable
+  (`token_env`, which `config-check` warns about), with `credential_kind: oauth_token` (default)
+  or `api_key`. Linux setup and the move off `token_env`:
+  [Credentials on Linux](setup-mac-and-vm.md#credentials-on-linux).
   The rules, the commands that write these entries (`project-account-add`, `account-set-token`,
   `account-verify`) and the Keychain limits are in
   [Claude with a long-lived token or an API key](configuration-guide.md#claude-with-a-long-lived-token-or-an-api-key).

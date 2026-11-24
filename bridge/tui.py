@@ -30,7 +30,7 @@ from textual.widgets import (Button, DataTable, Footer, Input, Label, OptionList
                              Select, Static)
 from textual.widgets.option_list import Option
 
-from . import install
+from . import accounts, install
 from .accounts import display_name
 from .config import AI_DIR, find_root
 from .render import ATTENTION, STYLE, account_rows, quota_text, remaining_pct
@@ -629,7 +629,8 @@ class BridgeApp(App[None]):
     def _human_cmd(self, *args: str) -> None:
         """Run a human-only CLI command in the real terminal (it prompts and logs in there)."""
         with self.suspend():
-            subprocess.run(cli_argv(*args), cwd=self.bridge.root, check=False)
+            subprocess.run(cli_argv(*args), cwd=self.bridge.root, check=False,
+                           env=accounts.bridge_child_env(os.environ))
             input("\nPress Enter to return to agent-bridge...")
         with self._guard():
             self.bridge = Bridge(self.bridge.root)  # registry accounts join the config

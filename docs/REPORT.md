@@ -12,7 +12,7 @@ constant.
 
 | Component | Version | What was verified |
 |---|---|---|
-| Codex CLI | 0.163.0 | `exec --json`, `-o`, `--output-schema`, `--ignore-user-config`, `-s read-only\|workspace-write`, `-C`, prompt on stdin; `exec resume <thread_id> -` (no `-s`/`-C`: sandbox via `-c sandbox_mode=…`, enforced); JSONL events `thread.started`, `item.completed`, `turn.completed`, `turn.failed`, `error`; `CODEX_HOME` honoured; `codex login status` exit 0/1; 401 text on missing auth |
+| Codex CLI | 0.163.0 | `exec --json`, `-o`, `--output-schema`, `--ignore-user-config`, `-s read-only\|workspace-write`, `-C`, prompt on stdin; `exec resume <thread_id> -` (no `-s`/`-C`: sandbox via `-c sandbox_mode=…`, enforced). Since 0.169 the bridge passes a permission profile instead (`-c default_permissions="bridge"` plus `-c permissions.bridge={extends=":workspace"\|":read-only", filesystem={…}}`; `-s` would override it); JSONL events `thread.started`, `item.completed`, `turn.completed`, `turn.failed`, `error`; `CODEX_HOME` honoured; `codex login status` exit 0/1; 401 text on missing auth |
 | Codex sandbox (macOS) | 0.163.0 | `workspace-write` can write git-ignored files in the worktree (incl. `.ai/`) but **not** `.git/`; `$TMPDIR` and `/tmp` unwritable when excluded; `ps`/`kill` forbidden |
 | MCP Python SDK | 2.3.0 | `MCPServer` (formerly FastMCP); non-`ToolError` exceptions are hidden from the client |
 | Claude Code | 2.1.303 | `.mcp.json` with `${CLAUDE_PROJECT_DIR:-.}`; `enabledMcpjsonServers` honoured only after the folder is trusted; `.claude/rules/*.md` auto-loaded; `claude -p` called `bridge_health`; `claude mcp list` → Connected |

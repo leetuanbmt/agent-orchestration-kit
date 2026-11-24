@@ -120,8 +120,9 @@ class AccountProfile(BaseModel):
     # tampered file from pointing at another secret (GITHUB_TOKEN); the _TOKEN suffix keeps it
     # under the built-in *_TOKEN scrub, so no agent or verification command inherits it.
     token_env: str | None = Field(None, pattern=r"^AGENT_BRIDGE_CLAUDE_[A-Z0-9_]{1,40}_TOKEN$")
-    # "keychain": the token lives in the macOS Keychain (`agent-bridge account-set-token`).
-    credential: Literal["keychain"] | None = None
+    # "keychain": the token lives in the macOS Keychain; "file": in a 0600 file under
+    # ~/.agent-bridge/credentials (Linux). Both are written by `agent-bridge account-set-token`.
+    credential: Literal["keychain", "file"] | None = None
     # What that secret is: a `claude setup-token` token or an Anthropic Console API key.
     credential_kind: Literal["oauth_token", "api_key"] = "oauth_token"
     # The name of a machine registry login this project account uses: provider and home come

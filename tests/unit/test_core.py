@@ -193,7 +193,7 @@ def test_clean_env() -> None:
 # @pt.id KIT-UNIT-008-argv-fresh-and-resume
 # @pt.item Codex argv construction
 # @pt.condition fresh exec vs resume; unrestricted sandbox requested
-# @pt.expected fresh uses -s/-C, resume uses -c sandbox_mode + session id; /tmp excluded;
+# @pt.expected fresh uses -C, both select the bridge permission profile (workspace or read-only) by -c, never -s or sandbox_mode; /tmp and $TMPDIR read-only;
 #              prompt on stdin; named account overrides precede session/stdin, default has none; danger-full-access refused
 # @pt.target bridge.executor.CodexAdapter.argv
 # @pt.method unit
@@ -204,13 +204,17 @@ def test_codex_argv(tmp_path: Path, repo: Path) -> None:
     named = Account("work", tmp_path / "account")
     fresh = ad.argv(account=default, sandbox="workspace-write", last_msg=tmp_path / "m")
     assert fresh[:3] == ["codex", "exec", "--json"] and fresh[-1] == "-"
-    assert fresh[fresh.index("-s") + 1] == "workspace-write" and "-C" in fresh
+    assert "-s" not in fresh and "-C" in fresh
     assert "--ignore-user-config" in fresh and "--dangerously-bypass-approvals-and-sandbox" \
         not in fresh
-    assert "sandbox_workspace_write.exclude_slash_tmp=true" in fresh
+    profile = next(v for v in fresh if v.startswith("permissions.bridge="))
+    assert 'extends=":workspace"' in profile and '":slash_tmp"="read"' in profile \
+        and '":tmpdir"="read"' in profile
+    assert 'default_permissions="bridge"' in fresh
     res = ad.argv(account=default, sandbox="read-only", last_msg=tmp_path / "m", session_id="abc")
     assert res[:3] == ["codex", "exec", "resume"] and res[-2:] == ["abc", "-"]
-    assert 'sandbox_mode="read-only"' in res and "-s" not in res and "-C" not in res
+    assert 'extends=":read-only"' in next(v for v in res if v.startswith("permissions.bridge="))
+    assert not any("sandbox_mode" in v for v in res) and "-s" not in res and "-C" not in res
     override = 'cli_auth_credentials_store="file"'
     assert override not in fresh and override not in res
     for session_id in (None, "abc"):

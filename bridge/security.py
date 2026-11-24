@@ -13,6 +13,7 @@ import re
 import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from . import osutil
 
@@ -152,10 +153,23 @@ _SECRET_RES = [
 ]
 
 
+# Exact values of every credential this process loaded (token_env, Keychain, file store), so a
+# secret with a shape no pattern knows is still masked. Short values would mask ordinary text.
+_LOADED_SECRETS: set[str] = set()
+
+
+def remember_secret(value: str | None) -> None:
+    if value and len(value) >= 8:
+        _LOADED_SECRETS.add(value)
+
+
 def redact(text: str | None, limit: int = 4000) -> str:
-    """Mask credential-shaped substrings and keep only the tail (most diagnostic part)."""
+    """Mask loaded secrets and credential-shaped substrings, and keep only the tail (most
+    diagnostic part)."""
     if not text:
         return ""
+    for value in sorted(_LOADED_SECRETS, key=len, reverse=True):
+        text = text.replace(value, "[REDACTED]")
     for rx in _SECRET_RES:
         if "prefix" in rx.groupindex:
             text = rx.sub(lambda m: f"{m.group('prefix')}[REDACTED]{m.group('suffix')}", text)
@@ -166,6 +180,19 @@ def redact(text: str | None, limit: int = 4000) -> str:
         else:
             text = rx.sub("[REDACTED]", text)
     return text if len(text) <= limit else "…" + text[-limit:]
+
+
+def redact_obj(value: Any) -> Any:
+    """redact() over every key and string of a JSON-like value."""
+    if isinstance(value, dict):
+        return {redact(str(k), 8000): redact_obj(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_obj(v) for v in value]
+    if isinstance(value, str):
+        return redact(value, 8000)
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    return redact(str(value), 8000)
 
 
 # Credential carriers stripped from agent and check environments whatever env_deny says; an

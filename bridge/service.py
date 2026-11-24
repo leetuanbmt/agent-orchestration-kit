@@ -21,7 +21,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from . import osutil, progress, storage
+from . import accounts, osutil, progress, storage
 from .accounts import Account, AccountLock, account_key, binary, credential_check, discover, \
     load_registry, login_status, resolve, resolve_profile
 from .config import AI_DIR, CONFIG_FILE, BridgeConfig, ensure_ai_dir, find_root, load_config, state_dir
@@ -83,6 +83,7 @@ class Bridge:
             # this: approval is a human-only step by process discipline, not an OS boundary.
             raise RuntimeError("agent-bridge refuses to run inside an agent it started "
                                f"({AGENT_ENV} is set)")
+        accounts.capture_env_secrets()  # the Python API too: no child inherits a token variable
         self.root = find_root(root)
         # Config read from disk can be reloaded in place; injected config (tests) never is.
         self._config_print: dict[str, str | None] | None = \

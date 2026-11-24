@@ -12,7 +12,7 @@ import sys
 import pytest
 from pydantic import ValidationError
 
-from bridge import cli
+from bridge import accounts, cli
 from bridge.accounts import (CLAUDE_KEY_ENV, CLAUDE_TOKEN_ENV, KEYCHAIN_SERVICE, Account,
                              account_env, credential_check, keychain_account, login_status)
 from bridge.config import BridgeConfig
@@ -28,6 +28,9 @@ def fake_security(tmp_path, monkeypatch, fake_codex):
     exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     state = tmp_path / "fake_security"
     monkeypatch.setenv("FAKE_SECURITY_DIR", str(state))
+    # The fake stands in for the macOS Keychain on every host, Linux CI included.
+    monkeypatch.setattr(accounts, "keychain_available", lambda: True)
+    monkeypatch.setattr(cli, "keychain_available", lambda: True)
     return state
 
 
@@ -94,7 +97,7 @@ def test_keychain_config_validation():
     for bad in ({"provider": "openai", "credential": "keychain"},
                 {"provider": "anthropic", "credential": "keychain",
                  "token_env": "AGENT_BRIDGE_CLAUDE_X_TOKEN"},
-                {"provider": "anthropic", "credential": "file"}):
+                {"provider": "anthropic", "credential": "vault"}):
         with pytest.raises(ValidationError):
             AccountProfile(**bad)
 

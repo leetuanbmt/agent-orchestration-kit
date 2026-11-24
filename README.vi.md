@@ -459,7 +459,9 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
 
 - **Codex CLI** chạy trong OS sandbox của nó (`workspace-write` hoặc `read-only`; không thể cấu
   hình `danger-full-access`), không có mạng, `/tmp` và `$TMPDIR` không ghi được, bỏ qua
-  `~/.codex/config.toml`. Lượt plan và review chạy `read-only`.
+  `~/.codex/config.toml`. Lượt plan và review chạy `read-only`. Lệnh của nó không đọc được kho
+  credential của bridge và mọi `credential_paths` (một permission profile của Codex, đã probe
+  trên macOS và Linux với Codex 0.169).
 - **Claude CLI** dùng `--strict-mcp-config` (không MCP server), `--setting-sources ""`
   (không nạp settings của user/project), `--permission-mode dontAsk` và quyền Read/Glob/Grep.
   Với `allow_write: true`, Edit/Write vẫn giới hạn trong path của task, chặn path protected.
@@ -484,7 +486,17 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
 
 **Credential.** Mỗi account dùng auth home riêng, tạo bằng một lần đăng nhập mới, không bao giờ
 sao chép token của profile khác. Bridge chỉ đọc các event `rate_limits` của Codex trong
-`<home>/sessions/**/rollout-*.jsonl`; không bao giờ đọc `auth.json` hay file credential khác.
+`<home>/sessions/**/rollout-*.jsonl`; không bao giờ đọc `auth.json` hay các file credential
+khác của CLI. Token hoặc API key Claude nằm ngoài home được lưu trong macOS Keychain
+(`credential: keychain`) hoặc, trên Linux, trong `~/.agent-bridge/credentials/<name>`
+(`credential: file`, một file `0600` mà bridge từ chối nếu người khác đọc được). Đừng bao giờ để
+token trong shell profile: `token_env` vẫn chạy, nhưng `config-check` cảnh báo. Bridge xóa các
+biến `AGENT_BRIDGE_CLAUDE_*_TOKEN` khỏi môi trường của chính nó khi khởi động, redact đúng giá trị
+của mọi secret đã nạp khỏi output được lưu, và trên Linux tự đặt non-dumpable. Agent Claude và
+check trên macOS bị chặn đọc kho này (và mọi `credential_paths` trong `.ai/config.json`), agent
+Codex cũng vậy; check trên Linux vẫn đọc được (Landlock chỉ chặn ghi), và mọi process chạy dưới
+user của bạn cũng vậy. Xem
+[Credentials on Linux](docs/setup-mac-and-vm.md#credentials-on-linux).
 
 **Mô hình tin cậy.** Mọi thứ kit chạy đều chạy với quyền user của bạn. Bước duyệt của con người
 chống lại sai sót và việc model vượt quyền; nó không phải ranh giới chống lại code chạy dưới tên

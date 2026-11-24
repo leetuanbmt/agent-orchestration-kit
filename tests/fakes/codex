@@ -106,8 +106,7 @@ def schema_keys():
 
 
 def read_only():
-    return ("-s" in argv and argv[argv.index("-s") + 1] == "read-only") or \
-        'sandbox_mode="read-only"' in argv
+    return any(v.startswith("permissions.bridge=") and 'extends=":read-only"' in v for v in argv)
 
 
 def finish(status, files):

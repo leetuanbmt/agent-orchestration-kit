@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from . import osutil
-from .accounts import Account, account_env, claude_token, codex_overrides
+from .accounts import Account, account_env, claude_token, codex_overrides, credential_check
 from .config import BridgeConfig, state_dir
 from .security import (PathError, clean_env, hook_settings_error, process_started, redact,
                        root_rule_unsafe, rule_unsafe)
@@ -129,6 +129,17 @@ def _home_read_deny(home: Path) -> str:
     if rule_unsafe([rule]):
         raise PathError(f"account home not expressible as a Claude permission rule: {home}")
     return f"Read({rule})"
+
+
+def _secret_file_denies(credential_paths: list[str]) -> list[str]:
+    """Read rules for the bridge's credential store and the owner's credential paths: the path
+    itself (a file) and everything under it (a directory)."""
+    from .registry import registry_dir
+    rules = []
+    for path in [registry_dir() / "credentials", *map(Path, credential_paths)]:
+        tree = _home_read_deny(path)
+        rules += [tree.removesuffix("/**)") + ")", tree]
+    return rules
 
 
 def classify(text: str) -> str:
@@ -278,8 +289,9 @@ class Adapter:
         acc = req.account
         if (acc.token_env or acc.credential) and claude_token(acc) is None:
             # Without it the run would silently use whatever login the home holds instead.
-            return RunResult("auth", error=f"account {acc.name}: its {acc.credential_kind} is "
-                                           "missing or has the wrong prefix")
+            problem = (credential_check(acc) or {}).get("problem")
+            return RunResult("auth", error=f"account {acc.name}: " + (
+                problem or f"its {acc.credential_kind} is missing or has the wrong prefix"))
         self.state_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=self.state_dir) as tmpname:
             tmp = Path(tmpname)
@@ -403,13 +415,9 @@ class CodexAdapter(Adapter):
               str(schema_path or self.schema_path)]
         if self.cfg.ignore_user_config:
             a.append("--ignore-user-config")
-        if session_id:
-            a += ["-c", f'sandbox_mode="{sandbox}"']
-        else:
-            a += ["-s", sandbox, "-C", str(self.root)]
-        # workspace-write otherwise leaves /tmp and $TMPDIR writable (verified by probe).
-        a += ["-c", "sandbox_workspace_write.exclude_slash_tmp=true",
-              "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true"]
+        if not session_id:
+            a += ["-C", str(self.root)]
+        a += ["-c", 'default_permissions="bridge"', "-c", self._profile(sandbox)]
         a += codex_overrides(account)
         model = model or self.cfg.model
         if model:
@@ -418,6 +426,22 @@ class CodexAdapter(Adapter):
             a.append(session_id)
         a.append("-")  # prompt on stdin: no argv length limit, not visible in `ps`
         return a
+
+    def _profile(self, sandbox: str) -> str:
+        """A permission profile instead of `-s`/`sandbox_mode`, which would override it: the built-in
+        workspace or read-only one, with the credential store and `credential_paths` unreadable
+        and, for workspace, /tmp and $TMPDIR read-only. Probed with `codex sandbox` on codex
+        0.169 (macOS Seatbelt and Linux bwrap): reads there fail, every other guarantee of
+        `-s workspace-write` plus the exclude_* keys holds, a missing path is fine, and
+        `codex exec` reports the same sandbox for both."""
+        from .registry import registry_dir
+        paths = {json.dumps(str(p)): "none"  # a JSON string is a valid TOML basic string
+                 for p in [registry_dir() / "credentials", *self.cfg.credential_paths]}
+        if sandbox == "workspace-write":
+            paths |= {'":slash_tmp"': "read", '":tmpdir"': "read"}
+        extends = ":workspace" if sandbox == "workspace-write" else ":read-only"
+        rules = ", ".join(f'{k}="{v}"' for k, v in paths.items())
+        return f'permissions.bridge={{extends="{extends}", filesystem={{{rules}}}}}'
 
     def build(self, req: RunRequest, tmp: Path) -> list[str]:
         schema = tmp / "output_schema.json"
@@ -468,7 +492,8 @@ class ClaudeAdapter(Adapter):
             raise PathError(f"project path not expressible as a Claude permission rule: {self.root}")
         denied = [*_claude_credential_denies(), "Read(~/.claude/.credentials.json)",
                   *(f"Read({root}/{p})" for p in _CLAUDE_SECRET_READS),
-                  *(_home_read_deny(home) for home in req.read_deny)]
+                  *(_home_read_deny(home) for home in req.read_deny),
+                  *_secret_file_denies(self.cfg.credential_paths)]
         if req.sandbox == "workspace-write":
             if bad := rule_unsafe([*req.write_paths, *req.deny_paths]):
                 raise PathError(f"not expressible as Claude permission rules: {bad}")
@@ -491,7 +516,7 @@ class ClaudeAdapter(Adapter):
                 if not isinstance(settings, dict) or set(settings) != {"hooks"} \
                         or not isinstance(settings["hooks"], dict):
                     raise ValueError("claude_hook_settings: JSON must contain only a hooks object")
-            deny_read = verification_read_denies(self.root, req.read_deny)
+            deny_read = verification_read_denies(self.root, req.read_deny, self.cfg.credential_paths)
             deny_read += [str(Path.home() / name) for name in (
                 ".codex", ".claude", ".codex-accounts", ".claude-accounts", ".gemini",
                 ".agent-bridge/homes",
