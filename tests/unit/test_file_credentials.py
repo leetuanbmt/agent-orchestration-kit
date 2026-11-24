@@ -181,15 +181,17 @@ def test_set_token_file(project, monkeypatch):
 
 # @pt.id KIT-FILECRED-005-keychain-elsewhere
 # @pt.item credential: keychain on a host without the macOS Keychain says so
-# @pt.condition a keychain account while sys.platform is linux
+# @pt.condition a keychain account on a host without the Keychain, then on macOS
 # @pt.expected credential_check reports a problem that names credential: file
 # @pt.target bridge.accounts.credential_check
 # @pt.method unit
 # @pt.legacy a Linux keychain account read as an absent token with no reason
 def test_keychain_off_macos(tmp_path, monkeypatch):
-    monkeypatch.setattr(accounts.sys, "platform", "linux")
+    monkeypatch.setattr(accounts, "keychain_available", lambda: False)
     a = Account("k", tmp_path / "k", "anthropic", credential="keychain")
     assert "credential: file" in credential_check(a)["problem"]
+    monkeypatch.setattr(accounts, "keychain_available", lambda: True)
+    assert "problem" not in credential_check(a)
 
 
 # @pt.id KIT-FILECRED-006-config-check

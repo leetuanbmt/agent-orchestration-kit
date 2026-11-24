@@ -21,7 +21,7 @@ from typing import Any
 
 from . import install, orchestrator, osutil
 from .accounts import (CREDENTIAL_KINDS, KEYCHAIN_SERVICE, account_env, capture_env_secrets,
-                       delete_credential_file, global_auth_fingerprint,
+                       delete_credential_file, global_auth_fingerprint, keychain_available,
                        global_claude_identity, global_login_marker, keychain, keychain_account,
                        load_registry, login_argv, login_status,
                        pick_account, register, resolve_profile, shell_use,
@@ -150,7 +150,7 @@ def _set_token(args: argparse.Namespace) -> dict[str, Any]:
                          f"on macOS) in {orchestrator.account_owner(orch, name)}")
     if acc.credential == "file":
         return _set_file_token(args, cfg, acc)
-    if sys.platform != "darwin":
+    if not keychain_available():
         raise ValueError("the macOS Keychain is not available on this host: set `credential: "
                          f"file` for {name} in {orchestrator.account_owner(orch, name)}")
     item = ["-s", KEYCHAIN_SERVICE, "-a", keychain_account(acc)]

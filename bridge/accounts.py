@@ -146,6 +146,10 @@ def keychain(*args: str) -> subprocess.CompletedProcess[str] | None:
         return None
 
 
+def keychain_available() -> bool:
+    return sys.platform == "darwin"
+
+
 def _keychain_token(acc: Account) -> str | None:
     found = keychain("find-generic-password", "-s", KEYCHAIN_SERVICE,
                      "-a", keychain_account(acc), "-w")
@@ -287,7 +291,7 @@ def credential_check(acc: Account) -> dict[str, Any] | None:
     problem = None
     if acc.credential == "keychain":
         reference = f"keychain {KEYCHAIN_SERVICE}/{keychain_account(acc)}"
-        if sys.platform != "darwin":
+        if not keychain_available():
             problem = "the macOS Keychain is not available on this host: use credential: file"
     elif acc.credential == "file":
         reference = f"file {_tilde(registry_dir() / 'credentials' / acc.name)}"
