@@ -11,6 +11,7 @@ from typing import Any, Literal
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from . import accounts, osutil
 from .executor import AGENT_ENV
 from .service import Bridge
 
@@ -204,6 +205,8 @@ async def _serve() -> None:
 def main() -> None:
     if os.environ.get(AGENT_ENV):
         sys.exit("refused: the bridge cannot run inside an agent it started")
+    accounts.capture_env_secrets()
+    osutil.disable_dumps()
     asyncio.run(_serve())
 
 

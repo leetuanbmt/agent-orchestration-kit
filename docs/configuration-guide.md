@@ -164,7 +164,7 @@ agents run on the account at once, across every bridge on the machine.
 ### Claude with a long-lived token or an API key
 
 Instead of logging in inside the home, an `anthropic` account can take a token from the macOS
-Keychain or an environment variable:
+Keychain, a private file (Linux) or an environment variable:
 
 ```bash
 # claude setup-token token in the Keychain
@@ -175,7 +175,11 @@ agent-bridge account-set-token claude-ci        # prompts for the token; never o
 agent-bridge project-account-add claude-api --provider anthropic --credential keychain --credential-kind api_key
 agent-bridge account-set-token claude-api
 
-# token in an environment variable (Linux, or no Keychain)
+# token in ~/.agent-bridge/credentials/claude-vm, mode 0600 (Linux, or no Keychain)
+agent-bridge project-account-add claude-vm --provider anthropic --credential file
+agent-bridge account-set-token claude-vm        # no-echo prompt, or one line on stdin
+
+# token in an environment variable (older setups; config-check warns)
 agent-bridge project-account-add claude-env --provider anthropic --token-env AGENT_BRIDGE_CLAUDE_ENV_TOKEN
 ```
 
@@ -190,8 +194,10 @@ The rules and limits of each form:
     config from pointing at another secret, such as `GITHUB_TOKEN`. The `_TOKEN` suffix keeps it
     under the built-in scrub, so no other process inherits it.
   - Only a value starting with `sk-ant-oat` (what `setup-token` prints) is forwarded.
-  - Export the variable in the shell that starts Claude Code (the MCP server inherits it) or
-    runs `agent-bridge`.
+  - The variable must be in the environment of the process that starts the bridge. The bridge
+    moves it out of its own environment when it starts, but every other process that inherited
+    it keeps it, so never export it from a shell profile. Prefer `credential: file`; see
+    [Credentials on Linux](setup-mac-and-vm.md#credentials-on-linux) for the move.
   - While the variable is unset, the account reads as logged out.
   - Never write the token into `orchestrator.yaml`. The file lives in the worktree, and agents
     can read the worktree. Claude agents are denied `.ai/orchestrator.yaml`, but Codex agents

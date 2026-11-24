@@ -483,7 +483,16 @@ untrusted code.
 
 **Credentials.** Each account uses its own auth home, created by a fresh login, never by copying
 another profile's tokens. The bridge reads only Codex `rate_limits` events from
-`<home>/sessions/**/rollout-*.jsonl`; it never reads `auth.json` or other credential files.
+`<home>/sessions/**/rollout-*.jsonl`; it never reads `auth.json` or a CLI's other credential
+files. A Claude token or API key outside the home lives in the macOS Keychain
+(`credential: keychain`) or, on Linux, in `~/.agent-bridge/credentials/<name>`
+(`credential: file`, a `0600` file the bridge refuses if anyone else could read it). Never keep
+tokens in a shell profile: `token_env` still works, but `config-check` warns about it. The
+bridge removes `AGENT_BRIDGE_CLAUDE_*_TOKEN` variables from its own environment when it starts,
+redacts the exact value of every secret it loaded from stored output, and on Linux makes itself
+non-dumpable. Claude agents and checks on macOS are denied the store (and any `credential_paths`
+in `.ai/config.json`); Codex agents and checks on Linux can read it, and any process running as
+you can. See [Credentials on Linux](docs/setup-mac-and-vm.md#credentials-on-linux).
 
 **Trust model.** Everything the kit runs runs as your user. Human approval guards against
 mistakes and model overreach; it is not a boundary against code running as you. Anything that

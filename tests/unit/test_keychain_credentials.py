@@ -94,7 +94,7 @@ def test_keychain_config_validation():
     for bad in ({"provider": "openai", "credential": "keychain"},
                 {"provider": "anthropic", "credential": "keychain",
                  "token_env": "AGENT_BRIDGE_CLAUDE_X_TOKEN"},
-                {"provider": "anthropic", "credential": "file"}):
+                {"provider": "anthropic", "credential": "vault"}):
         with pytest.raises(ValidationError):
             AccountProfile(**bad)
 

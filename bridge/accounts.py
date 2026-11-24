@@ -9,14 +9,16 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
+import sys
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import osutil, registry, storage
+from . import osutil, registry, security, storage
 from .config import BridgeConfig
 from .registry import known_projects as known_projects
 from .registry import registry_dir
@@ -68,7 +70,8 @@ class Account:
     # Name of a variable in the bridge's own environment holding this account's Claude token
     # (`claude setup-token`); passed to its runs only, as CLAUDE_CODE_OAUTH_TOKEN.
     token_env: str | None = None
-    # "keychain": the same token, stored in the macOS Keychain (`account-set-token`).
+    # "keychain": the same token, stored in the macOS Keychain (`account-set-token`); "file":
+    # in a 0600 file under ~/.agent-bridge/credentials (hosts without a Keychain).
     credential: str | None = None
     # What that secret is: a setup-token ("oauth_token") or a Console API key ("api_key").
     credential_kind: str = "oauth_token"
@@ -149,10 +152,127 @@ def _keychain_token(acc: Account) -> str | None:
     return found.stdout.strip() if found is not None and found.returncode == 0 else None
 
 
+# token_env variables, moved out of os.environ on first sight so no child inherits them even if
+# an env_allow entry or a hook's own environment would let one through the scrub.
+TOKEN_ENV_RE = re.compile(r"AGENT_BRIDGE_CLAUDE_[A-Z0-9_]{1,40}_TOKEN")
+_ENV_SECRETS: dict[str, str] = {}
+
+
+def capture_env_secrets() -> None:
+    """Move every token_env-shaped variable from os.environ into memory (start of each command)."""
+    for name in [k for k in os.environ if TOKEN_ENV_RE.fullmatch(k)]:
+        _ENV_SECRETS[name] = os.environ.pop(name)
+        security.remember_secret(_ENV_SECRETS[name])
+
+
+def bridge_child_env(env: Mapping[str, str]) -> dict[str, str]:
+    """`env` plus the captured token variables, for a bridge CLI child (TUI, web) only."""
+    return {**env, **_ENV_SECRETS}
+
+
+def _env_secret(name: str | None) -> str:
+    if not name:
+        return ""
+    capture_env_secrets()
+    return _ENV_SECRETS.get(name, "")
+
+
+_FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._-]{0,79}")
+
+
+def credential_file(acc: Account) -> Path:
+    if not _FILE_NAME.fullmatch(acc.name) or ".." in acc.name:
+        raise ValueError(f"account {acc.name!r} cannot name a credential file")
+    return registry_dir() / "credentials" / acc.name
+
+
+def _tilde(path: Path) -> str:
+    try:
+        return f"~/{path.relative_to(Path.home())}"
+    except ValueError:
+        return str(path)
+
+
+def _store_problem(directory: Path) -> str | None:
+    try:
+        st = directory.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o777 != 0o700:
+        return f"{_tilde(directory)} must be a 0700 directory (not a symlink) owned by you"
+    return None
+
+
+def _file_secret(acc: Account) -> tuple[bool, str, str | None]:
+    """(present, value, problem). The value is read only from a regular file the user owns that
+    no one else can read; a refused file yields "" and the reason, never its content."""
+    try:
+        path = credential_file(acc)
+    except ValueError as e:
+        return False, "", str(e)
+    if problem := _store_problem(path.parent):
+        return os.path.lexists(path), "", problem
+    try:
+        # O_NOFOLLOW refuses a symlink, O_NONBLOCK a FIFO that would hang; fstat judges the
+        # very file that is read.
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return False, "", None
+    except OSError:
+        return True, "", f"{_tilde(path)} is not a regular file"
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return True, "", f"{_tilde(path)} is not a regular file"
+        if st.st_uid != os.geteuid():
+            return True, "", f"{_tilde(path)} is not owned by you"
+        if st.st_mode & 0o077:
+            return True, "", (f"{_tilde(path)} is group- or world-readable (mode "
+                              f"{st.st_mode & 0o777:04o}): chmod 600 {_tilde(path)}")
+        value = os.read(fd, 65536).decode(errors="replace").strip()
+    finally:
+        os.close(fd)
+    return True, value, None
+
+
+def store_credential_file(acc: Account, value: str) -> Path:
+    """Write the account's secret atomically: 0600 file in a 0700 directory."""
+    path = credential_file(acc)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not path.parent.is_symlink() and path.parent.stat().st_uid == os.geteuid():
+        path.parent.chmod(0o700)
+    if problem := _store_problem(path.parent):
+        raise ValueError(problem)
+    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as out:
+            out.write(value + "\n")
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return path
+
+
+def delete_credential_file(acc: Account) -> bool:
+    try:
+        credential_file(acc).unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def _raw_secret(acc: Account) -> str:
     if acc.credential == "keychain":
-        return _keychain_token(acc) or ""
-    return os.environ.get(acc.token_env or "", "")
+        secret = _keychain_token(acc) or ""
+    elif acc.credential == "file":
+        secret = _file_secret(acc)[1]
+    else:
+        secret = _env_secret(acc.token_env)
+    security.remember_secret(secret)
+    return secret
 
 
 def claude_token(acc: Account) -> str | None:
@@ -164,15 +284,26 @@ def claude_token(acc: Account) -> str | None:
 def credential_check(acc: Account) -> dict[str, Any] | None:
     """Where the account's secret comes from and whether it is usable; never the value.
     None when the account relies on its home's own CLI login."""
+    problem = None
     if acc.credential == "keychain":
         reference = f"keychain {KEYCHAIN_SERVICE}/{keychain_account(acc)}"
+        if sys.platform != "darwin":
+            problem = "the macOS Keychain is not available on this host: use credential: file"
+    elif acc.credential == "file":
+        reference = f"file {_tilde(registry_dir() / 'credentials' / acc.name)}"
     elif acc.token_env:
         reference = f"env {acc.token_env}"
     else:
         return None
-    raw = _raw_secret(acc)
-    return {"reference": reference, "kind": acc.credential_kind, "present": bool(raw),
-            "well_formed": raw.startswith(CREDENTIAL_KINDS[acc.credential_kind][1])}
+    if acc.credential == "file":
+        present, raw, problem = _file_secret(acc)
+        security.remember_secret(raw)
+    else:
+        raw = _raw_secret(acc)
+        present = bool(raw)
+    out = {"reference": reference, "kind": acc.credential_kind, "present": present,
+           "well_formed": raw.startswith(CREDENTIAL_KINDS[acc.credential_kind][1])}
+    return out | ({"problem": problem} if problem else {})
 
 
 def account_env(acc: Account, base: Mapping[str, str]) -> dict[str, str]:
@@ -180,7 +311,7 @@ def account_env(acc: Account, base: Mapping[str, str]) -> dict[str, str]:
     if acc.home is not None:
         env[HOME_ENV[acc.provider]] = str(acc.home)
     if acc.token_env or acc.credential:
-        # Read from the bridge's environment or the Keychain, not `base`: scrubbing removed it
+        # Read from the bridge's memory, the Keychain or the file store, not `base`: scrubbing removed it
         # there, so no other account's run (and no verification command) ever sees it. A key
         # an `env_allow` let through would win over the token in `claude -p`, so it goes too.
         env.pop(CLAUDE_TOKEN_ENV, None)

@@ -19,11 +19,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import install, orchestrator
-from .accounts import (KEYCHAIN_SERVICE, account_env, global_auth_fingerprint,
+from . import install, orchestrator, osutil
+from .accounts import (CREDENTIAL_KINDS, KEYCHAIN_SERVICE, account_env, capture_env_secrets,
+                       delete_credential_file, global_auth_fingerprint,
                        global_claude_identity, global_login_marker, keychain, keychain_account,
                        load_registry, login_argv, login_status,
-                       pick_account, register, resolve_profile, shell_use, unregister)
+                       pick_account, register, resolve_profile, shell_use,
+                       store_credential_file, unregister)
 from .config import AI_DIR, BridgeConfig, ensure_ai_dir, find_root, load_config
 from .executor import AGENT_ENV
 from .registry import registry_dir
@@ -143,9 +145,14 @@ def _set_token(args: argparse.Namespace) -> dict[str, Any]:
     orch = orchestrator.load(root, cfg)
     name = _pick(args, _providers(orch))
     acc = resolve_account(orch, cfg, root, name)
-    if acc.credential != "keychain":
-        raise ValueError(f"account {name} needs `credential: keychain` in "
-                         f"{orchestrator.account_owner(orch, name)}")
+    if acc.credential not in ("keychain", "file"):
+        raise ValueError(f"account {name} needs `credential: file` (or `credential: keychain` "
+                         f"on macOS) in {orchestrator.account_owner(orch, name)}")
+    if acc.credential == "file":
+        return _set_file_token(args, cfg, acc)
+    if sys.platform != "darwin":
+        raise ValueError("the macOS Keychain is not available on this host: set `credential: "
+                         f"file` for {name} in {orchestrator.account_owner(orch, name)}")
     item = ["-s", KEYCHAIN_SERVICE, "-a", keychain_account(acc)]
     if args.delete:
         done = keychain("delete-generic-password", *item)
@@ -160,6 +167,26 @@ def _set_token(args: argparse.Namespace) -> dict[str, Any]:
     if done.returncode != 0:
         raise SystemExit(done.returncode)
     return {"account": name, "stored": True, "logged_in": login_status(cfg, acc) is True}
+
+
+def _set_file_token(args: argparse.Namespace, cfg: BridgeConfig, acc: Any) -> dict[str, Any]:
+    """The value comes from a no-echo prompt or a pipe, never argv, and is checked before it
+    replaces the stored one."""
+    if args.delete:
+        return {"account": acc.name, "deleted": delete_credential_file(acc)}
+    prefix = CREDENTIAL_KINDS[acc.credential_kind][1]
+    what = ("the Anthropic Console API key" if acc.credential_kind == "api_key"
+            else "the token `claude setup-token` printed")
+    if sys.stdin.isatty():
+        value = getpass.getpass(f"Paste {what} (not echoed): ")
+    else:
+        value = sys.stdin.readline()
+    value = value.strip()
+    if not value.startswith(prefix):
+        raise ValueError(f"that is not {what}: it must start with {prefix}; nothing was stored")
+    path = store_credential_file(acc, value)
+    return {"account": acc.name, "stored": True, "file": str(path),
+            "logged_in": login_status(cfg, acc) is True}
 
 
 def _managed_paths() -> tuple[Path, Path, Path]:
@@ -495,10 +522,11 @@ def _project_account_add(args: argparse.Namespace) -> dict[str, Any]:
         home.mkdir(mode=0o700, parents=True)
         if provider == "openai":
             (home / "config.toml").write_text('cli_auth_credentials_store = "file"\n')
-    if args.credential == "keychain":
+    if args.credential in ("keychain", "file"):
         step = f"agent-bridge account-set-token {args.name}"
     elif args.token_env:
-        step = f"export {args.token_env}=... in the shell that starts Claude Code"
+        step = (f"set {args.token_env} only in the environment of the process that starts the "
+                "bridge, never in a shell profile (or use --credential file)")
     else:
         step = f"agent-bridge account-login {args.name}"
     return {"account": args.name, "agent": agent, "home": resolve_home,
@@ -713,6 +741,8 @@ def _project_account_remove(args: argparse.Namespace) -> dict[str, Any]:
         done = keychain("delete-generic-password", "-s", KEYCHAIN_SERVICE,
                         "-a", keychain_account(acc))
         deleted = done is not None and done.returncode == 0
+    elif entry.get("credential") == "file":
+        deleted = delete_credential_file(acc)
     # The home may hold a login worth keeping, so it is never deleted here.
     return {"account": args.name, "agents_removed": sorted(gone), "token_deleted": deleted,
             "home_kept": entry.get("home")}
@@ -799,7 +829,12 @@ async def _run(args: argparse.Namespace) -> Any:
             "ok": True, "source": orch.source, "stages": orch.workflow.stages,
             "accounts": sorted(orch.accounts), "agents": sorted(orch.agents),
             "roles": {r: orch.role(r).agents for r in orch.roles}}
-        if warnings := _limit_warnings(orch):
+        warnings = _limit_warnings(orch) + [
+            f"accounts.{name}: token_env {p.token_env} keeps the token in the environment of "
+            "whatever starts the bridge; move it to the file store: set `credential: file`, run "
+            f"`agent-bridge account-set-token {name}`, then unset the variable"
+            for name, p in sorted(orch.accounts.items()) if p.token_env]
+        if warnings:
             out["warnings"] = warnings
         if moved := orchestrator.deprecated(orch, cfg_here):
             out["deprecated"] = moved
@@ -824,7 +859,8 @@ async def _run(args: argparse.Namespace) -> Any:
         return None
     # Choosing roles, accounts and fallback is the user's decision, like the account commands.
     if ((args.cmd in HUMAN_ACCOUNT_CMDS or args.cmd in ("config-init", "config-migrate"))
-            and not (sys.stdin.isatty() and sys.stdout.isatty())):
+            # account-set-token may read the token from a pipe; its output still needs a terminal.
+            and not (sys.stdout.isatty() and (sys.stdin.isatty() or args.cmd == "account-set-token"))):
         print(f"refused: {args.cmd} needs an interactive terminal (human only)", file=sys.stderr)
         raise SystemExit(2)
     if args.cmd == "config-init":
@@ -1054,8 +1090,9 @@ def main(argv: list[str] | None = None) -> None:
                                       "from it; no new home is created)")
     padd.add_argument("--home", help="auth home (default: a new ~/.agent-bridge/homes/<name>)")
     cred = padd.add_mutually_exclusive_group()
-    cred.add_argument("--credential", choices=["keychain"],
-                      help="anthropic: keep a setup-token in the macOS Keychain")
+    cred.add_argument("--credential", choices=["file", "keychain"],
+                      help="anthropic: keep a setup-token in a 0600 file under "
+                           "~/.agent-bridge/credentials (file) or the macOS Keychain")
     cred.add_argument("--token-env", help="anthropic: AGENT_BRIDGE_CLAUDE_<NAME>_TOKEN")
     padd.add_argument("--credential-kind", choices=["oauth_token", "api_key"],
                       default="oauth_token", help="anthropic: what the secret is: a "
@@ -1099,8 +1136,9 @@ def main(argv: list[str] | None = None) -> None:
     for cmd in (pag, prem):
         cmd.add_argument("--apply", action="store_true", help="write the file after a backup")
     token = sub.add_parser("account-set-token", help="HUMAN ONLY: store a setup-token or API "
-                                                     "key in the macOS Keychain for an "
-                                                     "account with `credential: keychain`")
+                                                     "key for an account with `credential: "
+                                                     "file` (a 0600 file; read from a no-echo "
+                                                     "prompt or stdin) or `credential: keychain`")
     token.add_argument("name")
     token.add_argument("--delete", action="store_true", help="remove the stored token")
     sub.add_parser("account-remove", help="HUMAN ONLY: forget a machine-wide account and "
@@ -1178,6 +1216,10 @@ def main(argv: list[str] | None = None) -> None:
     if os.environ.get(AGENT_ENV):
         print("refused: the bridge cannot run inside an agent it started", file=sys.stderr)
         raise SystemExit(2)
+    # Token variables leave os.environ before anything starts a child; on Linux no same-user
+    # process can then read them from /proc/<pid>/environ or this process's memory.
+    capture_env_secrets()
+    osutil.disable_dumps()
     if args.cmd == "web":
         from . import webui
 

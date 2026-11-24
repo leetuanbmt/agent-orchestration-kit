@@ -18,7 +18,7 @@ from .models import ACTIVE, Actor, ReviewDecision, State, leftover_failure, run_
     verdict
 from .review import EvidenceError, content_hashes, current_head, diff, protected_after, recheck, \
     run_verification, scope_violations, touches_sensitive, verification_read_denies
-from .security import matches, process_started, redact
+from .security import matches, process_started, redact, redact_obj
 from .state import LimitExceeded
 
 if TYPE_CHECKING:
@@ -222,7 +222,9 @@ class TaskRunner:
             b._record_account(account.name, res, usage_id, task_id)
         changes = diff(b.root, before, b.cfg.protected_paths)
         record = dict(exit_code=res.exit_code, outcome=res.outcome, session_id=res.session_id,
-                      final=res.final or {"raw": res.final_text[-3000:]}, usage=res.usage,
+                      # The executor writes its report: stored and shown, so redacted like its text.
+                      final=redact_obj(res.final) if res.final else {"raw": res.final_text[-3000:]},
+                      usage=res.usage,
                       stderr_tail=res.stderr_tail, changes=changes)
 
         # Verification-only ignored changes must gate when nobody reviews the evidence.
@@ -280,7 +282,8 @@ class TaskRunner:
                                          on_start=check_started, confine=flow.verify_sandbox,
                                          writable=flow.verify_writable,
                                          read_deny=verification_read_denies(
-                                             b.root, b._account_homes())) if commands else [])
+                                             b.root, b._account_homes(),
+                                             b.cfg.credential_paths)) if commands else [])
         stopped = cancelled()  # checks cut short (or never started) prove nothing
         touched, later = changes["files"], []
         if commands:  # the checks ran code in the worktree: judge what they changed too

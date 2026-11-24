@@ -101,7 +101,7 @@ def test_seatbelt_read_denies(monkeypatch, tmp_path):
 # @pt.id KIT-SEC-READDENY-001
 # @pt.item Credential paths denied to verification code
 # @pt.condition two account homes and a project root
-# @pt.expected homes, registry homes dir, both global credential files and both .ai token files listed; .ai/config.json not
+# @pt.expected homes, registry homes and credentials dirs, both global credential files and both .ai token files listed; .ai/config.json not
 # @pt.target bridge.review.verification_read_denies
 # @pt.method unit
 # @pt.legacy F-03: nothing was read-denied
@@ -112,7 +112,8 @@ def test_verification_read_denies(tmp_path):
     homes = [str(tmp_path / "h1"), str(tmp_path / "h2")]
     denies = review.verification_read_denies(root, homes)
     home = Path.home()
-    expected = [*homes, str(registry_dir() / "homes"), str(home / ".codex" / "auth.json"),
+    expected = [*homes, str(registry_dir() / "homes"), str(registry_dir() / "credentials"),
+                str(home / ".codex" / "auth.json"),
                 str(home / ".claude" / ".credentials.json"),
                 str(root / ".ai" / "orchestrator.yaml"), str(root / ".ai" / "accounts.yaml")]
     assert denies == expected

@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 
-from . import osutil, progress
+from . import accounts, osutil, progress
 from .security import redact
 
 STARTABLE = {"execute": {"READY"}, "resume": {"REWORK", "FAILED", "PAUSED"}}
@@ -22,7 +22,7 @@ NOT_FOUND = (404, {"error": "not found"})
 
 
 def _env(root: str) -> dict:
-    env = dict(os.environ)
+    env = accounts.bridge_child_env(os.environ)  # bridge CLI children that run tasks
     env["BRIDGE_PROJECT_ROOT"] = root
     return env
 

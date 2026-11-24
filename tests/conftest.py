@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from bridge import progress
+from bridge import accounts, progress, security
 from bridge.config import BridgeConfig
 from bridge.executor import AGENT_ENV
 from bridge.orchestrator import parse
@@ -30,6 +30,9 @@ def isolated_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.
     monkeypatch.delenv(AGENT_ENV, raising=False)
     # The dashboard caches git topology for seconds; every test starts from a fresh repo layout.
     monkeypatch.setattr(progress, "_TOPOLOGY", {})
+    # Captured token variables and remembered secret values are per process: per test here.
+    monkeypatch.setattr(accounts, "_ENV_SECRETS", {})
+    monkeypatch.setattr(security, "_LOADED_SECRETS", set())
 
 
 def git(root: Path, *args: str) -> None:

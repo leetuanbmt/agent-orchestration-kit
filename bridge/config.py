@@ -47,6 +47,9 @@ class BridgeConfig(BaseModel):
     claude_bin: str = "claude"
     # Owner-supplied hooks-only file: trusted code runs without a sandbox.
     claude_hook_settings: str | None = None
+    # Files or directories holding secrets (e.g. the env file a wrapper sources token_env from):
+    # denied to Claude agents' reads and Bash and to verification commands, like account homes.
+    credential_paths: list[str] = []
     opencode_bin: str = "opencode"
     agy_bin: str = "agy"
     model: str | None = None
@@ -85,6 +88,20 @@ class BridgeConfig(BaseModel):
     def enforce_safety_floor(self) -> BridgeConfig:
         self.protected_paths = list(dict.fromkeys([*DEFAULT_PROTECTED_PATHS, *self.protected_paths]))
         self.env_deny = list(dict.fromkeys([*DEFAULT_ENV_DENY, *self.env_deny]))
+        return self
+
+    @model_validator(mode="after")
+    def validate_credential_paths(self) -> BridgeConfig:
+        from .security import rule_unsafe
+        paths = [str(Path(p).expanduser()) for p in self.credential_paths]
+        for p in paths:
+            # Each becomes a Claude Read(...) rule and a Seatbelt literal: no glob, quote or
+            # control character may widen or break either.
+            if not Path(p).is_absolute() or rule_unsafe([p]) or set(p) & set('*?[]{}!"\\') \
+                    or any(ord(c) < 32 or ord(c) == 127 for c in p):
+                raise ValueError(f"credential_paths: {p!r} must be an absolute path without "
+                                 "spaces, quotes, glob or control characters")
+        self.credential_paths = paths
         return self
 
     @model_validator(mode="after")

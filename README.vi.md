@@ -484,7 +484,16 @@ sandbox hoàn chỉnh cho code không đáng tin cậy.
 
 **Credential.** Mỗi account dùng auth home riêng, tạo bằng một lần đăng nhập mới, không bao giờ
 sao chép token của profile khác. Bridge chỉ đọc các event `rate_limits` của Codex trong
-`<home>/sessions/**/rollout-*.jsonl`; không bao giờ đọc `auth.json` hay file credential khác.
+`<home>/sessions/**/rollout-*.jsonl`; không bao giờ đọc `auth.json` hay các file credential
+khác của CLI. Token hoặc API key Claude nằm ngoài home được lưu trong macOS Keychain
+(`credential: keychain`) hoặc, trên Linux, trong `~/.agent-bridge/credentials/<name>`
+(`credential: file`, một file `0600` mà bridge từ chối nếu người khác đọc được). Đừng bao giờ để
+token trong shell profile: `token_env` vẫn chạy, nhưng `config-check` cảnh báo. Bridge xóa các
+biến `AGENT_BRIDGE_CLAUDE_*_TOKEN` khỏi môi trường của chính nó khi khởi động, redact đúng giá trị
+của mọi secret đã nạp khỏi output được lưu, và trên Linux tự đặt non-dumpable. Agent Claude và
+check trên macOS bị chặn đọc kho này (và mọi `credential_paths` trong `.ai/config.json`); agent
+Codex và check trên Linux vẫn đọc được, và mọi process chạy dưới user của bạn cũng vậy. Xem
+[Credentials on Linux](docs/setup-mac-and-vm.md#credentials-on-linux).
 
 **Mô hình tin cậy.** Mọi thứ kit chạy đều chạy với quyền user của bạn. Bước duyệt của con người
 chống lại sai sót và việc model vượt quyền; nó không phải ranh giới chống lại code chạy dưới tên

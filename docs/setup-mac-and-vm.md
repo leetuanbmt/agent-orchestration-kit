@@ -4,7 +4,7 @@
 
 This page walks one project from nothing to a working setup with several Claude accounts, twice:
 on a Mac, where secrets can live in the Keychain, and on a Linux VM you reach over SSH, where
-they cannot. Every command is meant to be run by you in a terminal: the account commands are
+they live in the bridge's private file store. Every command is meant to be run by you in a terminal: the account commands are
 human-only and refuse to run without one.
 
 Placeholders: `<name>` is an account name, `<PROJECT>` is the project's git root, `<NAME>` is the
@@ -24,11 +24,12 @@ depends on the machine:
 | Machine | Where the secret lives | Flag on `project-account-add` | Store it with |
 |---|---|---|---|
 | Mac | The login Keychain | `--credential keychain` | `agent-bridge account-set-token <name>` |
-| Linux VM | An environment variable of the process that runs the bridge | `--token-env AGENT_BRIDGE_CLAUDE_<NAME>_TOKEN` | You export the variable (see [Part 2](#part-2-a-linux-vm-over-ssh)) |
+| Linux VM | A `0600` file, `~/.agent-bridge/credentials/<name>` | `--credential file` | `agent-bridge account-set-token <name>` (see [Part 2](#part-2-a-linux-vm-over-ssh)) |
 
 Add `--credential-kind api_key` for a Console API key; the default is `oauth_token`.
-`account-set-token` refuses an account that does not use `credential: keychain`, so never run it
-for a `--token-env` account.
+`account-set-token` refuses an account that uses neither `credential: keychain` nor
+`credential: file`. The older `--token-env` (an environment variable) still works, but
+`config-check` warns about it: see [Credentials on Linux](#credentials-on-linux).
 
 ## Part 1: a Mac
 
@@ -113,10 +114,10 @@ prove the account works.
 
 ## Part 2: a Linux VM over SSH
 
-Linux has no Keychain, so every Claude account on the VM uses `--token-env`. The two traps are
-both about the shell that runs the bridge: an SSH command (`ssh host 'agent-bridge agents'`) and
-Claude Code started from a remote session are **not interactive**, and non-interactive shells
-skip most startup files.
+Linux has no Keychain, so every Claude account on the VM uses `--credential file`. An SSH command
+(`ssh host 'agent-bridge agents'`) and Claude Code started from a remote session are **not
+interactive**, and non-interactive shells skip most startup files: only `PATH` has to reach them.
+The secrets do not, because the bridge reads them from its file store at run time.
 
 ### 1. Install and find the binary
 
@@ -128,7 +129,7 @@ ssh <host>
 which agent-bridge
 ```
 
-### 2. Make `PATH` and the secrets visible to non-interactive shells
+### 2. Make `PATH` visible to non-interactive shells
 
 Find the login shell:
 
@@ -136,16 +137,18 @@ Find the login shell:
 getent passwd "$USER" | cut -d: -f7
 ```
 
-For **zsh**, `~/.zshenv` is read by every zsh, interactive or not, so put both lines there:
+For **zsh**, `~/.zshenv` is read by every zsh, interactive or not:
 
 ```bash
 grep -q '.local/bin' ~/.zshenv 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshenv
-grep -q 'agent-bridge/env' ~/.zshenv 2>/dev/null || echo '[ -f ~/.config/agent-bridge/env ] && . ~/.config/agent-bridge/env' >> ~/.zshenv
 ```
 
-For **bash**, put the same two lines at the very top of `~/.bashrc`, above any "if not running
+For **bash**, put the same line at the very top of `~/.bashrc`, above any "if not running
 interactively, return" guard (Ubuntu's file starts with one). This path was not tested for this
 guide.
+
+Never put a token in a shell profile or in a file one sources: every shell then carries it,
+including the shells of agent sessions, and anything that prints its environment publishes it.
 
 ### 3. Create the project configuration
 
@@ -158,54 +161,41 @@ agent-bridge config-check
 
 ### 4. Declare each account
 
-The variable name must match `AGENT_BRIDGE_CLAUDE_<NAME>_TOKEN`; the namespace stops a tampered
-config from pointing at another secret such as `GITHUB_TOKEN`. Use a name made of letters and
-digits.
-
 ```bash
-agent-bridge project-account-add <name> --provider anthropic --token-env AGENT_BRIDGE_CLAUDE_<NAME>_TOKEN
+agent-bridge project-account-add <name> --provider anthropic --credential file
 ```
 
 For a Console API key add `--credential-kind api_key`.
 
-### 5. Store the secrets in a private file
+### 5. Store each secret
 
 Get each token on a machine where you can sign in (`claude setup-token` for a subscription, the
-Console for an API key). On the VM, create the file with a prompt that does not echo. In **zsh**:
+Console for an API key). On the VM, in a terminal (`ssh -t <host>`), run once per account:
 
 ```bash
-umask 077; mkdir -p ~/.config/agent-bridge; f=~/.config/agent-bridge/env; : > "$f"
-for v in <NAME1> <NAME2>; do
-  read -rs "t?token for $v: "; echo
-  printf 'export AGENT_BRIDGE_CLAUDE_%s_TOKEN=%q\n' "$v" "$t" >> "$f"
-done; unset t; wc -c "$f"
+agent-bridge account-set-token <name>
 ```
 
-In **bash** the prompt flag differs; replace the `read` line with `read -rsp "token for $v: " t`.
-`zsh` reads `-p` as something else, which leaves `t` empty and writes lines with no value: the
-file then holds the right number of lines but only a few dozen bytes each. After the loop,
-`wc -c` should show more than 100 bytes per account.
-
-The file sits outside the repository with mode `600`. It is plaintext. A Claude agent with
-`allow_bash` runs as you and can read it, so keep `allow_bash` off for work you do not trust, as
-described in [Security](../README.md#security-model-and-limitations).
+It prompts without echo (or reads one line from a pipe), refuses a value without the account's
+prefix, and writes `~/.agent-bridge/credentials/<name>` atomically with mode `0600` in a `0700`
+directory. `agent-bridge account-set-token <name> --delete` removes it.
 
 ### 6. Check from the machine you will actually use
 
 Run the checks through SSH, the same way the bridge will be started, not from an interactive
-shell. The first prints only `set` and the length, never the token. In zsh:
+shell:
 
 ```bash
-ssh <host> 'for v in <NAME1> <NAME2>; do n="AGENT_BRIDGE_CLAUDE_${v}_TOKEN"; [ -n "${(P)n:-}" ] && echo "$v set, len ${#${(P)n}}" || echo "$v EMPTY"; done'
 ssh <host> 'cd <PROJECT> && for a in <name1> <name2>; do agent-bridge account-verify "$a"; done'
 ssh <host> 'cd <PROJECT> && agent-bridge agents | grep -E "\"agent\"|\"available\"|unavailable_reason"'
 ```
 
-A subscription token is about 100 characters or more. If two accounts must have separate quota,
-make sure their tokens differ without printing them:
+`account-verify` shows `reference: file ~/.agent-bridge/credentials/<name>`, `present` and
+`well_formed`, plus a `problem` when the bridge refuses the file. If two accounts must have
+separate quota, make sure their tokens differ without printing them:
 
 ```bash
-ssh <host> 'for v in <NAME1> <NAME2>; do n="AGENT_BRIDGE_CLAUDE_${v}_TOKEN"; printf "%s " "$v"; printf %s "${(P)n}" | sha256sum | cut -c1-8; done'
+ssh <host> 'for a in <name1> <name2>; do printf "%s " "$a"; sha256sum < ~/.agent-bridge/credentials/"$a" | cut -c1-8; done'
 ```
 
 Equal hashes mean the same token was pasted twice, and both accounts then share one quota.
@@ -213,6 +203,66 @@ Equal hashes mean the same token was pasted twice, and both accounts then share 
 ### 7. Add the agents
 
 Same as Part 1, step 4.
+
+## Credentials on Linux
+
+The bridge reads a `credential: file` secret only when it builds an account's run environment
+or checks the credential, and refuses it, without reading it, when the file is a symlink, is not
+a regular file, is not owned by you, or is group- or world-readable, or when
+`~/.agent-bridge/credentials` is not a `0700` directory. The refusal shows up as a `problem` in
+`account-verify` and as an `AUTH` pause on a run.
+
+What keeps the file from the agents:
+
+| Who | Can it read `~/.agent-bridge/credentials`? |
+|---|---|
+| A Claude agent's Read, Glob and Grep tools | No: denied by `--disallowedTools` rules, like the account homes |
+| A Claude agent's Bash (`allow_bash: true`) | No: in the sandbox's `denyRead` list |
+| A verification command on macOS (Seatbelt) | No: denied by the profile |
+| A verification command on Linux (Landlock) | **Yes.** Landlock restricts writes only. Its output is still redacted |
+| A Codex agent (`workspace-write`) | **Yes.** The `workspace-write` sandbox lets commands read any file (probed with Codex 0.169 on macOS), so the store is not protected from Codex. Codex permission profiles can deny a path, but the bridge does not use them yet |
+| Another process running as your user | Yes. The bridge only stops it reading the bridge's own environment and memory: on Linux `serve` and every CLI command mark themselves non-dumpable (`PR_SET_DUMPABLE 0`) |
+
+The bridge also moves every `AGENT_BRIDGE_CLAUDE_*_TOKEN` variable out of its own environment
+when it starts, so no child inherits one, and redacts the exact value of every secret it loaded
+from stored output (agent reports, logs, events, check output).
+
+List any other file that holds secrets, such as an old token env file a wrapper still sources, in
+`credential_paths` in `.ai/config.json` (see [Configuration](configuration.md)). Claude agents and
+checks are then denied it the same way.
+
+### Move from `token_env` to the file store
+
+For each account that has `token_env`, in a terminal on the VM. Keep the old env file until
+`account-verify` passes: you paste the same token again at the prompt.
+
+```bash
+agent-bridge config-unset accounts.<name>.token_env --apply
+agent-bridge config-set accounts.<name>.credential file --apply
+agent-bridge account-set-token <name>
+agent-bridge account-verify <name>
+```
+
+For an account with `credential_kind: api_key`, take the kind off first and put it back last
+(`credential_kind` needs a credential source, and `token_env` and `credential` cannot be set
+together):
+
+```bash
+agent-bridge config-unset accounts.<name>.credential_kind --apply
+agent-bridge config-unset accounts.<name>.token_env --apply
+agent-bridge config-set accounts.<name>.credential file --apply
+agent-bridge config-set accounts.<name>.credential_kind api_key --apply
+agent-bridge account-set-token <name>
+agent-bridge account-verify <name>
+```
+
+These sequences were run against a scratch project through the same code as `config-set` and
+`config-unset`. When every account is moved, delete
+the env file (`~/.config/agent-bridge/env` in earlier versions of this guide) and the line that
+sources it from `~/.zshenv` or `~/.bashrc`, then open new shells and restart Claude Code so no
+process keeps the old variables.
+
+`agent-bridge config-check` warns about each account that still uses `token_env`.
 
 ## Roles, quota and limits (both machines)
 
@@ -249,7 +299,7 @@ before the account, and a role must not be left empty:
 2. `agent-bridge project-agent-remove <agent> --apply` (it lists unfinished tasks pinned to it).
 3. `agent-bridge project-account-remove <name>` (you type the name to confirm). The auth home is
    kept; delete it yourself if it should go.
-4. On a VM, delete that account's `export` line from `~/.config/agent-bridge/env`.
+4. A `credential: file` or `credential: keychain` secret is deleted with the account.
 
 ## When something does not work
 
@@ -258,16 +308,20 @@ before the account, and a role must not be left empty:
 | `orchestrator.yaml is missing: start one with config-init first` | `init` does not write it | `agent-bridge config-init <example>` |
 | `refused: ... orchestrator.yaml exists` | `config-init` never overwrites | It is already there: run `config-check`, do not delete it |
 | `agent-bridge: command not found` over SSH, but fine when logged in | `~/.local/bin` is not on `PATH` for non-interactive shells | Part 2, step 2 |
-| Account `logged out` over SSH, secret set in your own shell | The variable is only exported in that shell | Part 2, steps 2 and 5 |
-| Account `logged out`, file has the right number of lines but is tiny | The `read` flag was wrong for the shell, so the tokens are empty | Recreate the file with Part 2, step 5 |
-| `needs credential: keychain` from `account-set-token` | The account uses `--token-env` | Skip `account-set-token`; set the variable |
+| `needs credential: file` from `account-set-token` | The account uses `--token-env` | [Move it to the file store](#move-from-token_env-to-the-file-store) |
+| `problem: ... group- or world-readable` | The file's mode lets others read it | `chmod 600 ~/.agent-bridge/credentials/<name>` |
+| `problem: ... must be a 0700 directory` | The store directory is shared or a symlink | `chmod 700 ~/.agent-bridge/credentials` (replace a symlink with a directory) |
+| `problem: the macOS Keychain is not available` | `credential: keychain` on Linux | Use `credential: file` |
 | `account-verify` is `ok: true` but a task stops with an auth error | `account-verify` does not call Anthropic | The token is revoked or expired: issue a new one |
 | `AUTH` pause | Missing or wrong-prefix secret | Fix the secret, then `bridge_resume_task`; the bridge never switches account on AUTH |
 
 ## What was verified
 
-The Linux VM steps were run on a real VM whose login shell is zsh: `config-init`, `project-account-add --token-env`,
-`project-agent-add`, the environment file read by an SSH command, `account-verify`, `agents`,
+The Linux VM steps were first run on a real VM whose login shell is zsh with `--token-env`:
+`config-init`, `project-account-add`, `project-agent-add`, `account-verify`, `agents`,
 `config-set` for roles and `routing.quota_fallback.enabled`, and removing agents and accounts.
+The `credential: file` steps (Part 2, steps 4 to 6, and the migration) are covered by the kit's
+tests on macOS and were not rerun on the VM for this page. The non-dumpable flag and the Landlock
+row of the table are Linux behaviour that the tests check only on Linux.
 The Mac steps follow the documented behavior of `--credential keychain` and `account-set-token`
 and were not run for this page. The bash variants are untested.

@@ -209,12 +209,15 @@ def git_write_denies(root: Path) -> list[str]:
             str(common / "info")]
 
 
-def verification_read_denies(root: Path, homes: list[str] | list[Path]) -> list[str]:
+def verification_read_denies(root: Path, homes: list[str] | list[Path],
+                             credential_paths: list[str] | tuple[str, ...] = ()) -> list[str]:
     """Credential paths a verification command must not read (Seatbelt): every account home, the
-    registry's homes directory, the global Codex/Claude logins and the project's private bridge config files."""
+    registry's homes and credentials directories, the owner's `credential_paths`, the global
+    Codex/Claude logins and the project's private bridge config files."""
     from .registry import registry_dir
     home = Path.home()
     paths = [*(str(Path(h).expanduser()) for h in homes), str(registry_dir() / "homes"),
+             str(registry_dir() / "credentials"), *credential_paths,
              str(home / ".codex" / "auth.json"), str(home / ".claude" / ".credentials.json"),
              str(Path(root) / ".ai" / "orchestrator.yaml"), str(Path(root) / ".ai" / "accounts.yaml")]
     return list(dict.fromkeys(str(Path(p).absolute()) for p in paths))
