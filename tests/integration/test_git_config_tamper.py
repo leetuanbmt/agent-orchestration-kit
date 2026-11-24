@@ -189,7 +189,7 @@ def test_git_defence_in_depth(repo, monkeypatch):
 # @pt.id KIT-SEC-GITCFG-007-empty-config-worktree
 # @pt.item An empty config.worktree that a run creates is not a change; any content or an edit still is
 # @pt.condition a linked worktree with no config.worktree; the Claude Bash sandbox (bwrap) creates it empty, then it gets content; separately an existing config.worktree is edited
-# @pt.expected absent -> empty: tampered_internals is empty; absent -> fsmonitor content or a symlink to an empty file: .git/config.worktree is reported; existing file edited or emptied: reported
+# @pt.expected absent -> empty: tampered_internals is empty; absent -> fsmonitor content or a symlink to an empty file: .git/config.worktree is reported; existing file edited or emptied, or the target of an existing symlink edited: reported
 # @pt.target review._git_internals, review.tampered_internals
 # @pt.method unit
 # @pt.legacy G-130: bwrap's empty placeholder BLOCKed every claude-cli task on Linux as PROTECTED
@@ -216,4 +216,12 @@ def test_empty_config_worktree_is_not_a_change(repo, tmp_path):
     cfg.write_text("[core]\n\tfsmonitor = x\n")
     assert review.tampered_internals(wt, before) == [".git/config.worktree"]
     cfg.write_text("")
+    assert review.tampered_internals(wt, before) == [".git/config.worktree"]
+
+    cfg.unlink()
+    target = tmp_path / "outside-config"
+    target.write_text("[core]\n\tbare = false\n")
+    cfg.symlink_to(target)
+    before = {"files": review._git_internals(wt), "head": None, "tree": None}
+    target.write_text("[core]\n\tfsmonitor = x\n")  # same link, new content behind it
     assert review.tampered_internals(wt, before) == [".git/config.worktree"]

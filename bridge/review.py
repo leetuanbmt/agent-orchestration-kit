@@ -231,7 +231,8 @@ def _git_internals(root: Path) -> dict[str, str | None]:
     # any other file type still counts.
     worktree_cfg = gitdir / "config.worktree"
     if worktree_cfg.is_symlink():
-        found[".git/config.worktree"] = f"symlink:{os.readlink(worktree_cfg)}"
+        # The link and what it points at: a write through an unchanged link still counts.
+        found[".git/config.worktree"] = f"symlink:{os.readlink(worktree_cfg)}:{_hash(worktree_cfg)}"
     elif worktree_cfg.exists() and not (worktree_cfg.is_file() and worktree_cfg.stat().st_size == 0):
         found[".git/config.worktree"] = _hash(worktree_cfg) or "not-a-regular-file"
     if (common / "info" / "attributes").is_file():
