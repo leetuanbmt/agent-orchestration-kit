@@ -226,10 +226,14 @@ def _git_internals(root: Path) -> dict[str, str | None]:
     (and config commands such as core.fsmonitor) outside any sandbox. Read from disk, no git."""
     gitdir, common = git_dirs(root)
     found = {".git/config": _hash(common / "config")}
-    # An empty config.worktree configures nothing; the Claude Bash sandbox (bwrap) creates one
-    # as a mount placeholder, so absent and empty hash alike. Any content still counts.
-    if (gitdir / "config.worktree").is_file() and (gitdir / "config.worktree").stat().st_size:
-        found[".git/config.worktree"] = _hash(gitdir / "config.worktree")
+    # An empty regular config.worktree configures nothing; the Claude Bash sandbox (bwrap)
+    # creates one as a mount placeholder, so it hashes like an absent one. Content, a symlink or
+    # any other file type still counts.
+    worktree_cfg = gitdir / "config.worktree"
+    if worktree_cfg.is_symlink():
+        found[".git/config.worktree"] = f"symlink:{os.readlink(worktree_cfg)}"
+    elif worktree_cfg.exists() and not (worktree_cfg.is_file() and worktree_cfg.stat().st_size == 0):
+        found[".git/config.worktree"] = _hash(worktree_cfg) or "not-a-regular-file"
     if (common / "info" / "attributes").is_file():
         found[".git/info/attributes"] = _hash(common / "info" / "attributes")
     hooks = common / "hooks"
