@@ -2,7 +2,9 @@
 
 - **Codex CLI** runs with a `workspace-write` (or `read-only`) OS sandbox, no network, `/tmp`
   and `$TMPDIR` not writable, user `~/.codex/config.toml` ignored. `danger-full-access` is not
-  configurable.
+  configurable. The sandbox is a permission profile passed with `-c` (built-in `:workspace` or
+  `:read-only`) that also makes the bridge's credential store and every `credential_paths`
+  entry unreadable (probed with `codex sandbox` on Codex 0.169, macOS and Linux bwrap).
 - **Claude CLI** uses `--strict-mcp-config` (no MCP servers), `--setting-sources ""`
   (no user/project settings) and `--permission-mode dontAsk`. Read/Glob/Grep and scoped
   Edit/Write keep their existing permission rules, including credential read denies and
@@ -43,8 +45,7 @@
   `credentials/`, any `credential_paths` entry, `~/.codex/auth.json`,
   `~/.claude/.credentials.json`, `.ai/orchestrator.yaml` or `.ai/accounts.yaml`. Claude agents'
   Read tools and Bash sandbox are denied the same credential paths. Landlock (Linux) restricts
-  writes only, so a Linux check can read them; so can a Codex agent, whose `workspace-write`
-  sandbox does not restrict reads.
+  writes only, so a Linux check can read them.
 - Git config is code the bridge would run (`core.fsmonitor`, filters, hooks). After every run the
   bridge hashes the repository's config, `config.worktree`, hooks and `info/attributes` from disk
   before any git call; a change BLOCKs the task without running git, and while it is still on

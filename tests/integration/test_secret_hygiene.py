@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -13,7 +14,7 @@ import pytest
 from bridge import accounts, osutil, sandbox, security
 from bridge.accounts import Account, credential_file
 from bridge.config import BridgeConfig
-from bridge.executor import ClaudeAdapter, RunRequest
+from bridge.executor import ClaudeAdapter, CodexAdapter, RunRequest
 from bridge.registry import registry_dir
 from bridge.review import run_verification, verification_read_denies
 from tests.conftest import run
@@ -169,3 +170,62 @@ def test_disable_dumps():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                          cwd=Path(osutil.__file__).parents[1], check=True)
     assert out.stdout.strip() == ("0" if sys.platform.startswith("linux") else "skip")
+
+
+def codex_profile(argv: list[str]) -> list[str]:
+    return ["-c", 'default_permissions="bridge"',
+            "-c", next(v for v in argv if v.startswith("permissions.bridge="))]
+
+
+# @pt.id KIT-SECRETS-007-codex-profile
+# @pt.item Codex runs deny reads of the credential store and credential_paths through a permission profile
+# @pt.condition workspace-write and read-only runs, fresh and resumed, with a credential path whose name needs TOML quoting
+# @pt.expected every argv selects the bridge profile, which sets the store and each credential path to "none"; no -s or sandbox_mode is passed (either overrides the profile in codex exec)
+# @pt.target bridge.executor.CodexAdapter.argv
+# @pt.method unit
+# @pt.legacy Codex workspace-write could read every file
+def test_codex_profile_denies_store(repo, tmp_path):
+    cfg = BridgeConfig(credential_paths=[str(Path.home() / "secrets.env")])
+    ad = CodexAdapter(cfg, repo)
+    for sandbox_mode in ("workspace-write", "read-only"):
+        for session in (None, "abc"):
+            argv = ad.argv(account=Account("default", None), sandbox=sandbox_mode,
+                           last_msg=tmp_path / "m", session_id=session)
+            profile = codex_profile(argv)[-1]
+            assert f'{json.dumps(str(registry_dir() / "credentials"))}="none"' in profile
+            assert f'{json.dumps(str(Path.home() / "secrets.env"))}="none"' in profile
+            assert "-s" not in argv and not any("sandbox_mode" in v for v in argv)
+
+
+# @pt.id KIT-SECRETS-008-codex-sandbox-probe
+# @pt.item The profile the bridge builds really confines commands under the installed Codex CLI
+# @pt.condition `codex sandbox` (local, no login) with the bridge's -c profile; a dummy file in the store, the worktree as cwd
+# @pt.expected reading the store fails, a worktree write succeeds, /tmp and $TMPDIR writes fail; the same command without the profile reads the file
+# @pt.target bridge.executor.CodexAdapter.argv
+# @pt.method integration
+# @pt.legacy Codex workspace-write could read every file
+@pytest.mark.skipif(shutil.which("codex") is None, reason="needs the real Codex CLI")
+def test_codex_sandbox_probe(repo, tmp_path):
+    store = registry_dir() / "credentials"
+    store.mkdir(mode=0o700, parents=True)
+    (store / "dummy").write_text("dummy-not-a-secret\n")
+    tmpdir = tmp_path / "tmpdir"
+    tmpdir.mkdir()
+    env = {**os.environ, "CODEX_HOME": str(tmp_path / "codex_home"), "TMPDIR": str(tmpdir)}
+    (tmp_path / "codex_home").mkdir()
+    argv = CodexAdapter(BridgeConfig(), repo).argv(account=Account("default", None),
+                                                   sandbox="workspace-write", last_msg=tmp_path / "m")
+
+    def sandboxed(code: str, profile: bool = True) -> subprocess.CompletedProcess:
+        return subprocess.run(["codex", "sandbox", *(codex_profile(argv) if profile else []),
+                               "--", sys.executable, "-c", code], cwd=repo, env=env,
+                              capture_output=True, text=True, timeout=60)
+
+    read = f"print(open({str(store / 'dummy')!r}).read())"
+    assert "dummy-not-a-secret" in sandboxed(read, profile=False).stdout
+    denied = sandboxed(read)
+    assert denied.returncode != 0 and "dummy-not-a-secret" not in denied.stdout
+    assert sandboxed("open('in_worktree.txt', 'w').write('x')").returncode == 0
+    (repo / "in_worktree.txt").unlink()
+    assert sandboxed(f"open({str(tmpdir / 'x')!r}, 'w').write('x')").returncode != 0
+    assert sandboxed("import uuid; open(f'/tmp/{uuid.uuid4()}', 'w').write('x')").returncode != 0

@@ -88,6 +88,12 @@ def plan_task(**over):
     return {**task, **over}
 
 
+
+def sandbox_of(argv: list[str]) -> str:
+    """The Codex sandbox a run asked for, from the bridge's permission profile."""
+    profile = next(v for v in argv if v.startswith("permissions.bridge="))
+    return "read-only" if 'extends=":read-only"' in profile else "workspace-write"
+
 # @pt.id KIT-FLOW-A-claude-codex-claude
 # @pt.item Config A: Claude planner, Codex executor, Claude reviewer
 # @pt.condition A planned objective with two dependent tasks is driven to completion
@@ -153,7 +159,7 @@ def test_config_b(make_orch, fake_codex, fake_claude, monkeypatch, tmp_path, rep
     assert not (repo / "notes.txt").exists() and (repo / ".env").read_text() == "SECRET_TOKEN=abc\n"
     planner, reviewer = calls(fake_codex)
     for call in (planner, reviewer):
-        assert call["argv"][call["argv"].index("-s") + 1] == "read-only"
+        assert sandbox_of(call["argv"]) == "read-only"
     assert "PLANNER" in planner["prompt"] and "REVIEWER" in reviewer["prompt"]
     acc = b._account("cl")
     argv = ClaudeAdapter(b.cfg, b.root).build(
@@ -405,7 +411,7 @@ def test_config_d(make_orch, fake_codex, monkeypatch):
     b = make_orch(CONFIG_D)
     wid = run(b.plan("Set x to 2", wait=True))["workflow_id"]
     assert run(b.run_workflow(wid, wait=True))["state"] == "DONE"
-    sandboxes = [c["argv"][c["argv"].index("-s") + 1] for c in calls(fake_codex)]
+    sandboxes = [sandbox_of(c["argv"]) for c in calls(fake_codex)]
     assert sandboxes == ["read-only", "workspace-write", "read-only"]
 
 

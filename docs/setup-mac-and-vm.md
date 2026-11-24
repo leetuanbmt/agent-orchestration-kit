@@ -220,7 +220,7 @@ What keeps the file from the agents:
 | A Claude agent's Bash (`allow_bash: true`) | No: in the sandbox's `denyRead` list |
 | A verification command on macOS (Seatbelt) | No: denied by the profile |
 | A verification command on Linux (Landlock) | **Yes.** Landlock restricts writes only. Its output is still redacted |
-| A Codex agent (`workspace-write`) | **Yes.** The `workspace-write` sandbox lets commands read any file (probed with Codex 0.169 on macOS), so the store is not protected from Codex. Codex permission profiles can deny a path, but the bridge does not use them yet |
+| A Codex agent | No: its sandbox is a permission profile that sets the store and each `credential_paths` entry to `none` (probed with `codex sandbox` on Codex 0.169, macOS and Linux) |
 | Another process running as your user | Yes. The bridge only stops it reading the bridge's own environment and memory: on Linux `serve` and every CLI command mark themselves non-dumpable (`PR_SET_DUMPABLE 0`) |
 
 The bridge also moves every `AGENT_BRIDGE_CLAUDE_*_TOKEN` variable out of its own environment

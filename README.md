@@ -457,7 +457,9 @@ untrusted code.
 
 - **Codex CLI** runs in its OS sandbox (`workspace-write` or `read-only`; `danger-full-access`
   cannot be configured), without network, with `/tmp` and `$TMPDIR` not writable and
-  `~/.codex/config.toml` ignored. Planner and reviewer runs are `read-only`.
+  `~/.codex/config.toml` ignored. Planner and reviewer runs are `read-only`. The bridge's
+  credential store and any `credential_paths` are unreadable to its commands (a Codex
+  permission profile, probed on macOS and Linux with Codex 0.169).
 - **Claude CLI** uses `--strict-mcp-config` (no MCP servers), `--setting-sources ""`
   (no user/project settings), `--permission-mode dontAsk` and Read/Glob/Grep permissions.
   With `allow_write: true`, Edit/Write stay scoped to task paths, with protected paths denied.
@@ -491,8 +493,8 @@ tokens in a shell profile: `token_env` still works, but `config-check` warns abo
 bridge removes `AGENT_BRIDGE_CLAUDE_*_TOKEN` variables from its own environment when it starts,
 redacts the exact value of every secret it loaded from stored output, and on Linux makes itself
 non-dumpable. Claude agents and checks on macOS are denied the store (and any `credential_paths`
-in `.ai/config.json`); Codex agents and checks on Linux can read it, and any process running as
-you can. See [Credentials on Linux](docs/setup-mac-and-vm.md#credentials-on-linux).
+in `.ai/config.json`), and so are Codex agents; checks on Linux can read it (Landlock restricts
+writes only), and any process running as you can. See [Credentials on Linux](docs/setup-mac-and-vm.md#credentials-on-linux).
 
 **Trust model.** Everything the kit runs runs as your user. Human approval guards against
 mistakes and model overreach; it is not a boundary against code running as you. Anything that

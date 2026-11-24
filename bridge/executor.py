@@ -415,13 +415,9 @@ class CodexAdapter(Adapter):
               str(schema_path or self.schema_path)]
         if self.cfg.ignore_user_config:
             a.append("--ignore-user-config")
-        if session_id:
-            a += ["-c", f'sandbox_mode="{sandbox}"']
-        else:
-            a += ["-s", sandbox, "-C", str(self.root)]
-        # workspace-write otherwise leaves /tmp and $TMPDIR writable (verified by probe).
-        a += ["-c", "sandbox_workspace_write.exclude_slash_tmp=true",
-              "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true"]
+        if not session_id:
+            a += ["-C", str(self.root)]
+        a += ["-c", 'default_permissions="bridge"', "-c", self._profile(sandbox)]
         a += codex_overrides(account)
         model = model or self.cfg.model
         if model:
@@ -430,6 +426,22 @@ class CodexAdapter(Adapter):
             a.append(session_id)
         a.append("-")  # prompt on stdin: no argv length limit, not visible in `ps`
         return a
+
+    def _profile(self, sandbox: str) -> str:
+        """A permission profile instead of `-s`/`sandbox_mode`, which would override it: the built-in
+        workspace or read-only one, with the credential store and `credential_paths` unreadable
+        and, for workspace, /tmp and $TMPDIR read-only. Probed with `codex sandbox` on codex
+        0.169 (macOS Seatbelt and Linux bwrap): reads there fail, every other guarantee of
+        `-s workspace-write` plus the exclude_* keys holds, a missing path is fine, and
+        `codex exec` reports the same sandbox for both."""
+        from .registry import registry_dir
+        paths = {json.dumps(str(p)): "none"  # a JSON string is a valid TOML basic string
+                 for p in [registry_dir() / "credentials", *self.cfg.credential_paths]}
+        if sandbox == "workspace-write":
+            paths |= {'":slash_tmp"': "read", '":tmpdir"': "read"}
+        extends = ":workspace" if sandbox == "workspace-write" else ":read-only"
+        rules = ", ".join(f'{k}="{v}"' for k, v in paths.items())
+        return f'permissions.bridge={{extends="{extends}", filesystem={{{rules}}}}}'
 
     def build(self, req: RunRequest, tmp: Path) -> list[str]:
         schema = tmp / "output_schema.json"
