@@ -226,8 +226,14 @@ def _git_internals(root: Path) -> dict[str, str | None]:
     (and config commands such as core.fsmonitor) outside any sandbox. Read from disk, no git."""
     gitdir, common = git_dirs(root)
     found = {".git/config": _hash(common / "config")}
-    if (gitdir / "config.worktree").is_file():
-        found[".git/config.worktree"] = _hash(gitdir / "config.worktree")
+    # An empty regular config.worktree configures nothing; the Claude Bash sandbox (bwrap)
+    # creates one as a mount placeholder, so it hashes like an absent one. Content, a symlink or
+    # any other file type still counts.
+    worktree_cfg = gitdir / "config.worktree"
+    if worktree_cfg.is_symlink():
+        found[".git/config.worktree"] = f"symlink:{os.readlink(worktree_cfg)}"
+    elif worktree_cfg.exists() and not (worktree_cfg.is_file() and worktree_cfg.stat().st_size == 0):
+        found[".git/config.worktree"] = _hash(worktree_cfg) or "not-a-regular-file"
     if (common / "info" / "attributes").is_file():
         found[".git/info/attributes"] = _hash(common / "info" / "attributes")
     hooks = common / "hooks"
@@ -530,6 +536,11 @@ async def _verify(cmds: list[str], root: Path, cfg: BridgeConfig,
     # to a private directory removed afterwards (the only temp location a confined check has).
     env = {**clean_env(os.environ, cfg.env_deny, []), "PYTHONDONTWRITEBYTECODE": "1",
            AGENT_ENV: "1", "TMPDIR": tmp, "TMP": tmp, "TEMP": tmp}
+    # Go's default build cache is under $HOME, which a confined check cannot write.
+    for key, sub in (("GOCACHE", "go-build"), ("GOTMPDIR", "go-tmp")):
+        if key not in env:
+            env[key] = os.path.join(tmp, sub)
+            os.makedirs(env[key], exist_ok=True)
     loop = asyncio.get_running_loop()
     for cmd in cmds:
         if should_cancel and should_cancel():
