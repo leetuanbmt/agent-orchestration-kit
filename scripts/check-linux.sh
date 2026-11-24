@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Run the ubuntu CI job locally in Docker: the committed HEAD, as a non-root user, with Landlock
+# and bwrap available. Run it (and scripts/check.sh) before every push; hosted CI is not the
+# first Linux run. Extra arguments go to pytest. Needs network for the image, apt, npm and uv.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+command -v docker >/dev/null || { echo "docker is not installed" >&2; exit 1; }
+# The Codex CLI the permission-profile probes were run with (tests/integration/test_secret_hygiene.py).
+codex_version=${CODEX_VERSION:-0.169.0}
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+git bundle create -q "$work/kit.bundle" HEAD
+echo "$*" > "$work/pytest-args"  # plain pytest arguments (paths, -k NAME); no quoting
+
+cat > "$work/run.sh" <<EOF
+set -e
+apt-get update -qq >/dev/null
+apt-get install -y -qq git nodejs npm bubblewrap >/dev/null 2>&1
+npm install -g -s @openai/codex@${codex_version} >/dev/null 2>&1 || echo "codex not installed: its probe tests skip"
+pip install -q --root-user-action=ignore uv
+useradd -m u
+su u -c 'set -e
+git config --global user.email t@t; git config --global user.name t
+git clone -q /in/kit.bundle ~/kit && cd ~/kit
+uv sync -q --frozen
+uv run --frozen pytest -q -p no:cacheprovider --basetemp=/tmp/pt \$(cat /in/pytest-args)'
+EOF
+
+# seccomp/apparmor unconfined: bwrap (Codex and Claude sandboxes) needs user namespaces, which
+# Docker's default profile refuses; a Linux VM allows them.
+docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+    -v "$work:/in:ro" python:3.12-bookworm bash /in/run.sh
