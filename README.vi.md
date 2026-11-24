@@ -170,7 +170,7 @@ hoạch và review, Codex thực thi.
 - `git` và [uv](https://docs.astral.sh/uv/) (uv tự tải Python 3.12 trở lên).
 - Project đích phải là một git repository.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) cho phiên làm việc interactive.
-- Ít nhất một agent CLI đã đăng nhập bằng subscription riêng; không cần API key:
+- Ít nhất một agent CLI đã đăng nhập bằng subscription riêng; API key là tùy chọn (xem [Cài đặt trên Mac và VM](docs/setup-mac-and-vm.md)):
   - Codex CLI (đã kiểm chứng với 0.163.0; kiểm tra bằng `codex login status`), và/hoặc
   - Claude Code headless (đã kiểm chứng với 2.1.308; kiểm tra bằng `claude auth status`).
   - Tùy chọn, dùng làm planner/reviewer chỉ đọc: opencode, agy.
@@ -235,7 +235,9 @@ claude mcp list              # kỳ vọng: agent-bridge ... Connected
   `mcp__codex-bridge__*` phải đổi tên thủ công.
 
 **2. Chọn thiết lập (tùy chọn).** Bỏ qua bước này để dùng thiết lập legacy (Claude Code lập kế
-hoạch và review, Codex thực thi bằng login global). Chạy các lệnh này trong terminal của bạn:
+hoạch và review, Codex thực thi bằng login global). `init` không tạo `.ai/orchestrator.yaml`, và
+`project-account-*` cùng `project-agent-*` từ chối chạy cho tới khi file này tồn tại, nên hãy chạy
+`config-init` trước khi thêm account. Chạy các lệnh này trong terminal của bạn:
 `config-init <name>` ghi vào `.ai/`, nơi chỉ người mới được sửa, nên từ chối chạy khi không có
 terminal.
 
@@ -310,17 +312,10 @@ workflow:
   max_rework: 2
 ```
 
-Các ví dụ đi kèm (`agent-bridge config-init <name>`):
-
-| Ví dụ | Planner | Executor | Reviewer |
-|---|---|---|---|
-| *(không có file, legacy)* | Phiên Claude Code | Codex | Phiên Claude Code |
-| [`orchestrator`](examples/orchestrator.yaml) | Claude headless | Codex trên hai account, theo thứ tự fallback | Claude headless |
-| [`claude-executor`](examples/claude-executor.yaml) | Codex | Claude headless (`allow_write`) | Codex |
-| [`single-agent`](examples/single-agent.yaml) | Codex | Codex | Codex |
-| [`gates-only`](examples/gates-only.yaml) | — | Codex | Không có: chỉ gate tất định |
-| [`other-reviewers`](examples/other-reviewers.yaml) | agy | Codex | opencode |
-| [`account-limits`](examples/account-limits.yaml) | Phiên Claude Code | Claude headless trên hai account, rồi Codex, có giới hạn theo account và failover | Phiên Claude Code |
+Các ví dụ đi kèm (`agent-bridge config-init <name>`): `orchestrator`, `claude-executor`,
+`single-agent`, `gates-only`, `other-reviewers` và `account-limits`. Bảng ai plan, execute và
+review trong từng ví dụ nằm ở
+[docs/configuration.md](docs/configuration.md#shipped-examples) (tiếng Anh).
 
 Account do con người đăng nhập, theo project (`agent-bridge account-login <name>`) hoặc dùng
 chung toàn máy (`agent-bridge account-add <name> --provider …`). Quota fallback mặc định tắt;
@@ -345,10 +340,9 @@ thái có trong [docs/configuration.md](docs/configuration.md) (tiếng Anh).
   `bridge_review_task`.
 - **Định tuyến.** Task được ghim bằng `agent` hoặc `account` sẽ chạy ở đó. Nếu không, khi task
   khởi động lần đầu, bridge chọn agent `default` của role, rồi đến agent đủ điều kiện đầu tiên
-  theo thứ tự trong role; với `strategy: quota`, bridge chọn agent đủ điều kiện có account còn
-  nhiều quota nhất. Account mà các bridge process khác trên máy đã chiếm hết slot thì không đủ
-  điều kiện; khi đó workflow chờ slot tối đa `routing.slot_wait_s`. Task giữ agent và session đó
-  cho các lần thử lại.
+  theo thứ tự trong role; sau đó task giữ agent và session đó. `strategy: quota` xếp hạng agent
+  đủ điều kiện theo quota còn lại, và account đang bận khiến workflow chờ slot. Mọi quy tắc nằm
+  ở [Routing](docs/configuration.md#routing) (tiếng Anh).
 
 ## Vòng đời workflow
 
@@ -648,8 +642,11 @@ origin; `agent-bridge web --read-only` ẩn các thao tác và từ chối chún
 
 ## Câu hỏi thường gặp
 
-**Có cần API key không?** Không. Mọi agent chạy bằng login subscription trong auth home riêng.
-Không cần API key nào.
+**Có cần API key không?** Không. Mọi agent có thể chạy bằng login subscription trong auth home
+riêng. API key là tùy chọn: account Claude có thể dùng API key của Console thay cho token
+subscription, và account Codex có thể đăng nhập bằng `account-login --with-api-key` (xem
+[Accounts](docs/configuration.md#accounts)). Các account này tính phí theo token và không báo
+cửa sổ 5 giờ hay tuần, nên hãy giới hạn bằng `budget_usd`.
 
 **Agent có tự approve việc của mình được không?** Không. Executor không approve được. Client,
 reviewer agent hoặc (khi không có stage `review`) bridge sau khi mọi gate đều qua mới approve;
@@ -715,6 +712,7 @@ fallback, giới hạn rework, reviewer lỗi, validate config, cô lập accoun
 
 | Tài liệu | Nội dung |
 |---|---|
+| [docs/setup-mac-and-vm.md](docs/setup-mac-and-vm.md) | Cài đặt từng bước trên Mac và trên VM Linux từ xa, với token subscription hoặc API key của Claude (tiếng Anh) |
 | [docs/configuration.md](docs/configuration.md) | Mọi key của `orchestrator.yaml` và `config.json`, account, quota, quota fallback, nơi lưu trạng thái và migration (tiếng Anh) |
 | [docs/cli-reference.md](docs/cli-reference.md) | MCP tool kèm tham số, mọi lệnh CLI và các lệnh chỉ dành cho con người (tiếng Anh) |
 | [docs/REPORT.md](docs/REPORT.md) | Báo cáo build: phiên bản CLI đã kiểm chứng, probe bảo mật, giới hạn đã biết (tiếng Anh) |

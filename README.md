@@ -169,7 +169,7 @@ and reviews, and Codex executes.
 - `git`, and [uv](https://docs.astral.sh/uv/) (uv fetches Python 3.12 or newer).
 - The target project must be a git repository.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for the interactive session.
-- At least one agent CLI logged in with its own subscription; no API key is needed:
+- At least one agent CLI logged in with its own subscription; an API key is optional (see [Set up on a Mac and a VM](docs/setup-mac-and-vm.md)):
   - Codex CLI (verified with 0.163.0; check with `codex login status`), and/or
   - Claude Code headless (verified with 2.1.308; check with `claude auth status`).
   - Optional read-only planners/reviewers: opencode, agy.
@@ -235,7 +235,9 @@ What `init` does:
   `mcp__codex-bridge__*` tools must be renamed by hand.
 
 **2. Choose a setup (optional).** Skip this to use the legacy setup (Claude Code plans and
-reviews, Codex executes on its global login). Run these in your own terminal: `config-init
+reviews, Codex executes on its global login). `init` does not create `.ai/orchestrator.yaml`, and
+`project-account-*` and `project-agent-*` refuse to run until it exists, so run `config-init`
+before adding accounts. Run these in your own terminal: `config-init
 <name>` writes `.ai/`, which only a human may change, and refuses to run without one.
 
 ```bash
@@ -307,17 +309,10 @@ workflow:
   max_rework: 2
 ```
 
-Shipped examples (`agent-bridge config-init <name>`):
-
-| Example | Planner | Executor | Reviewer |
-|---|---|---|---|
-| *(no file, legacy)* | Claude Code session | Codex | Claude Code session |
-| [`orchestrator`](examples/orchestrator.yaml) | Claude headless | Codex on two accounts, fallback order | Claude headless |
-| [`claude-executor`](examples/claude-executor.yaml) | Codex | Claude headless (`allow_write`) | Codex |
-| [`single-agent`](examples/single-agent.yaml) | Codex | Codex | Codex |
-| [`gates-only`](examples/gates-only.yaml) | — | Codex | None: deterministic gates only |
-| [`other-reviewers`](examples/other-reviewers.yaml) | agy | Codex | opencode |
-| [`account-limits`](examples/account-limits.yaml) | Claude Code session | Claude headless on two accounts, then Codex, with per-account limits and failover | Claude Code session |
+Shipped examples (`agent-bridge config-init <name>`): `orchestrator`, `claude-executor`,
+`single-agent`, `gates-only`, `other-reviewers` and `account-limits`. The table of who plans,
+executes and reviews in each is in
+[docs/configuration.md](docs/configuration.md#shipped-examples).
 
 Accounts are logged in by a human, either per project (`agent-bridge account-login <name>`) or
 machine-wide (`agent-bridge account-add <name> --provider …`). Quota fallback is off by
@@ -342,10 +337,9 @@ Full reference: every key and default, accounts, quota, quota fallback and state
   `bridge_review_task`.
 - **Routing.** A task pinned with `agent` or `account` runs there. Otherwise the bridge picks
   the role's `default`, then the first eligible agent in role order, when the task first starts;
-  with `strategy: quota` it picks the eligible agent whose account has the most quota left.
-  An account whose slots are all held by other bridge processes on the machine is not eligible;
-  a workflow then waits up to `routing.slot_wait_s` for a slot. The task keeps that agent and
-  session for retries.
+  the task then keeps that agent and session. `strategy: quota` ranks eligible agents by
+  remaining quota, and a busy account makes a workflow wait for a slot. See
+  [Routing](docs/configuration.md#routing) for every rule.
 
 ## Workflow lifecycle
 
@@ -647,8 +641,11 @@ and rejects other `Host` headers. The threat model is in
 
 ## FAQ
 
-**Do I need API keys?** No. Every agent runs on a subscription login in its own auth home. No
-API key is needed.
+**Do I need API keys?** No. Every agent can run on a subscription login in its own auth home.
+An API key is optional: a Claude account can use a Console API key instead of a subscription
+token, and a Codex account can log in with `account-login --with-api-key` (see
+[Accounts](docs/configuration.md#accounts)). Such accounts bill per token and report no 5-hour
+or weekly window, so cap them with `budget_usd`.
 
 **Can an agent approve its own work?** No. Executors cannot approve. The client, a reviewer agent
 or (without a `review` stage) the bridge after every gate passed approves; high-risk work waits
@@ -717,6 +714,7 @@ the dashboards.
 
 | Document | Content |
 |---|---|
+| [docs/setup-mac-and-vm.md](docs/setup-mac-and-vm.md) | Step-by-step setup on a Mac and on a remote Linux VM, with Claude subscription tokens or API keys |
 | [docs/configuration.md](docs/configuration.md) | Every `orchestrator.yaml` and `config.json` key, accounts, quota, quota fallback, state storage and migration |
 | [docs/cli-reference.md](docs/cli-reference.md) | MCP tools with parameters, every CLI command and human-only commands |
 | [docs/REPORT.md](docs/REPORT.md) | Build report: verified CLI versions, security probes, known limitations |

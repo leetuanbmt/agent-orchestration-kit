@@ -60,6 +60,10 @@ a readable view in a terminal, and the same JSON the MCP tools return with `--js
 output is piped. (`config-migrate`, `config-set`, `config-unset`, `project-account-add` and the `project-agent-*` commands still need a terminal to
 run.)
 
+`project-account-add`, `project-account-limits`, `project-account-remove`, `project-agent-add`
+and `project-agent-remove` refuse to run until `.ai/orchestrator.yaml` exists (`missing: start
+one with config-init first`). `init` does not create it; `config-init <example>` does.
+
 ### Tasks and workflows
 
 | Command | Description |
@@ -114,7 +118,7 @@ These need an interactive terminal and a typed confirmation (or the TUI). The
 | `account-add <name> --provider openai\|anthropic\|google\|opencode [--home DIR] [--device-auth]` | Create a machine-wide account under `~/.agent-bridge/homes/` (or register `--home`), then log in |
 | `account-set-token <name> [--delete]` | Store a setup-token or API key in the macOS Keychain for an account with `credential: keychain`; `security` prompts for the secret on the terminal, so it never passes through argv. `--delete` removes the stored token. Refuses accounts without `credential: keychain` |
 | `account-remove <name>` | Forget a machine-wide account; deletes its home only if `account-add` created it |
-| `project-account-add <name> (--provider P \| --login L) [--home DIR] [--credential keychain] [--token-env VAR] [--executor] [--json]` | Declare an account in `.ai/accounts.yaml` (a new home, or a reference to a registry login); prints the agent line to paste into `orchestrator.yaml` |
+| `project-account-add <name> (--provider P \| --login L) [--home DIR] [--credential keychain \| --token-env VAR] [--credential-kind oauth_token\|api_key] [--agent NAME] [--model M] [--executor] [--json]` | Declare an account in `.ai/accounts.yaml` (a new home, or a reference to a registry login); prints the agent line to paste into `orchestrator.yaml`. `--credential keychain` (macOS) and `--token-env` (any OS) are alternatives; `--credential-kind` says whether that secret is a `claude setup-token` token (default) or a Console API key. Needs `.ai/orchestrator.yaml` |
 | `project-account-limits <name> [--five-hour-pct N] [--weekly-pct N] [--clear]` | Set or clear an account's window limits in `.ai/accounts.yaml` |
 | `project-agent-add <agent> (--account A \| --adapter client) [--model M] [--allow-bash] [--role R] [--default] [--apply] [--json]` | Add an agent to `.ai/orchestrator.yaml` (adapter from the account's provider) and, with `--role`, to that role (`--default` makes it first). Previews unless `--apply`, which backs the file up to `.ai/backup-<stamp>/`; comments are not kept |
 | `project-agent-remove <agent> [--apply] [--json]` | Remove an agent and its role entries; refuses a role it would empty; lists unfinished tasks pinned to it. Same preview and backup |
